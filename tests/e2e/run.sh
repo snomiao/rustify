@@ -167,7 +167,7 @@ printf '%s\n' \
   '  "devDependencies": { "typescript": "^5" },' \
   "  \"rustify\": { \"mode\": \"hybrid\", \"bins\": { \"toy\": \"toy\" }, \"runtime\": \"$RUNTIME\" }" \
   '}' > "$WORK/hybrid/package.json"
-printf '#!/usr/bin/env %s\nconsole.log("js cli:", process.argv.slice(2).join(" "));\n' "$RUNTIME" > "$WORK/hybrid/dist/cli.js"
+printf '#!/usr/bin/env %s\nconsole.log("js cli:", process.argv.slice(2).join(" ").replace("which-runtime", typeof Bun === "undefined" ? "node" : "bun"));\n' "$RUNTIME" > "$WORK/hybrid/dist/cli.js"
 chmod +x "$WORK/hybrid/dist/cli.js"
 node "$PACK" pack --package "$WORK/hybrid/package.json" --artifacts "$WORK/artifacts-1.2.4" \
   --out "$WORK/npm-dist-hybrid" --allow-missing >/dev/null
@@ -184,6 +184,9 @@ if is_script "$BUN_INSTALL/bin/toy"; then die "hybrid: the command was not linke
 out="$("$BUN_INSTALL/bin/toy" js two)"
 [ "$out" = "js cli: js two" ] && pass "and still does once the command is the native binary itself" \
   || die "fallback from the linked binary printed: $out"
+out="$("$BUN_INSTALL/bin/toy" js which-runtime)"
+[ "$out" = "js cli: js $RUNTIME" ] && pass "the JavaScript runs on the runtime its own first line names ($RUNTIME)" \
+  || die "the hand-back ran: $out (expected $RUNTIME)"
 
 echo "== smoke.mjs (the check that CI runs on every OS)"
 node "$REPO/templates/npm/smoke.mjs" --dist "$WORK/npm-dist-1.2.4" --run "toy check" --expect "version=1.2.4" \
