@@ -51,6 +51,24 @@ So `bun i -g otoji` and `cargo install otoji` install two different CLIs with
 no commands in common. Releases are automated: release-plz publishes the crate,
 then CI builds and publishes the npm packages.
 
+## Plan
+
+The gap is not a port; it is that `bun i -g otoji` and `cargo install otoji`
+give two different tools. Closing it means the npm `otoji` package delivers
+the native binary:
+
+1. The native build needs its own runners (prebuilt speech libraries, audio
+   system libraries), so otoji keeps its build jobs and calls the pipeline with
+   `prebuilt: true`. It builds five targets today, not six: it would list them
+   in `rustify.platforms`.
+2. `otoji node` and `otoji gdoc`, the two commands the JavaScript launcher
+   has, are either ported into the binary or handed back to the launcher's
+   scripts (hybrid mode).
+3. `@otoji/core`, the napi addon, is a library and stays as it is.
+
+Not started: it changes what the npm package `otoji` is, which is the owner's
+call.
+
 ## Open decisions
 
 - Is the web app in scope for the Rust migration, or does "otoji" here mean the

@@ -2,7 +2,7 @@
 
 | Project | Port | `bun i -g` gives | Next step |
 |---|---|---|---|
-| agent-yes | started, not measured | JavaScript | write the parity ledger |
+| agent-yes | 1 verified, 8 ported, 125 partial, 201 missing of 335 | JavaScript | port the missing features |
 | slack-hub | 0 verified, 1 ported, 19 partial, 132 missing of 152 | JavaScript | port the missing features |
 | rechrome | not started | JavaScript | write the parity ledger |
 | otoji | started, not measured | JavaScript | write the parity ledger |
@@ -37,7 +37,43 @@
 
 **Parity ledger**
 
-- `todo` no ledger at `parity/agent-yes.toml`, so progress cannot be measured
+- `info` 335 features: 1 verified, 8 ported but unproven, 125 partial, 201 missing, 0 dropped
+- `warn` `--stream (Claude stream-json session runner)`: ts path `ts/stream/runner.ts` does not exist
+- `warn` `--stream (Claude stream-json session runner)`: ts path `ts/stream/launch.ts` does not exist
+- `warn` `stream mode chosen automatically for claude --output-format stream-json`: ts path `ts/stream/launch.ts` does not exist
+- `warn` `stream mode chosen automatically for claude --output-format stream-json`: ts path `ts/stream/launch.ts` does not exist
+- `warn` `stream mode: Claude event parsing and transcript output`: ts path `ts/stream/claude.ts` does not exist
+- `warn` `stream mode: Claude event parsing and transcript output`: ts path `ts/stream/transcript.ts` does not exist
+- `warn` `stream mode: Claude event parsing and transcript output`: ts path `ts/stream/output.ts` does not exist
+- `warn` `stream mode: stdin forwarding`: ts path `ts/stream/input.ts` does not exist
+- `warn` `stream mode: stdin forwarding`: ts path `ts/stream/jsonInput.ts` does not exist
+- `warn` `stream mode with --detach`: ts path `ts/stream/detach.ts` does not exist
+- `warn` `stream session state, cost and send (read by ay ls / status / send)`: ts path `ts/stream/state.ts` does not exist
+- `warn` `stream session state, cost and send (read by ay ls / status / send)`: ts path `ts/stream/cost.ts` does not exist
+- `warn` `stream session state, cost and send (read by ay ls / status / send)`: ts path `ts/stream/send.ts` does not exist
+- `warn` `ConPTY mode filter (Windows, DECSET 9001)`: ts path `ts/conptyModeFilter.ts` does not exist
+- `warn` `ConPTY mode filter (Windows, DECSET 9001)`: rs path `rs/src/conpty_mode_filter.rs` does not exist
+- `warn` `state files written only by TypeScript subcommands and daemons`: ts path `ts/schedules.ts` does not exist
+- `warn` `variables read only by TS subcommands`: ts path `ts/schedules.ts` does not exist
+- `warn` `send --interrupt`: ts path `ts/interruptSend.ts` does not exist
+- `warn` `cron <cron> <target> <message> (add a reminder)`: ts path `ts/schedulesCli.ts` does not exist
+- `warn` `cron <cron> <target> <message> (add a reminder)`: ts path `ts/schedules.ts` does not exist
+- `warn` `cron ls`: ts path `ts/schedulesCli.ts` does not exist
+- `warn` `cron ls`: ts path `ts/schedulesCli.ts` does not exist
+- `warn` `cron rm`: ts path `ts/schedulesCli.ts` does not exist
+- `warn` `schedules ls`: ts path `ts/schedulesCli.ts` does not exist
+- `warn` `scheduler daemon loop (schedules daemon run)`: ts path `ts/schedulesCli.ts` does not exist
+- `warn` `scheduler daemon loop (schedules daemon run)`: ts path `ts/schedules.ts` does not exist
+- `warn` `scheduler daemon loop (schedules daemon run)`: ts path `ts/schedulesCli.ts` does not exist
+- `warn` `schedules daemon install`: ts path `ts/schedulesCli.ts` does not exist
+- `warn` `schedules daemon install`: ts path `ts/schedules.ts` does not exist
+- `warn` `schedules daemon status`: ts path `ts/schedulesCli.ts` does not exist
+- `warn` `schedule store, run state and run log files`: ts path `ts/schedules.ts` does not exist
+- `warn` `schedule store, run state and run log files`: ts path `ts/schedules.ts` does not exist
+- `warn` `schedule store, run state and run log files`: ts path `ts/schedules.ts` does not exist
+- `warn` `schedule store, run state and run log files`: ts path `ts/schedules.ts` does not exist
+- `warn` ledger was reconciled at `30116f1`, which this checkout does not have
+- `todo` 326 feature(s) not fully ported
 
 **Delivery**
 
@@ -101,6 +137,7 @@
 
 **Delivery**
 
+- `warn` `rs/Cargo.toml` is missing or unreadable
 - `info` npm has `rechrome` 1.51.3
 - `warn` the newest release tag in this checkout is `v1.50.0` — it is behind npm; fetch before trusting the code counts
 - `todo` `bun i -g rechrome` installs JavaScript, not the Rust binary (`rech` → `rechrome.ts`, `rechrome` → `rechrome.ts`)

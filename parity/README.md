@@ -42,11 +42,15 @@ not the function name.
 
 | Status | Meaning | Needs |
 |---|---|---|
-| `missing` | Rust has nothing for it | — |
+| `missing` | Rust has nothing for it, or only hands it back to the JavaScript | — |
 | `partial` | Rust has some of it; `note` says what is absent or different | `rs`, `note` |
 | `ported` | Rust appears to do all of it, but no test compares the two | `rs` |
 | `verified` | A test shows Rust and TypeScript behave the same | `rs`, `proof` |
 | `dropped` | Deliberately not carried over; `note` says who decided and why | `note` |
+
+Status is about what the Rust binary does on its own. A feature that works
+because Rust starts the JavaScript for it is `missing`, however well that
+works for users today.
 
 Only the project owner can decide `dropped`. Never use it to make a number
 look better.
@@ -58,7 +62,10 @@ checks that the paths exist and that `verified` entries carry a proof.
 
 A proof is a test you have read and that really compares the two: it runs both
 implementations, or runs Rust against output recorded from TypeScript. A test
-that is skipped in CI, or that you have not seen pass, proves nothing.
+that is skipped in CI, or that you have not seen pass, proves nothing. Nor
+does a comparison that asserts less than the feature: a test that only checks
+for a substring or an exit code proves the feature whose whole behaviour is
+that substring or exit code, and no other.
 
 ## How fine-grained
 
