@@ -95,7 +95,10 @@ Linux 和 macOS 上安装后的命令和二进制本身一样快。Windows 上�
   CI 在 Windows runner 上用最新 bun 跑冒烟测试，格式一变测试就会失败。
 - 已在 CI 的 Windows x64 和 arm64 runner 上用真实的 bun 和 npm 跑通：第一次运行
   后 shim 直接启动二进制，同版本重装后仍然可用。
-- 没有测过的：工具正在运行时升级；用 pnpm 或 yarn 全局安装。
+- 真机验证（`tests/e2e/upgrade.mjs`）：在 Windows 11（bun 1.4.2 和 npm）、只有 bun
+  没有 npm 的 Mac（arm64）和 Linux 上，命令正在运行时升级：包管理器升级成功，正在
+  运行的旧进程不受影响，新启动的命令立刻是新版本。
+- 没有测过的：用 pnpm 或 yarn 全局安装；Windows 上交还给 JS 时按 Ctrl+C。
 
 ### 3.4 考虑过但不采用的做法
 

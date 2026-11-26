@@ -211,12 +211,26 @@ Two bugs the six-platform run caught that Linux alone could not:
 - slack-hub's Rust had never compiled for Windows (a Unix-only `libc` call).
   Fixed in its PR.
 
+Verified on real machines (not CI runners) with `tests/e2e/upgrade.mjs`, on
+Windows 11 x64 with bun 1.4.2 and npm, on a Mac (arm64) that has bun and no
+npm, and on Linux x64 — upgrading while a command of the package is running:
+
+- the package manager's upgrade succeeds
+- the running command keeps running the old version
+- the command starts the new version right away, and is native again after
+  its first run
+
+The Mac also ran `tests/e2e/run.sh` in full. A machine with bun and no npm is
+supported throughout: the launcher's shebang is bun, and the packer falls back
+to `bun publish` and `bun pm pack`.
+
 Not verified:
 
 - `npm publish` against the real registry with a suffixed version, a dist-tag
   and trusted publishing (codex does this in production; rustify has only
   published to the local test registry)
-- an upgrade on Windows while the tool is running
+- Ctrl+C on Windows while a command is handed back to JavaScript (the code
+  compiles for Windows and is reviewed, the key press is not tested)
 - pnpm and yarn global installs on Windows (they keep the launcher)
 
 ## Known limits
