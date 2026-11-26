@@ -6,8 +6,10 @@ no JavaScript runtime in between — without anyone having to know which
 platform they are on.
 
 Status: implemented, and proven by this repo's `ci` workflow on a toy binary
-on all six platforms, with bun and with npm. No real project has released
-through it yet; the publish step has never run against the real npm registry.
+on all six platforms, with bun and with npm. slack-hub is the first project
+wired to it (snomiao/slack-hub PR #117: build and install test only). No
+project has released through it yet; the publish step has never run against
+the real npm registry.
 
 ## How mature projects do it
 
@@ -131,7 +133,10 @@ A `partial` Rust command behaves differently from what users have today.
 
 ### Release pipeline
 
-Projects do not copy any of this. They call it:
+Projects do not copy any of this. They call it from their own workflow. The
+jobs then run in the project's repository, as part of the project's own
+workflow run: that is where the binaries are built, where the artifacts live
+and where publishing happens. rustify only supplies the definition.
 
 ```yaml
 jobs:
@@ -157,7 +162,9 @@ jobs:
 3. **smoke** — on real Linux, macOS and Windows runners, x64 and arm64: install
    the packed release from a throwaway local registry with bun and with npm,
    run it, check that the command became native, install the same version
-   again, and time it.
+   again, and time it. `smoke-extra` adds more commands to run, for the ones
+   that are still JavaScript or handed back to it. The registry answers
+   ordinary dependencies from the real one.
 4. **publish** (`actions/publish`) — a job in the project's own workflow, so
    the npm credential is requested by the project. Platform builds first, the
    main package last. npm checks the *calling* workflow's filename when a
@@ -169,33 +176,42 @@ A pull request runs steps 1–3 only.
 
 ## What is and is not verified
 
-Verified by this repo's CI, on GitHub-hosted runners for all six platforms:
+Verified by this repo's CI, on GitHub-hosted runners for all six platforms,
+with bun and with npm:
 
 - cross-compiling for musl Linux and macOS with cargo-zigbuild, and for
-  Windows x64 and arm64 on a Windows runner
+  Windows x64 and arm64 on a Windows runner; each machine then ran the build
+  for its own CPU
 - pack → publish to a local registry → `bun i -g` and `npm i -g`
-- only the machine's own platform build is installed
 - first run works through the launcher; afterwards the command is native
   (hard link on Linux and macOS, repointed shim on Windows, with bun's real
   shim and npm's real shims)
 - installing the same version again leaves a working command
+- a second command name for the same binary works
+- `hybrid` mode: a command that is still JavaScript keeps working, and a
+  command the binary hands back to JavaScript works
 
 Verified additionally on Linux x64 by `tests/e2e/run.sh`:
 
-- a second command name for the same binary keeps its own name
+- only the machine's own platform build is installed
 - exit codes pass through
 - an upgrade runs the new binary, not a stale link
 - publishing the same release twice is harmless
-- `hybrid` mode, and the hand-back to JavaScript in both launcher and linked
-  state
+- the hand-back also works while the launcher is still in the path
+
+Two bugs the six-platform run caught that Linux alone could not:
+
+- macOS reports the path a command was started through, which for a global
+  install is a symlink, so the hand-back could not find its package. Fixed in
+  `templates/rust/js_fallback.rs`.
+- slack-hub's Rust had never compiled for Windows (a Unix-only `libc` call).
+  Fixed in its PR.
 
 Not verified:
 
 - `npm publish` against the real registry with a suffixed version, a dist-tag
   and trusted publishing (codex does this in production; rustify has only
   published to the local test registry)
-- a real project's dependencies on every target (the toy has none; C
-  dependencies such as ring may need per-project build steps)
 - an upgrade on Windows while the tool is running
 - pnpm and yarn global installs on Windows (they keep the launcher)
 

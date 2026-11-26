@@ -147,18 +147,23 @@ jobs:
 
 已完成：
 
-1. 仓库已公开。
-2. Windows 的 shim 改写已实现，附格式转换的单元测试。
-3. workflow 已拆成可复用 workflow + 发布 action，并有自测 CI。
-4. 自测在六个平台全绿（PR #1）。
+1. 仓库已公开，内容经 PR #1 合入，`v1` 标签已打；各项目通过 `@v1` 引用。
+2. Windows 的 shim 改写已实现并在 CI 的 Windows x64 / arm64 上跑通。
+3. workflow 已拆成可复用 workflow + 发布 action，自测 CI 在六个平台全绿。
+4. slack-hub 已接入（snomiao/slack-hub PR #117）：只构建和冒烟，不发布。Rust
+   二进制作为入口，自己回答 `--version`，其余全部交还给现有 JS。
 
-接下来：
+六平台自测抓到两个只在 Linux 上测不出来的问题：
 
-5. 合入后打 `v1` 标签，各项目通过 `@v1` 引用。
-6. slack-hub 的接入 PR：只构建和冒烟，不发布。接入方式是 Rust 二进制作为入口，
-   未达到一致的命令全部交还给现有 JS。
-7. 真正向 npm 发布由项目所有者决定：把项目的发布流程接到这条流水线上，并在
-   npmjs.com 上配置 Trusted Publisher。
+- macOS 上程序拿到的自身路径是软链接，导致“交还给 JS”找不到包目录（已修）。
+- slack-hub 的 Rust 代码从未在 Windows 上编译过，用了 Unix 专有的 libc 调用
+  （在它的 PR 里修了）。
+
+还没做、需要项目所有者决定的：
+
+- 真正向 npm 发布：把项目的发布流程接到这条流水线上，并在 npmjs.com 上配置
+  Trusted Publisher。
+- agent-yes、rechrome、otoji 的接入。
 
 ## 6. 仍然做不到的
 

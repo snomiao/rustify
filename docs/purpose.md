@@ -11,6 +11,10 @@ be listed here as they are added.
 - **Rust code stays in each project's own repo**, in an `rs/` directory beside
   `ts/`. rustify holds only the plans, parity tracking and shared tooling for
   the migration — not the ported code.
+- **rustify is a helper, not a release channel.** Each project's binaries are
+  built and published by that project's own workflow, in its own repository.
+  Those workflows call the pipeline defined here; rustify's own CI never
+  builds or publishes a project's binaries.
 - **Exact feature parity.** A project's TypeScript is removed only once every
   feature has a Rust equivalent that is proven to behave the same.
 - **npm installs must get the Rust benefits.** Each project is published both

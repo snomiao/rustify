@@ -44,6 +44,21 @@ Nearly everything else, by TS module:
   named `slack-cli` (v0.2.0), a name already taken on crates.io by another
   project, so it needs renaming before it can be published.
 
+## Pipeline
+
+snomiao/slack-hub PR #117 puts the project on the shared pipeline, build and
+install test only. The binary answers `--version` and hands everything else
+back to `dist/cli.js`; `SLACK_HUB_NATIVE=1` runs the Rust commands instead. A
+command moves to Rust by handling it before the hand-back in `rs/src/main.rs`,
+once its ledger entry is `ported` or `verified`. The same PR renames the crate
+to `slack-hub` and makes it compile on Windows.
+
+Its run was green on all six platforms with bun and npm. `slack --version`,
+answered by the binary, started in 1.3 ms on Linux x64 and 5.4 ms on macOS
+arm64 — the same as the binary run directly — and in 24 ms against 16.5 ms on
+Windows x64, where the package manager's shim stays in the path. `slack
+--help`, handed back to JavaScript, worked on every machine.
+
 ## Useful starting points
 
 - `tests/parity.test.ts` compares Rust and TS stdout for two commands
