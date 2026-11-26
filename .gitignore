@@ -3,3 +3,4 @@
 npm-dist/
 .env*
 !.env.example
+/tmp/

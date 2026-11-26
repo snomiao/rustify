@@ -114,7 +114,7 @@ Linux 和 macOS 上安装后的命令和二进制本身一样快。Windows 上�
 # 各项目里的 .github/workflows/release.yml，大约 20 行
 jobs:
   build:
-    uses: snomiao/rustify/.github/workflows/rust-npm-build.yml@v1
+    uses: snomiao/rustify/.github/workflows/rust-npm-build.yml@releases/v1
     with:
       manifest: rs/Cargo.toml
       bins: slack
@@ -126,7 +126,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions: { id-token: write }
     steps:
-      - uses: snomiao/rustify/actions/publish@v1
+      - uses: snomiao/rustify/actions/publish@releases/v1
 ```
 
 - **构建、打包、冒烟测试**放在 rustify 的可复用 workflow 里。平台列表只存在于
@@ -147,7 +147,8 @@ jobs:
 
 已完成：
 
-1. 仓库已公开，内容经 PR #1 合入，`v1` 标签已打；各项目通过 `@v1` 引用。
+1. 仓库已公开。各项目通过 `@releases/v1` 引用流水线：这是一个只做快进的分支，
+   每次 main 上 CI 通过后推进（`v1` 标签标记首个版本，不再移动）。
 2. Windows 的 shim 改写已实现并在 CI 的 Windows x64 / arm64 上跑通。
 3. workflow 已拆成可复用 workflow + 发布 action，自测 CI 在六个平台全绿。
 4. slack-hub 已接入（snomiao/slack-hub PR #117）：只构建和冒烟，不发布。Rust

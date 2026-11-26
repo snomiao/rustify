@@ -88,9 +88,9 @@ the pipeline set up. How it works and why is in `docs/npm-distribution.md`;
 read it before changing a project.
 
 The pipeline lives in this repo and projects reference it:
-`snomiao/rustify/.github/workflows/rust-npm-build.yml@v1` builds six
+`snomiao/rustify/.github/workflows/rust-npm-build.yml@releases/v1` builds six
 platforms, packs the npm packages and smoke-tests the install on real Linux,
-macOS and Windows machines; `snomiao/rustify/actions/publish@v1` publishes
+macOS and Windows machines; `snomiao/rustify/actions/publish@releases/v1` publishes
 from a job in the project's own workflow. Projects never list platforms.
 
 1. In a clean worktree of the project, on a new branch:
@@ -144,5 +144,7 @@ After changing anything in `templates/` or `.github/workflows/`:
    into a temp directory, checks the result).
 2. Open a PR here. The `ci` workflow runs the whole pipeline on the toy binary
    on all six platforms. Windows and macOS behaviour is only ever proven there.
-3. After merging, move the `v1` tag to the new commit so projects pick it up.
-   A change that projects must adapt to gets a new major tag instead.
+3. After merging, and once `ci` is green on main, fast-forward the branch
+   projects follow: `git push origin main:releases/v1`. Never force it. A
+   change that projects must adapt to goes to a new `releases/v2` instead.
+   (The tag `v1` marks the first release and does not move.)

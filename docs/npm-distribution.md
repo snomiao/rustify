@@ -141,7 +141,7 @@ and where publishing happens. rustify only supplies the definition.
 ```yaml
 jobs:
   build:
-    uses: snomiao/rustify/.github/workflows/rust-npm-build.yml@v1
+    uses: snomiao/rustify/.github/workflows/rust-npm-build.yml@releases/v1
     with:
       manifest: rs/Cargo.toml
       bins: mycli
@@ -152,7 +152,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions: { contents: read, id-token: write }
     steps:
-      - uses: snomiao/rustify/actions/publish@v1
+      - uses: snomiao/rustify/actions/publish@releases/v1
 ```
 
 1. **build** (`rust-npm-build.yml`) — six binaries; Linux and macOS are
@@ -173,6 +173,10 @@ jobs:
    registry.
 
 A pull request runs steps 1–3 only.
+
+`releases/v1` is a branch that only ever fast-forwards, to a commit of `main`
+whose CI was green. The workflows check out the packer and the smoke test at
+the very commit they were loaded from, so a project never mixes versions.
 
 ## What is and is not verified
 

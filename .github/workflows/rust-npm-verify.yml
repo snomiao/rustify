@@ -4,7 +4,7 @@
 #
 #   verify:
 #     needs: [build, publish]
-#     uses: snomiao/rustify/.github/workflows/rust-npm-verify.yml@v1
+#     uses: snomiao/rustify/.github/workflows/rust-npm-verify.yml@releases/v1
 #     with:
 #       smoke: mycli --version
 
@@ -31,9 +31,9 @@ on:
         default: https://registry.npmjs.org
         type: string
       scripts-ref:
-        description: "Ref of snomiao/rustify whose scripts are used. Keep it equal to the ref after @ in `uses:`."
+        description: "Use the packer and smoke test from another ref of rustify. Default: the commit this workflow file was loaded from, so the two always match."
         required: false
-        default: v1
+        default: ""
         type: string
 
 jobs:
@@ -48,8 +48,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          repository: snomiao/rustify
-          ref: ${{ inputs.scripts-ref }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ inputs.scripts-ref || job.workflow_sha }}
           path: .rustify
           sparse-checkout: templates/npm
       - uses: actions/setup-node@v4
