@@ -1,0 +1,45 @@
+# The pipeline for a project that builds its binaries itself and ships fewer
+# platforms: `prebuilt: true` with a `rustify.platforms` list. Kept apart from
+# ci.yml because both would upload artifacts of the same names within one run.
+
+name: ci-prebuilt
+
+on:
+  pull_request:
+    paths-ignore: ["docs/**", "parity/**", "**.md"]
+  push:
+    branches: [main]
+    paths-ignore: ["docs/**", "parity/**", "**.md"]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-prebuilt-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Stands for a project's own build matrix.
+  own-build:
+    name: the project's own build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo build --release --manifest-path tests/e2e/toy/Cargo.toml --target-dir target-own
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-linux-x64
+          path: target-own/release/toy
+          if-no-files-found: error
+          retention-days: 3
+
+  pipeline:
+    needs: own-build
+    uses: ./.github/workflows/rust-npm-build.yml
+    with:
+      prebuilt: true
+      manifest: tests/e2e/toy/Cargo.toml
+      bins: toy
+      smoke: toy --version
+      package: tests/e2e/toy-subset/package.json
+      parity: |
+        "$RUSTIFY_BIN_DIR/toy" --version | grep -q "version=0.0.0"

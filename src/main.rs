@@ -757,6 +757,23 @@ fn audit_delivery(s: &mut Section, project: &Project, dir: &Path, offline: bool)
             ));
         }
     }
+    // A project may declare that it ships fewer platforms (rustify.platforms).
+    let declared: Option<Vec<String>> = config
+        .and_then(|c| c.get("platforms"))
+        .and_then(|p| p.as_array())
+        .map(|list| list.iter().filter_map(|k| k.as_str().map(String::from)).collect());
+    let platforms: BTreeMap<String, Json> = match &declared {
+        Some(keys) => {
+            s.info(format!(
+                "ships {} of {} platforms by its own declaration: {}",
+                keys.len(),
+                platforms.len(),
+                keys.join(", ")
+            ));
+            platforms.into_iter().filter(|(k, _)| keys.contains(k)).collect()
+        }
+        None => platforms,
+    };
     let optional = manifest["optionalDependencies"].as_object();
     let mut native = Vec::new();
     let mut broken = Vec::new();

@@ -41,8 +41,10 @@ name = "rechrome"
 repo = "snomiao/rechrome"
 npm = "rechrome"
 crate = "rechrome"
+manifest = "rs/Cargo.toml"
 ts = ["."]
-ignore = ["vendor", "vendor-src", "lab", "public", "docs", "tray"]
+rust = ["rs/src"]
+ignore = ["vendor", "vendor-src", "lab", "public", "docs", "tray", "rs"]
 keep_ts = { "extension" = "browser extension; runs in Chrome", "functions" = "hosted functions; undecided", "signal" = "signaling worker; undecided" }
 
 [[project]]

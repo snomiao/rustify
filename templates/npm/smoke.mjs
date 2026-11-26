@@ -52,6 +52,12 @@ if (!opts.run) {
 }
 const dist = path.resolve(opts.dist || "npm-dist");
 const plan = JSON.parse(fs.readFileSync(path.join(dist, "publish.json"), "utf8"));
+const hostKey = `${process.platform === "android" ? "linux" : process.platform}-${process.arch}`;
+if ((plan.unsupported || []).includes(hostKey)) {
+  // The project said so itself (rustify.platforms); nothing to install here.
+  console.log(`== ${plan.name}@${plan.version} on ${hostKey}\n  skip  the project does not ship a build for ${hostKey}`);
+  process.exit(0);
+}
 const [command, ...args] = String(opts.run).split(/\s+/).filter(Boolean);
 const expect = opts.expect || plan.version;
 const work = fs.mkdtempSync(path.join(os.tmpdir(), "rustify-smoke-"));

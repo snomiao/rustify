@@ -1,0 +1,10 @@
+{
+  "name": "rustify-e2e-toy-subset",
+  "version": "0.0.0",
+  "description": "Fixture for rustify's own pipeline test: a project that builds its binaries itself, for one platform only. It is only ever published to a throwaway local registry.",
+  "license": "MIT",
+  "rustify": {
+    "bins": { "toy": "toy" },
+    "platforms": ["linux-x64"]
+  }
+}

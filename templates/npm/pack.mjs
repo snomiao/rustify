@@ -26,7 +26,9 @@
 //     "bins":    { "<npm command>": "<cargo bin name>", ... },
 //     "mode":    "native" | "hybrid",   // hybrid keeps the package's JS files
 //     "runtime": "bun" | "node",        // shebang of the launcher
-//     "extra":   ["<cargo bin shipped beside the others, without a command>"]
+//     "extra":   ["<cargo bin shipped beside the others, without a command>"],
+//     "platforms": ["linux-x64", ...]   // only if the project cannot build all;
+//                                       // default: every platform in platforms.json
 //   }
 
 import { execFileSync } from "node:child_process";
@@ -112,7 +114,11 @@ function pack(opts) {
   const optionalDependencies = {};
   const missing = [];
 
-  for (const [key, platform] of Object.entries(PLATFORMS)) {
+  const wanted = cfg.platforms || Object.keys(PLATFORMS);
+  const unknown = wanted.filter((key) => !PLATFORMS[key]);
+  if (unknown.length) fail(`rustify.platforms names unknown platforms: ${unknown.join(", ")}. Known: ${Object.keys(PLATFORMS).join(", ")}`);
+  for (const key of wanted) {
+    const platform = PLATFORMS[key];
     const src = path.join(artifacts, key);
     const ext = key.startsWith("win32") ? ".exe" : "";
     const required = Object.values(cfg.bins).map((b) => path.join(src, b + ext));
@@ -145,7 +151,7 @@ function pack(opts) {
   if (missing.length && !opts["allow-missing"]) {
     fail(
       `no binaries for ${missing.join(", ")} under ${artifacts}.\n` +
-        `Every platform must be built before a release. Pass --allow-missing only for local tests.`,
+        `Every platform the project supports must be built before a release. Pass --allow-missing only for local tests.`,
     );
   }
   if (!publish.length) fail(`no platform binaries found under ${artifacts}`);
@@ -203,7 +209,7 @@ function pack(opts) {
   writeJson(path.join(main, "package.json"), manifest);
   publish.push({ dir: "main", tag });
 
-  writeJson(path.join(out, "publish.json"), { name: project.name, version, publish });
+  writeJson(path.join(out, "publish.json"), { name: project.name, version, publish, unsupported: Object.keys(PLATFORMS).filter((k) => !wanted.includes(k)) });
   console.log(`packed ${project.name}@${version} (${mode}) → ${out}`);
   for (const p of publish) console.log(`  ${p.dir.padEnd(13)} dist-tag ${p.tag}`);
   if (missing.length) console.log(`  not included: ${missing.join(", ")}`);

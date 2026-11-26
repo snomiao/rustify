@@ -174,6 +174,13 @@ jobs:
 
 A pull request runs steps 1–3 only.
 
+A project whose build needs its own runners or steps (large C++ dependencies,
+system libraries) keeps its build: its own jobs upload one artifact per
+platform, named `native-<platform key>`, and it calls the workflow with
+`prebuilt: true`, which then only packs, tests and smoke-tests. A project that
+cannot build every platform lists the ones it ships in `rustify.platforms`;
+the launcher tells users of the others that there is no build for them.
+
 `releases/v1` is a branch that only ever fast-forwards, to a commit of `main`
 whose CI was green. The workflows check out the packer and the smoke test at
 the very commit they were loaded from, so a project never mixes versions.
