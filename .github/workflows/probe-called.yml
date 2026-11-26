@@ -1,0 +1,16 @@
+name: probe-called
+on:
+  workflow_call:
+jobs:
+  show:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Contexts inside a called workflow
+        env:
+          JOB: ${{ toJSON(job) }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          echo "job=$JOB"
+          echo "github.workflow_ref=$WORKFLOW_REF"
+          echo "github.workflow_sha=$WORKFLOW_SHA"
