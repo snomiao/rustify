@@ -1,0 +1,279 @@
+# Reusable workflow: Rust binaries → npm packages → install test on every OS.
+#
+#   jobs:
+#     build:
+#       uses: snomiao/rustify/.github/workflows/rust-npm-build.yml@v1
+#       with:
+#         manifest: rs/Cargo.toml
+#         bins: mycli
+#         smoke: mycli --version
+#
+# It builds the listed cargo bins for every supported platform, packs them as
+# npm packages (artifact `npm-dist`), then installs that release from a
+# throwaway local registry on real Linux, macOS and Windows machines, x64 and
+# arm64, with bun and with npm, and runs it. It never publishes: publishing is
+# a job in the calling repository (see actions/publish).
+#
+# The platform list lives here and in templates/npm/platforms.json. Callers
+# never name a platform.
+
+name: rust-npm-build
+
+on:
+  workflow_call:
+    inputs:
+      manifest:
+        description: "Path to the crate's Cargo.toml"
+        required: true
+        type: string
+      bins:
+        description: "Cargo bin names to ship, space separated"
+        required: true
+        type: string
+      smoke:
+        description: "Command that must exit 0 and print the released version, e.g. `mycli --version`"
+        required: true
+        type: string
+      package:
+        description: "package.json that carries the `rustify` configuration"
+        required: false
+        default: package.json
+        type: string
+      version:
+        description: "Version to build, without a leading v (default: the version in Cargo.toml)"
+        required: false
+        default: ""
+        type: string
+      npm-tag:
+        description: "npm dist-tag the release is packed for"
+        required: false
+        default: latest
+        type: string
+      pre-build:
+        description: "Shell command run in the repository root before cargo (generated files, config copies)"
+        required: false
+        default: ""
+        type: string
+      js-build:
+        description: "hybrid mode: command that builds the JavaScript the package still ships"
+        required: false
+        default: ""
+        type: string
+      smoke-expect:
+        description: "Text the smoke command must print (default: the version)"
+        required: false
+        default: ""
+        type: string
+      smoke-extra:
+        description: "More commands to run after installing, one per line: `<command> [args] => <text it must print>`. Use it for commands that are still JavaScript or handed back to it."
+        required: false
+        default: ""
+        type: string
+      scripts-ref:
+        description: "Ref of snomiao/rustify whose scripts are used. Keep it equal to the ref after @ in `uses:`."
+        required: false
+        default: v1
+        type: string
+    outputs:
+      version:
+        description: "The version that was built"
+        value: ${{ jobs.pack.outputs.version }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build ${{ matrix.key }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux and macOS binaries are cross-compiled on Linux with
+          # cargo-zigbuild; its image carries zig and the macOS SDK, so no
+          # macOS runner is needed to build. Linux binaries are static (musl)
+          # and run on glibc and musl distributions alike.
+          - { key: linux-x64, target: x86_64-unknown-linux-musl, os: ubuntu-latest, zig: true }
+          - { key: linux-arm64, target: aarch64-unknown-linux-musl, os: ubuntu-latest, zig: true }
+          - { key: darwin-x64, target: x86_64-apple-darwin, os: ubuntu-latest, zig: true }
+          - { key: darwin-arm64, target: aarch64-apple-darwin, os: ubuntu-latest, zig: true }
+          - { key: win32-x64, target: x86_64-pc-windows-msvc, os: windows-latest }
+          - { key: win32-arm64, target: aarch64-pc-windows-msvc, os: windows-latest }
+    env:
+      MANIFEST: ${{ inputs.manifest }}
+      BINS: ${{ inputs.bins }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The npm version and the binary's own version must be the same string.
+      - name: Stamp version
+        if: inputs.version != ''
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          sed -i.bak -E "0,/^version = \".*\"/s//version = \"$VERSION\"/" "$MANIFEST"
+          rm -f "$MANIFEST.bak"
+          grep -m1 '^version = ' "$MANIFEST"
+
+      - name: Pre-build
+        if: inputs.pre-build != ''
+        shell: bash
+        run: ${{ inputs.pre-build }}
+
+      - name: Build (cargo-zigbuild)
+        if: matrix.zig
+        run: |
+          flags=""; for b in $BINS; do flags="$flags --bin $b"; done
+          docker run --rm -v "$GITHUB_WORKSPACE":/io -w /io -e CARGO_TERM_COLOR=always \
+            ghcr.io/rust-cross/cargo-zigbuild:latest \
+            bash -c "rustup target add ${{ matrix.target }} && cargo zigbuild --release --target ${{ matrix.target }} --manifest-path $MANIFEST --target-dir target-rustify $flags"
+
+      - name: Build (cargo)
+        if: ${{ !matrix.zig }}
+        shell: bash
+        run: |
+          rustup target add ${{ matrix.target }}
+          flags=""; for b in $BINS; do flags="$flags --bin $b"; done
+          cargo build --release --target ${{ matrix.target }} --manifest-path "$MANIFEST" --target-dir target-rustify $flags
+
+      - name: Collect binaries
+        shell: bash
+        run: |
+          ext=""; case "${{ matrix.key }}" in win32-*) ext=".exe" ;; esac
+          mkdir -p "native/${{ matrix.key }}"
+          for b in $BINS; do
+            cp "target-rustify/${{ matrix.target }}/release/$b$ext" "native/${{ matrix.key }}/$b$ext"
+          done
+          ls -la "native/${{ matrix.key }}"
+
+      # A cross build that silently produced a host binary would only show up
+      # on a user's machine. Check the file format here.
+      - name: Check binary format
+        if: runner.os == 'Linux'
+        run: |
+          case "${{ matrix.key }}" in
+            linux-x64) want="ELF 64-bit.*x86-64" ;;
+            linux-arm64) want="ELF 64-bit.*aarch64" ;;
+            darwin-x64) want="Mach-O 64-bit.*x86_64" ;;
+            darwin-arm64) want="Mach-O 64-bit.*arm64" ;;
+          esac
+          for f in native/${{ matrix.key }}/*; do
+            file "$f"
+            file "$f" | grep -Eq "$want" || { echo "::error::$f is not a ${{ matrix.key }} binary"; exit 1; }
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.key }}
+          path: native/${{ matrix.key }}
+          if-no-files-found: error
+          retention-days: 7
+
+  pack:
+    name: pack npm packages
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: snomiao/rustify
+          ref: ${{ inputs.scripts-ref }}
+          path: .rustify
+          sparse-checkout: templates/npm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: .rustify-downloaded
+      - name: Lay out one directory per platform
+        run: |
+          mkdir -p .rustify-native
+          for d in .rustify-downloaded/native-*; do mv "$d" ".rustify-native/${d#.rustify-downloaded/native-}"; done
+          ls -R .rustify-native
+      - name: Resolve version
+        id: version
+        env:
+          VERSION: ${{ inputs.version }}
+          MANIFEST: ${{ inputs.manifest }}
+        run: |
+          version="$VERSION"
+          if [ -z "$version" ]; then
+            version="$(grep -m1 '^version = ' "$MANIFEST" | sed -E 's/version = "(.*)"/\1/')"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building $version"
+      - uses: oven-sh/setup-bun@v2
+        if: inputs.js-build != ''
+      - name: Build JavaScript (hybrid mode)
+        if: inputs.js-build != ''
+        run: ${{ inputs.js-build }}
+      - name: Pack
+        run: |
+          node .rustify/templates/npm/pack.mjs pack --package "${{ inputs.package }}" \
+            --artifacts .rustify-native --version "${{ steps.version.outputs.version }}" \
+            --tag "${{ inputs.npm-tag }}" --out npm-dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-dist
+          path: npm-dist
+          if-no-files-found: error
+          retention-days: 7
+
+  # Installs the packed release from a throwaway local registry on every OS and
+  # CPU family, with bun and with npm, and runs it. Nothing is public yet.
+  smoke:
+    name: smoke ${{ matrix.os }}
+    needs: pack
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest # linux-x64
+          - ubuntu-24.04-arm # linux-arm64
+          - macos-latest # darwin-arm64
+          - macos-15-intel # darwin-x64
+          - windows-latest # win32-x64
+          - windows-11-arm # win32-arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: snomiao/rustify
+          ref: ${{ inputs.scripts-ref }}
+          path: .rustify
+          sparse-checkout: templates/npm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-dist
+          path: npm-dist
+      # Artifacts do not keep the executable bit.
+      - name: Restore executable bits
+        if: runner.os != 'Windows'
+        run: chmod +x npm-dist/*/bin/*
+      - name: Install and run
+        shell: bash
+        env:
+          SMOKE: ${{ inputs.smoke }}
+          EXPECT: ${{ inputs.smoke-expect }}
+          EXTRA: ${{ inputs.smoke-extra }}
+        run: |
+          set -- --dist npm-dist --run "$SMOKE"
+          if [ -n "$EXPECT" ]; then set -- "$@" --expect "$EXPECT"; fi
+          while IFS= read -r line; do
+            if [ -n "$line" ]; then set -- "$@" --also "$line"; fi
+          done <<< "$EXTRA"
+          node .rustify/templates/npm/smoke.mjs "$@"

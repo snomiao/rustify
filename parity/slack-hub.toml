@@ -1,0 +1,906 @@
+# Parity ledger for slack-hub. Format and rules: parity/README.md.
+#
+# First full pass, written by reading the code (nothing was built or run):
+#   TypeScript  ts/cli.ts main() (the yargs command tree, lines 5930-8914) and
+#               the modules it calls
+#   Rust        rs/src/main.rs and rs/src/slack.rs, in full
+#
+# No feature is `verified`. tests/parity.sh only runs `bun run test`;
+# tests/parity.test.ts compares stdout for two invocations (`news --limit 5`,
+# `search deploy --count 10`), skips the comparison unless
+# rs/target/release/slack exists (CI never builds it), and as the two
+# implementations stand their output for both cases differs. It is not a proof
+# of anything yet.
+#
+# In every `partial` note: Rust takes its token only from SLACK_MCP_XOXP_TOKEN,
+# has no -w/--workspace, no session cookie and no rate-limit waiting. Those are
+# tracked once, under "Credentials and identity" and "Cross-cutting", and not
+# repeated per command.
+
+reconciled = "e315b19"
+
+# ───────────────────────────── Reading ─────────────────────────────
+
+[[feature]]
+name = "read / msgs with no target (overview of joined channels)"
+status = "partial"
+ts = "ts/cli.ts:507 cmdMsgs + dispatch ts/cli.ts:6206"
+rs = "rs/src/main.rs:236"
+note = "Rust registers only `msgs`, not the primary name `read`. Same selection (joined channels, 10 most recently updated, 3 of the last 5 plain messages) but the header is `── #name ─…` where TS prints `-- #name ---…`, the 3 messages come newest-first where TS prints oldest-first, and Rust reads only the first 200 conversations where TS pages through all of them."
+
+[[feature]]
+name = "read <target> / msgs <target> (channel or DM history)"
+status = "partial"
+ts = "ts/cli.ts:428 cmdMsgsTarget + dispatch ts/cli.ts:6206"
+rs = "rs/src/main.rs:191"
+note = "Rust: `msgs <target> [-n 20]` only. Output differs: Rust prints a `── #name ──` header and `[time] <name|@handle> text` lines, TS prints no header and `<UTC ISO>  @handle:  text` lines (see `message line format`). Absent in Rust: a permalink carrying thread_ts reads that thread; alias targets; --format/--json; --unreplied."
+
+[[feature]]
+name = "read --format jsonl / --json"
+status = "missing"
+ts = "ts/cli.ts:366 slimMsg"
+note = "One JSON object per message: ts, user, username, bot_id, thread_ts, text, reactions, reply_count, reply_users_count, latest_reply, files, attachments."
+
+[[feature]]
+name = "read --unreplied"
+status = "missing"
+ts = "ts/cli.ts:407 filterUnreplied"
+note = "Keeps only messages whose last word (thread replies included) is someone else's."
+
+[[feature]]
+name = "thread <target> <ts>"
+status = "partial"
+ts = "ts/cli.ts:479 cmdThread + dispatch ts/cli.ts:6226"
+rs = "rs/src/main.rs:225"
+note = "Rust: `thread <target> <ts> [-n 100]`. Line format differs as for `read`. The ts argument differs: TS takes a Slack ts or an ISO stamp that must carry 6 fractional digits and is read as UTC (anything else is an error); Rust takes a number, RFC 3339, or a zone-less ISO stamp read as LOCAL time, and passes anything else through without an error."
+
+[[feature]]
+name = "thread --format jsonl|tsv / --json"
+status = "missing"
+ts = "ts/cli.ts:458 tsvLine + ts/cli.ts:366 slimMsg"
+note = "tsv reads every page of the thread: <ts> TAB <user or bot id> TAB <escaped text> [files: N]."
+
+[[feature]]
+name = "thread --since"
+status = "missing"
+ts = "ts/cli.ts:467 wholeThread"
+note = "Only messages after a ts; reads every page and refuses to return a thread it cannot read whole (over 200 pages)."
+
+[[feature]]
+name = "news"
+status = "partial"
+ts = "ts/cli.ts:541 cmdNews + dispatch ts/cli.ts:6643"
+rs = "rs/src/main.rs:283"
+note = "Same query (search.messages `to:me`, first page of 100, cut to --limit/-l, default 20). Output differs: Rust groups by UTC day, newest first, a `┄` rule, two lines per item (`💬 or 🔔 <#chan or @display name>  HH:MM`, then `name: first line cut to 80 chars`); TS groups by local day, oldest first inside a day, a `-` rule, one full message line per item (`<UTC ISO>  #chan  @handle:  text` plus reactions/files). tests/parity.test.ts has this case but cannot pass as written."
+
+[[feature]]
+name = "search <query>"
+status = "partial"
+ts = "ts/cli.ts:633 cmdSearch + dispatch ts/cli.ts:6651"
+rs = "rs/src/main.rs:340"
+note = "Arguments and paging match (--count/-n, default 100, pages of 100). The default output does not: TS prints one formatted line per match (`<UTC ISO>  #chan  @handle:  text`), Rust prints the raw response as JSON. tests/parity.test.ts has `search deploy --count 10` but cannot pass as written."
+
+[[feature]]
+name = "search --json"
+status = "partial"
+ts = "ts/cli.ts:660"
+rs = "rs/src/main.rs:340 + rs/src/slack.rs:80 search_all"
+note = "Rust prints the merged response as pretty JSON, but always, and has no --json flag: `search --json` is a clap usage error. Key order also differs: serde_json (no preserve_order) sorts keys alphabetically, TS keeps Slack's order."
+
+[[feature]]
+name = "search: bot token falls back to a user-token profile of the same workspace"
+status = "missing"
+ts = "ts/cli.ts:625 findUserTokenProfile"
+note = "On not_allowed_token_type with an xoxb- token: retry with a sibling profile's user token (same teamId only), else a 3-line error naming `slack auth login`."
+
+[[feature]]
+name = "dump"
+status = "partial"
+ts = "ts/cli.ts:796 cmdDump + dispatch ts/cli.ts:8304"
+rs = "rs/src/main.rs:344"
+note = "Closest of the six: same flags (--days/-d 7, --limit/-l 200, --filter/-f), same selection, headings, `SKIP` lines and stderr summary. Different: message stamps are UTC in Rust and local time in TS (ts/format.ts formatYmdHm); Rust reads only the first 200 conversations where TS pages through all."
+
+[[feature]]
+name = "message line format (timestamps, author, multi-line text)"
+status = "partial"
+ts = "ts/cli.ts:281 formatMsgLine"
+rs = "rs/src/main.rs:74 format_message + rs/src/main.rs:34 fmt_ts"
+note = "TS: `<UTC ISO with microseconds>  [#chan  ]@handle:  text`, continuation lines indented two spaces, `  [+N replies]` on thread parents. Rust: `[time] <display name|@handle> text` with lines joined by ` ↵ `, time in the LOCAL zone as HH:MM / MM-DD HH:MM on a terminal and ISO when piped, `  [N replies]` and `  [reply in thread]`. Nothing in TS switches format on a terminal."
+
+[[feature]]
+name = "reactions, files and forwarded messages in read output"
+status = "missing"
+ts = "ts/cli.ts:312 + ts/attachments.ts"
+note = "Per message: `:name:×count` reactions, `📎 name (size) [file id]` per file, and the author/channel/text/permalink of forwarded or shared messages (link unfurls left out)."
+
+[[feature]]
+name = "<@U…> mentions shown as @name"
+status = "partial"
+ts = "ts/format.ts:390 resolveMentions"
+rs = "rs/src/slack.rs:242 resolve_mentions"
+note = "Same result for `<@UID>` and `<@UID|label>` (display name, else real name, else handle, else the id). Rust's label clean-up searches for the text `@name|` anywhere, so a literal `@name|…>` elsewhere in the message is cut as well; TS replaces only the `<@UID|label>` token."
+
+[[feature]]
+name = "<!date^…> markup shown as a date"
+status = "partial"
+ts = "ts/format.ts:421 resolveDateMarkup"
+rs = "rs/src/slack.rs:275 resolve_date_markup"
+note = "Well-formed markup renders the same (`Weekday, Mon DD, YYYY`, UTC). Malformed markup (non-numeric epoch, no format part) is left as it is by TS and replaced by its fallback text by Rust."
+
+[[feature]]
+name = "line breaks restored in messages Slack stored flattened"
+status = "missing"
+ts = "ts/newlines.ts + ts/slack.ts:297 repairMessages"
+note = "Applied to every history / replies / search response, so it changes what read, thread, news, search and dump print for messages sent with blocks."
+
+[[feature]]
+name = "channel ls"
+status = "missing"
+ts = "ts/cli.ts:583 cmdChannels + dispatch ts/cli.ts:6245"
+note = "Group aliases `channels`, `ch`; `ls`/`list`. --limit/-n 200, --filter/-f, --all, --format text|jsonl, --json."
+
+[[feature]]
+name = "channel get"
+status = "missing"
+ts = "ts/cli.ts:6258"
+
+[[feature]]
+name = "channel create"
+status = "missing"
+ts = "ts/cli.ts:6325"
+note = "Alias `new`. --private, --invite (repeatable, warns about guests), --code gate."
+
+[[feature]]
+name = "channel rename"
+status = "missing"
+ts = "ts/cli.ts:6398"
+note = "Alias `mv`. --dry-run, --code gate, per-error-code messages."
+
+[[feature]]
+name = "channel invite"
+status = "missing"
+ts = "ts/cli.ts:6283"
+note = "--code gate; already_in_channel is not an error."
+
+[[feature]]
+name = "user ls"
+status = "missing"
+ts = "ts/cli.ts:6488"
+note = "Group alias `usr`. --limit/-n 200, --filter/-f, --format text|jsonl|yaml, --json, --external (Slack Connect people via shared channels); marks guests and external users."
+
+[[feature]]
+name = "user get"
+status = "missing"
+ts = "ts/cli.ts:6597"
+
+[[feature]]
+name = "tail [target]"
+status = "missing"
+ts = "ts/tail.ts + dispatch ts/cli.ts:8860"
+note = "Polling follow: --since, --thread, --watch-thread, --me, --interval (ms, 60000), --timeout, --exit-on-message."
+
+[[feature]]
+name = "tail: RTM WebSocket mode (--no-rtm to poll)"
+status = "missing"
+ts = "ts/rtm.ts + ts/slack.ts:1330 clientBoot"
+note = "Used when the token is a desktop session (xoxc + cookie)."
+
+[[feature]]
+name = "stream --grep"
+status = "missing"
+ts = "ts/stream.ts + dispatch ts/cli.ts:8695"
+note = "All channels the identity is in, threads included. --ignore-case, --channel, --replies-to, --json, --once (exit 0 matches / 2 none / 3 failure), --since, --interval, --thread-window, --thread-scan, --calls-per-min, --as-user (default identity is the bot)."
+
+[[feature]]
+name = "stream: relay doorbell mode"
+status = "missing"
+ts = "ts/relay.ts + ts/stream.ts"
+note = "WebSocket to the relay with SSE fallback, resumable by seq/epoch; SLACK_RELAY_URL, SLACK_RELAY_TOKEN, SLACK_RELAY_TRANSPORT; --no-relay, --reconcile, --reactions."
+
+[[feature]]
+name = "stream --inbox (deliver matches to subscribing .slack-hub/ inboxes)"
+status = "missing"
+ts = "ts/inbox.ts deliver + ts/cli.ts:8832"
+
+[[feature]]
+name = "stream cursor file ($XDG_STATE_HOME/slack-hub/stream/<key>.json, --state)"
+status = "missing"
+ts = "ts/cli.ts:8798 + ts/stream.ts"
+note = "One per identity + grep + channels; makes the stream resumable (at-least-once)."
+
+[[feature]]
+name = "download <ref> [dest]"
+status = "missing"
+ts = "ts/cli.ts:5899 cmdDownload + dispatch ts/cli.ts:8294"
+
+[[feature]]
+name = "files ls"
+status = "missing"
+ts = "ts/cli.ts:5609 cmdFilesList + dispatch ts/cli.ts:8162"
+note = "--limit/-l 100, --type/-t, --channel/-c, --user/-u, --format text|jsonl, --json."
+
+[[feature]]
+name = "lists <ref> (read a Slack List's rows)"
+status = "missing"
+ts = "ts/cli.ts:5678 cmdLists + dispatch ts/cli.ts:8272"
+note = "--limit/-l 100, --format text|jsonl, --json, --as-bot (public API instead of the user session)."
+
+# ───────────────────────────── Sending ─────────────────────────────
+
+[[feature]]
+name = "send <target> <message>"
+status = "partial"
+ts = "ts/cli.ts:2471 cmdSend + dispatch ts/cli.ts:6662"
+rs = "rs/src/main.rs:420 + rs/src/slack.rs:104 send"
+note = "Both post chat.postMessage with text plus one markdown block, and both have --channel-id and --user-id. Different or absent in Rust: the confirm flag is --confirm, not --code (see the gate); the target must start with # or @ (TS also takes raw ids, permalinks and aliases); success prints `✓ Sent (ts: …)` where TS prints `✓ Sent: <permalink>`; an empty message is not refused; none of TS's other flags (--as-bot, --broadcast, --no-mentions, --to, --any-thread, --json, --fix-urls, --allow-url-adjacent); no sent-log record or message metadata. Rust runtime errors print as `Error: …`; TS maps Slack error codes to guidance."
+
+[[feature]]
+name = "confirm-hash safety gate (--code)"
+status = "partial"
+ts = "ts/cli.ts:1267 requireCode + ts/cli.ts:1167 safetyCode"
+rs = "rs/src/main.rs:445"
+note = "Rust gates only `send`, and differently: flag --confirm (TS --code on every gated command); hash = sha256(last 5 plain channel messages as ts:text + message), TS = sha256(channel id, thread ts, last message text, message as it will post, acting user id) so a code is bound to destination and identity; Rust prints the preview only when stderr is a terminal, TS always prints it on stdout; messages are `Rerun with --confirm=` / `Confirm hash mismatch. Expected:` vs `Rerun with --code=` / `Code mismatch (got …, expected …)`. Absent: the From: identity line, the destination label, thread-tail preview, terminal-control stripping of names. TS gates: send, reply, outbox flush, ask, poll, edit, tick, delete, upload, schedule send/rm, pinlog new/set/note, channel create/rename/invite, drafts edit/delete, todos add/done/edit/rm, lists create/add/set/share."
+
+[[feature]]
+name = "send: thread replies (#chan:<ts>, @user:<ts>, message permalink)"
+status = "partial"
+ts = "ts/cli.ts:1327 parseTargetThread"
+rs = "rs/src/main.rs:158"
+note = "Rust replies in a thread only through a --thread <ts> flag that TS does not have. TS reads the thread from the target: `#chan:<ts>` (Slack ts or ISO), or a message permalink (its ?thread_ts, else the message itself). Rust accepts neither form. TS also previews the thread's last 3 messages in the gate."
+
+[[feature]]
+name = "send --broadcast (also send to channel)"
+status = "missing"
+ts = "ts/slack.ts:491 send"
+
+[[feature]]
+name = "send --json (one JSON line: ok, channel, ts, thread_ts, permalink)"
+status = "missing"
+ts = "ts/cli.ts:2733"
+
+[[feature]]
+name = "send --to <permalink> / --any-thread (refuse a reply in the wrong thread)"
+status = "missing"
+ts = "ts/cli.ts:6680 + ts/cli.ts:1393 messagePlace"
+
+[[feature]]
+name = "message from stdin (- as the message)"
+status = "missing"
+ts = "ts/cli.ts:2864 isStdinArg"
+note = "send, reply, outbox add; pinlog reads state with --file -."
+
+[[feature]]
+name = "@handle → <@USERID> mention encoding (--no-mentions)"
+status = "missing"
+ts = "ts/format.ts:123 encodeMentionsDetailed"
+note = "On by default for send, reply, edit, ask, poll. ASCII handles and CJK full names (one trailing honorific allowed); workspace list, then channel members for Slack Connect guests; ambiguous or unresolved names stay text and are reported; a Mentions block in the gate preview."
+
+[[feature]]
+name = "untagged-mention warning"
+status = "missing"
+ts = "ts/format.ts:361 findUntaggedMentions"
+note = "Warns when a member is named in plain text (山田さん, `Hi Alice`) without a tag; skipped for thread participants and the DM counterpart."
+
+[[feature]]
+name = "URL boundary guard (--allow-url-adjacent, --fix-urls)"
+status = "missing"
+ts = "ts/urlGuard.ts"
+note = "Refuses a bare URL that Slack's autolinker would cut wrongly because text is glued before or after it (send, reply, edit, ask, poll, schedule send, pinlog, upload comment, drafts, outbox flush); --allow-url-adjacent only warns; --fix-urls (send, reply, edit) wraps it as <url>."
+
+[[feature]]
+name = "escape sequences in message arguments (backslash-n, backslash-t, and the ¥ spellings)"
+status = "missing"
+ts = "ts/escapes.ts"
+
+[[feature]]
+name = "self-DM warning"
+status = "missing"
+ts = "ts/cli.ts:2430 isSelfDmChannel"
+
+[[feature]]
+name = "unreplied warning (last message is yours; SLACK_UNREPLIED_WARN=0 turns it off)"
+status = "missing"
+ts = "ts/cli.ts:2628"
+
+[[feature]]
+name = "duplicate-reply warning (82% similar to a message already in the thread)"
+status = "missing"
+ts = "ts/cli.ts:2664 + ts/cli.ts:1570 textSimilarity"
+
+[[feature]]
+name = "quiet-hours notice in confirm previews"
+status = "missing"
+ts = "ts/quietHours.ts"
+note = "Recipient's zone for DMs, else SLACK_QUIET_TZ (default Asia/Tokyo); SLACK_QUIET_START / SLACK_QUIET_END (23 / 8). For schedule send, judged at the delivery time."
+
+[[feature]]
+name = "choice-question hint (suggests `slack ask`)"
+status = "missing"
+ts = "ts/choiceHint.ts"
+note = "Patterns come from the language packs."
+
+[[feature]]
+name = "secret masking in confirm previews"
+status = "missing"
+ts = "ts/format.ts:478 maskSecrets"
+note = "Runs of 32+ token characters in other people's quoted messages are cut to 4 characters."
+
+[[feature]]
+name = "reply"
+status = "missing"
+ts = "ts/cli.ts:6836 + ts/cli.ts:1351 resolveReplyTarget"
+note = "Thread-only send with the directory's prefix: alias | permalink | #chan:<ts> | bare ts in settings' channel; --to, --any-thread, --prefix, --as-bot, --json, --code; refusals under restrict_to_subscriptions."
+
+[[feature]]
+name = "edit <target> <newText>"
+status = "missing"
+ts = "ts/cli.ts:1676 cmdEdit + dispatch ts/cli.ts:7761"
+note = "--code gate, --as-bot, --no-mentions, --fix-urls, --channel-id; refuses an edit that breaks an ask/poll message unless --force; keeps the lane prefix."
+
+[[feature]]
+name = "tick <target> [n]"
+status = "missing"
+ts = "ts/tick.ts + dispatch ts/cli.ts:7776"
+
+[[feature]]
+name = "delete <target>"
+status = "missing"
+ts = "ts/cli.ts:1790 cmdDelete + dispatch ts/cli.ts:7787"
+note = "--code gate, --as-bot, --channel-id."
+
+[[feature]]
+name = "react <target> <emoji>"
+status = "missing"
+ts = "ts/cli.ts:2369 cmdReact + dispatch ts/cli.ts:7990"
+note = "--remove, --channel-id. No confirm gate."
+
+[[feature]]
+name = "upload <target> <file..>"
+status = "missing"
+ts = "ts/cli.ts:5534 cmdUpload + ts/slack.ts:1279 uploadFile"
+note = "--title, --comment, --code gate, --as-bot, --channel-id, --user-id; thread targets."
+
+[[feature]]
+name = "schedule send"
+status = "missing"
+ts = "ts/cli.ts:5385 cmdScheduleSend + dispatch ts/cli.ts:7638"
+note = "--at (ISO or Unix ts), --code gate, --as-bot, --channel-id, --user-id."
+
+[[feature]]
+name = "schedule ls"
+status = "missing"
+ts = "ts/cli.ts:5474 cmdScheduleList + dispatch ts/cli.ts:7706"
+
+[[feature]]
+name = "schedule rm"
+status = "missing"
+ts = "ts/cli.ts:5502 cmdScheduleRm + dispatch ts/cli.ts:7727"
+
+[[feature]]
+name = "drafts ls"
+status = "missing"
+ts = "ts/cli.ts:908 cmdDrafts + dispatch ts/cli.ts:8390"
+note = "Also the default of `drafts`. --all/-a. Desktop session token only (internal API)."
+
+[[feature]]
+name = "drafts new"
+status = "missing"
+ts = "ts/cli.ts:8398 + ts/slack.ts:1197 createDraft"
+note = "Alias `save`."
+
+[[feature]]
+name = "drafts get"
+status = "missing"
+ts = "ts/cli.ts:1139 cmdDraftGet"
+
+[[feature]]
+name = "drafts edit"
+status = "missing"
+ts = "ts/cli.ts:8425"
+note = "Alias `update`. --code gate."
+
+[[feature]]
+name = "drafts delete"
+status = "missing"
+ts = "ts/cli.ts:8457"
+note = "Alias `rm`. --code gate."
+
+# ───────────────────────────── ask and poll ─────────────────────────────
+
+[[feature]]
+name = "ask <target> <question> [choices..]"
+status = "missing"
+ts = "ts/cli.ts:3682 cmdAsk + ts/ask.ts + dispatch ts/cli.ts:7080"
+note = "Posts a question with choices pre-seeded as 1️⃣..🔟 reactions (ts/reactionSeed.ts, SLACK_REACTION_SEED_GAP_MS); requires an addressee tag; --body, --lang, --code gate, --as-bot, --channel-id, --user-id. The posted body is a wire format that collect reads back."
+
+[[feature]]
+name = "ask --wait (block for the answer; exit codes 0/2/3/4/5/6/7; --json; --timeout)"
+status = "missing"
+ts = "ts/cli.ts:3461 askWaitForAnswer + ts/cli.ts:2790"
+
+[[feature]]
+name = "ask --waitFor <permalink> / ask collect <permalink> (--after cursor)"
+status = "missing"
+ts = "ts/cli.ts:4806 cmdAskWaitFor"
+
+[[feature]]
+name = "ask --void / ask void <link..> (--reason, --superseded-by, --reask)"
+status = "missing"
+ts = "ts/cli.ts:4691 cmdAskVoid"
+
+[[feature]]
+name = "ask --edit <permalink>"
+status = "missing"
+ts = "ts/cli.ts:4074 cmdAskEdit"
+
+[[feature]]
+name = "ask --ls (--state, --stale, --channel, --limit, --json)"
+status = "missing"
+ts = "ts/cli.ts:4190 cmdAskLs"
+
+[[feature]]
+name = "ask --pending (--since, --channel, --undelivered, --json)"
+status = "missing"
+ts = "ts/cli.ts:4336 cmdAskPending"
+
+[[feature]]
+name = "ask --pending --push / --watch (hand answers to the asking agent)"
+status = "missing"
+ts = "ts/askPush.ts + ts/cli.ts:4519 askPushWatch"
+note = "Runs `ay send <pid>` / `ay ls --json` (SLACK_HUB_AY overrides the command); --interval; a push lock; rings from the relay."
+
+[[feature]]
+name = "ask --explain / --explain-exit (ℹ️ pill; SLACK_HUB_ASK_EXPLAIN)"
+status = "missing"
+ts = "ts/cli.ts:2811 + ts/ask.ts"
+
+[[feature]]
+name = "language packs for what ask posts (locales/en.json, ja.json; .slack-hub/locales overrides; --lang, SLACK_HUB_LANG)"
+status = "missing"
+ts = "ts/locales.ts"
+note = "Language is chosen from --lang, SLACK_HUB_LANG, the answerers' Slack locale, the question's language, the system locale, then ja. Packs are read from the installed package at run time and reloaded on change."
+
+[[feature]]
+name = "poll / vote"
+status = "missing"
+ts = "ts/cli.ts:5038 cmdPoll + ts/poll.ts + dispatch ts/cli.ts:7446"
+note = "2..10 choices; --multi, --until, --body, --code gate, --as-bot. Errors exit 3."
+
+[[feature]]
+name = "poll --results / --close (--names, --no-notify)"
+status = "missing"
+ts = "ts/cli.ts:5218 cmdPollResults"
+
+# ───────────────────────────── Boards, tasks, lists ─────────────────────────────
+
+[[feature]]
+name = "pinlog new"
+status = "missing"
+ts = "ts/cli.ts:1932 cmdPinlogCreate + ts/pinlog.ts + dispatch ts/cli.ts:7853"
+note = "--file (- = stdin), --code gate, --as-bot (refused when -w names another workspace)."
+
+[[feature]]
+name = "pinlog set"
+status = "missing"
+ts = "ts/cli.ts:2060 cmdPinlogUpdate + ts/readback.ts"
+note = "--file, --adopt, --code gate, --as-bot. Holds a per-board lock file under ~/.config/slack-cli/locks and reads the stored message back to check what Slack kept."
+
+[[feature]]
+name = "pinlog note"
+status = "missing"
+ts = "ts/cli.ts:7930"
+
+[[feature]]
+name = "pinlog get / show (--json)"
+status = "missing"
+ts = "ts/cli.ts:2234 cmdPinlogShow"
+
+[[feature]]
+name = "pinlog ls <channel>"
+status = "missing"
+ts = "ts/cli.ts:2314 cmdPinlogList"
+
+[[feature]]
+name = "pinlog pin (hidden recovery command)"
+status = "missing"
+ts = "ts/cli.ts:2341 cmdPinlogPin"
+
+[[feature]]
+name = "todo ls"
+status = "missing"
+ts = "ts/cli.ts:708 cmdTodoLs + ts/todo.ts + dispatch ts/cli.ts:8021"
+note = "--state (open, untriaged, pending, doing, done, dropped, stuck), --in, --from, -n/--count 50, --json, --mine; hidden --shared kept for old scripts."
+
+[[feature]]
+name = "mytodo ls"
+status = "missing"
+ts = "ts/cli.ts:8109"
+
+[[feature]]
+name = "todo set <target> <state>"
+status = "missing"
+ts = "ts/cli.ts:735 cmdTodoSet + ts/todo.ts"
+
+[[feature]]
+name = "todo flag <target> <flag> (--remove)"
+status = "missing"
+ts = "ts/cli.ts:756 cmdTodoFlag + ts/todo.ts"
+
+[[feature]]
+name = "todo doctor --in <#chan> (--fix, --limit)"
+status = "missing"
+ts = "ts/cli.ts:766 cmdTodoDoctor + ts/todo.ts"
+
+[[feature]]
+name = "todo emoji config (~/.config/slack-cli/todo.json)"
+status = "missing"
+ts = "ts/todo.ts:100"
+
+[[feature]]
+name = "todos ls (Slack's To-dos tab)"
+status = "missing"
+ts = "ts/cli.ts:947 cmdTodos + ts/slackTodos.ts + dispatch ts/cli.ts:8318"
+note = "Also the default of `todos`. --filter todo|saved|completed|archived, --limit/-n 50, --json. Desktop session token only."
+
+[[feature]]
+name = "todos add"
+status = "missing"
+ts = "ts/cli.ts:1062 cmdTodosWrite + dispatch ts/cli.ts:8333"
+
+[[feature]]
+name = "todos done / complete (--undo)"
+status = "missing"
+ts = "ts/cli.ts:8346"
+
+[[feature]]
+name = "todos edit (--due, --todo, --saved)"
+status = "missing"
+ts = "ts/cli.ts:8357"
+
+[[feature]]
+name = "todos rm / remove / delete"
+status = "missing"
+ts = "ts/cli.ts:8375"
+
+[[feature]]
+name = "lists create"
+status = "missing"
+ts = "ts/cli.ts:5781 cmdListsCreate + ts/lists.ts"
+note = "--col name:type (repeatable), --todo, --code gate. All list writes use the bot token."
+
+[[feature]]
+name = "lists add"
+status = "missing"
+ts = "ts/cli.ts:5807 cmdListsAdd"
+
+[[feature]]
+name = "lists set (--set column=value, --done)"
+status = "missing"
+ts = "ts/cli.ts:5834 cmdListsSet"
+
+[[feature]]
+name = "lists share (--user, --channel, --level)"
+status = "missing"
+ts = "ts/cli.ts:5866 cmdListsShare"
+
+# ───────────────────────────── Logs, diagnostics, agents ─────────────────────────────
+
+[[feature]]
+name = "sent [query]"
+status = "missing"
+ts = "ts/cli.ts:7568 + ts/sentlog.ts"
+note = "Reads only the local log; no token, no network. --channel, --since, --session, --cwd, --kind, --json, --count/-n 50."
+
+[[feature]]
+name = "sent log and message attribution"
+status = "missing"
+ts = "ts/sentlog.ts"
+note = "Every send/ask/poll/edit is recorded in ~/.config/slack-cli/sent.sqlite (SLACK_HUB_SENT_DB) with pid, agent pid, host, cwd, git branch, agent CLI and session id, and stamped into Slack message metadata (event_type slack_hub_sent). SLACK_HUB_ATTRIBUTION=off turns both off."
+
+[[feature]]
+name = "doctor (bot token can carry a two-way DM)"
+status = "missing"
+ts = "ts/botdoctor.ts + ts/cli.ts:5296 cmdDoctor"
+note = "The same diagnosis runs after every --as-bot DM."
+
+[[feature]]
+name = "agent status <target> <status>"
+status = "missing"
+ts = "ts/agent.ts:114"
+note = "--title, --bot-token-env. Bot token only."
+
+[[feature]]
+name = "agent run <target> -- <command...>"
+status = "missing"
+ts = "ts/agent.ts:40 runAgent"
+note = "Heartbeat while the child runs (--every 300), --close, forwards signals, exits with the child's code or 128+signal."
+
+# ───────────────────────────── .slack-hub/ directory scope ─────────────────────────────
+
+[[feature]]
+name = ".slack-hub/ directory scope and settings.yml / settings.local.yml"
+status = "missing"
+ts = "ts/scope.ts"
+note = "Nearest .slack-hub/ walking up from the cwd, else ~/.config/slack-hub (SLACK_HUB_HOME). Keys: prefix, channel, as_bot, subscriptions, identities, restrict_to_subscriptions, auto_subscribe, nudge_after_min. Writes are tmp + rename under a lock file; a registry of scopes on the machine. YAML is parsed with Bun.YAML."
+
+[[feature]]
+name = "init [dir]"
+status = "missing"
+ts = "ts/scope.ts initScope + dispatch ts/cli.ts:6698"
+
+[[feature]]
+name = "alias ls"
+status = "missing"
+ts = "ts/cli.ts:6719"
+
+[[feature]]
+name = "alias set"
+status = "missing"
+ts = "ts/cli.ts:6734"
+note = "--note, --shared, --dir."
+
+[[feature]]
+name = "alias unset / rm"
+status = "missing"
+ts = "ts/cli.ts:6770"
+
+[[feature]]
+name = "alias who <channel> <ts>"
+status = "missing"
+ts = "ts/cli.ts:6791"
+note = "Exit 2 when nobody subscribes."
+
+[[feature]]
+name = "alias import <tsv>"
+status = "missing"
+ts = "ts/cli.ts:6805"
+note = "One-shot import of a legacy allowlist; a candidate for not porting."
+
+[[feature]]
+name = "aliases as targets (read, send, reply, alias-named threads)"
+status = "missing"
+ts = "ts/scope.ts lookupAlias + ts/cli.ts:1340"
+
+[[feature]]
+name = "inbox ls"
+status = "missing"
+ts = "ts/inbox.ts + dispatch ts/cli.ts:6893"
+
+[[feature]]
+name = "inbox listen"
+status = "missing"
+ts = "ts/cli.ts:6903"
+note = "--timeout 3600, --new-only, --thread, --alias, --from."
+
+[[feature]]
+name = "inbox nudge (--eyes, --as-bot, --json; exit 1 when anything is overdue)"
+status = "missing"
+ts = "ts/cli.ts:6933 + ts/inbox.ts overdue"
+
+[[feature]]
+name = "done <ref..>"
+status = "missing"
+ts = "ts/cli.ts:6969 + ts/inbox.ts markDone"
+
+[[feature]]
+name = "outbox add"
+status = "missing"
+ts = "ts/cli.ts:6988 + ts/inbox.ts addOutbox"
+
+[[feature]]
+name = "outbox ls"
+status = "missing"
+ts = "ts/cli.ts:7003"
+
+[[feature]]
+name = "outbox flush (one --code for the batch)"
+status = "missing"
+ts = "ts/cli.ts:7011"
+
+[[feature]]
+name = "secret redaction of inbox/outbox files"
+status = "missing"
+ts = "ts/redact.ts + ts/vendor/gitleaks.toml"
+note = "gitleaks' default rules run in-process (Go RE2 patterns converted to JS regexes) plus the project's own rules and exact-value masking of its own credentials."
+
+[[feature]]
+name = "relay init [dir]"
+status = "missing"
+ts = "ts/relayInit.ts + dispatch ts/cli.ts:8659"
+note = "Scaffolds a Worker folder that re-exports the npm package's `slack-hub/worker`; --name, --force, --slack-hub."
+
+[[feature]]
+name = "relay health"
+status = "missing"
+ts = "ts/relayInit.ts relayHealth + dispatch ts/cli.ts:8681"
+
+[[feature]]
+name = "relay Worker (npm export `slack-hub/worker`)"
+status = "missing"
+ts = "worker/src/index.ts"
+note = "A Cloudflare Worker, not part of the CLI. projects.toml lists `worker` under keep_ts as undecided; it is here so the owner can decide (stay TypeScript, or dropped from the port)."
+
+# ───────────────────────────── Credentials and identity ─────────────────────────────
+
+[[feature]]
+name = "token resolution order"
+status = "partial"
+ts = "ts/profiles.ts:251 resolveToken"
+rs = "rs/src/main.rs:187"
+note = "Rust reads one variable, SLACK_MCP_XOXP_TOKEN, which TS treats as legacy (used only when no profile exists, with a warning otherwise). Absent: SLACK_TOKEN, the .slack-hub/.env.local walk from the cwd to $HOME, ~/.slack-hub/.env.local, SLACK_WORKSPACE, the .slack-cli/workspace lockfiles, profiles.json, and the multi-line guidance when nothing is found (Rust prints `Error: environment variable not found`)."
+
+[[feature]]
+name = "dotenv files"
+status = "partial"
+ts = "ts/cli.ts:174 loadDotenv + ts/cli.ts:203"
+rs = "rs/src/main.rs:182"
+note = "Rust loads ~/.config/slack-cli/.env, then the nearest .env in the cwd or any parent (dotenvy). TS loads ~/.slack-cli/.env.local, ~/.config/slack-cli/.env, ./.slack-cli/.env.local, ./.env.local, ./.env (cwd only, no parent search) and remembers which file supplied each variable (used by the bot-intent refusal)."
+
+[[feature]]
+name = "-w / --workspace"
+status = "missing"
+ts = "ts/cli.ts:6152"
+
+[[feature]]
+name = "profiles.json (several workspaces; one cookie shared per identity; mode 0600)"
+status = "missing"
+ts = "ts/profiles.ts"
+note = "~/.config/slack-cli/profiles.json."
+
+[[feature]]
+name = "desktop session tokens (xoxc-) with the xoxd cookie"
+status = "missing"
+ts = "ts/slack.ts:78 callOnce + ts/profiles.ts:353 resolveCookie"
+note = "SLACK_COOKIE, legacy SLACK_MCP_XOXD_COOKIE, or the profile; sent as `Cookie: d=…`; internal endpoints (drafts, saved items, list records, client boot) need it; dedicated errors when it is missing."
+
+[[feature]]
+name = "--as-bot / SLACK_BOT_TOKEN"
+status = "missing"
+ts = "ts/profiles.ts:347 resolveBotToken + ts/cli.ts:1642 asBotTarget"
+note = "On send, reply, ask, poll, edit, tick, delete, upload, schedule, pinlog, lists, inbox nudge, outbox flush. The @user of a bot DM is resolved with the user token."
+
+[[feature]]
+name = "slack @<who> <command> (named identities)"
+status = "missing"
+ts = "ts/identity.ts + ts/cli.ts:6124"
+note = "identities: in settings.yml map a name to an env var, env file or profile; sets SLACK_HUB_IDENTITY."
+
+[[feature]]
+name = "write refusals (bot token exported without --as-bot; user session inside an agent; --as-user)"
+status = "missing"
+ts = "ts/botIntent.ts + ts/identity.ts:134 userSessionRefusal + ts/cli.ts:6154"
+note = "Exit 2. Agent detection: AY_AGENT_ID, AGENT_YES_PID, CLAUDECODE."
+
+[[feature]]
+name = "auth login / login"
+status = "missing"
+ts = "ts/auth.ts:710 cmdAuthLogin + dispatch ts/cli.ts:8532, ts/cli.ts:8891"
+note = "Interactive wizard (5 choices); --token/--name; a token piped on stdin; --from-desktop, --from-chrome, --from-firefox, --from-all, --yes."
+
+[[feature]]
+name = "auth login chrome (--profile)"
+status = "missing"
+ts = "ts/auth.ts:463 cmdAuthLoginChrome"
+
+[[feature]]
+name = "auth firefox / auth login firefox"
+status = "missing"
+ts = "ts/auth.ts:551 cmdAuthFirefox"
+
+[[feature]]
+name = "auth cookie / auth chrome"
+status = "missing"
+ts = "ts/auth.ts:320 cmdAuthChrome + ts/chromeCookieWin.ts"
+note = "macOS keychain, Linux, and Windows app-bound encryption (elevated PowerShell, VSS snapshot; SLACK_KEEP_ABE keeps the work dir)."
+
+[[feature]]
+name = "Slack desktop app session import"
+status = "missing"
+ts = "ts/slack-app.ts + ts/leveldb.ts"
+note = "Reads xoxc tokens from the app's LevelDB (own SSTable reader and Snappy decompressor) on macOS, Linux (deb, snap, flatpak) and Windows; the cookie from the Cookies database on macOS."
+
+[[feature]]
+name = "auth token (print the active token, or save one)"
+status = "missing"
+ts = "ts/auth.ts:635 cmdAuthToken + dispatch ts/cli.ts:8487"
+
+[[feature]]
+name = "auth env"
+status = "missing"
+ts = "ts/cli.ts:8504"
+
+[[feature]]
+name = "auth tokens"
+status = "missing"
+ts = "ts/auth.ts:676 cmdAuthTokens"
+
+[[feature]]
+name = "auth save --envfile"
+status = "missing"
+ts = "ts/auth.ts:692 cmdAuthSave"
+
+[[feature]]
+name = "auth app (--bot)"
+status = "missing"
+ts = "ts/auth.ts:657 cmdAuthApp"
+
+[[feature]]
+name = "auth ls / status"
+status = "missing"
+ts = "ts/cli.ts:8601"
+
+[[feature]]
+name = "auth use <name> (-g)"
+status = "missing"
+ts = "ts/cli.ts:8607 + ts/profiles.ts:241 useProfile"
+note = "Writes .slack-cli/workspace (with a .gitignore) or ~/.slack-cli/workspace."
+
+[[feature]]
+name = "auth logout / rm / remove"
+status = "missing"
+ts = "ts/cli.ts:8619"
+
+# ───────────────────────────── Cross-cutting ─────────────────────────────
+
+[[feature]]
+name = "target forms (#channel, @user, permalink, raw id)"
+status = "partial"
+ts = "ts/slack.ts:1003 resolveChannel + ts/slack.ts:968 parseSlackPermalink"
+rs = "rs/src/slack.rs:157 resolve_channel"
+note = "Rust has #name (exact, case-insensitive), @user (normalised match on handle, real name, display name; existing DM only), app.slack.com/client/T…/C… links and raw ids. Absent: <workspace>.slack.com/archives/… permalinks (with ?thread_ts and &cid); `#C…` and `@U…` id forms; a bare U… id meaning the DM with that person; @me / @you / your own handle through auth.test; Slack Connect partners found through the DM list; the not-found error that says how many accounts were searched. Rust accepts any 9+ alphanumeric string as an id; TS requires C/D/G plus 8+ capitals or digits."
+
+[[feature]]
+name = "SLACK_API_BASE"
+status = "ported"
+ts = "ts/slack.ts:40"
+rs = "rs/src/slack.rs:15"
+
+[[feature]]
+name = "rate-limit waiting (HTTP 429 / ratelimited; SLACK_RATELIMIT_WAIT_SEC)"
+status = "missing"
+ts = "ts/slack.ts:60 withRateLimitWait"
+note = "One-shot commands wait out Retry-After for up to 120 s in total, one stderr line per wait. Rust does not look at the HTTP status."
+
+[[feature]]
+name = "error messages and exit codes"
+status = "partial"
+ts = "ts/cli.ts:6142 + ts/cli.ts:1210 friendlySlackError + ts/cli.ts:8916"
+rs = "rs/src/slack.rs:31 + rs/src/main.rs:180"
+note = "Both exit 1 on a Slack API error. Text differs: Rust prints `Error: Slack error on <method>: <code>`; TS prints the bare message, with the query string after the method on GET calls, and maps common codes (missing_scope, channel_not_found, …) to guidance on write commands. Usage errors exit 2 in Rust (clap) and 1 in TS (yargs .fail). TS's command-specific codes have no Rust counterpart: 2 for refusals, ask 2..7, poll 3, stream 0/2/3, inbox nudge 1, 141 on a closed pipe."
+
+[[feature]]
+name = "--help and usage errors"
+status = "partial"
+ts = "ts/cli.ts:6135"
+rs = "rs/src/main.rs:109"
+note = "Rust has clap's generated help for its six commands; the text is not yargs'. Rust reads the token before parsing arguments, so `slack --help` without SLACK_MCP_XOXP_TOKEN fails with `Error: environment variable not found`. TS is strict (unknown commands and flags are errors) and prints the message, then the help, on a usage error."
+
+[[feature]]
+name = "--version"
+status = "missing"
+ts = "ts/cli.ts:6135"
+note = "TS never calls .version(), so this is yargs' default; what it prints from the bundled dist/cli.js was not checked. The Rust Cli declares no version, so clap has no --version."
+
+[[feature]]
+name = "complete output on a pipe; exit 141 when the reader goes away"
+status = "partial"
+ts = "ts/stdout.ts"
+rs = "rs/src/main.rs:207"
+note = "The TS module works around Bun dropping console output on a full pipe. Rust has no code for this: println! blocks, so the dropped-lines problem should not arise (not tested), but a closed pipe makes println! panic (exit 101) where TS exits 141."
+
+[[feature]]
+name = "lookup cache (~/.config/slack-cli/cache.json; --no-cache on todo / mytodo)"
+status = "missing"
+ts = "ts/cache.ts"
+note = "#name → channel id and user id → handle, 1 hour, keyed by workspace. Used by read/thread/news/search for author handles."
+
+[[feature]]
+name = "slack-term rename notice (SLACK_HUB_NO_RENAME_NOTICE)"
+status = "missing"
+ts = "ts/brand.ts:45 renameNotice"
+note = "Printed on stderr when installed under the old npm name. A candidate for not porting."
+
+[[feature]]
+name = "legacy slack-term names still read (SLACK_TERM_* variables, .slack-term/ and slack-term config dirs)"
+status = "missing"
+ts = "ts/brand.ts"

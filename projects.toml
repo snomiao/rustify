@@ -1,0 +1,56 @@
+# The projects being migrated from TypeScript to Rust.
+#
+# `rustify audit` reads this file. Checkouts are looked up beside this repo:
+# <root>/<name>/tree/main, <root>/<name>/tree/master, then <root>/<name>,
+# where <root> is the directory that holds the rustify checkout. Set `path`
+# on a project, or RUSTIFY_ROOT in the environment, to look elsewhere.
+#
+# Fields:
+#   name      directory name of the checkout
+#   repo      GitHub owner/name
+#   npm       npm package users install
+#   crate     name the crate has, or should have, on crates.io
+#   manifest  Cargo.toml of the Rust port, relative to the checkout
+#   ts        directories holding the TypeScript being replaced
+#   rust      directories holding the Rust port
+#   ignore    paths left out of every count (vendored or generated code)
+#   keep_ts   TypeScript that stays TypeScript on purpose, with the reason
+
+[[project]]
+name = "agent-yes"
+repo = "snomiao/agent-yes"
+npm = "agent-yes"
+crate = "agent-yes"
+manifest = "rs/Cargo.toml"
+ts = ["ts"]
+rust = ["rs/src"]
+
+[[project]]
+name = "slack-hub"
+repo = "snomiao/slack-hub"
+npm = "slack-hub"
+crate = "slack-hub"
+manifest = "rs/Cargo.toml"
+ts = ["ts", "tests"]
+rust = ["rs/src"]
+ignore = ["ts/vendor"]
+keep_ts = { "worker" = "Cloudflare Worker; undecided whether it moves to Rust" }
+
+[[project]]
+name = "rechrome"
+repo = "snomiao/rechrome"
+npm = "rechrome"
+crate = "rechrome"
+ts = ["."]
+ignore = ["vendor", "vendor-src", "lab", "public", "docs", "tray"]
+keep_ts = { "extension" = "browser extension; runs in Chrome", "functions" = "hosted functions; undecided", "signal" = "signaling worker; undecided" }
+
+[[project]]
+name = "otoji"
+repo = "snomiao/otoji"
+npm = "otoji"
+crate = "otoji"
+manifest = "Cargo.toml"
+ts = ["cli", "signal", "scripts"]
+rust = ["src"]
+keep_ts = { "web" = "browser app; out of scope until decided" }

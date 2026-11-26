@@ -1,0 +1,81 @@
+# Reusable workflow: after publishing, install the release from the real npm
+# registry on every OS and run it. Call it from the same run as
+# rust-npm-build, after the publish job:
+#
+#   verify:
+#     needs: [build, publish]
+#     uses: snomiao/rustify/.github/workflows/rust-npm-verify.yml@v1
+#     with:
+#       smoke: mycli --version
+
+name: rust-npm-verify
+
+on:
+  workflow_call:
+    inputs:
+      smoke:
+        description: "Command that must exit 0 and print the released version"
+        required: true
+        type: string
+      smoke-expect:
+        required: false
+        default: ""
+        type: string
+      smoke-extra:
+        description: "More commands, one per line: `<command> [args] => <text it must print>`"
+        required: false
+        default: ""
+        type: string
+      registry:
+        required: false
+        default: https://registry.npmjs.org
+        type: string
+      scripts-ref:
+        description: "Ref of snomiao/rustify whose scripts are used. Keep it equal to the ref after @ in `uses:`."
+        required: false
+        default: v1
+        type: string
+
+jobs:
+  verify:
+    name: verify ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest, windows-11-arm]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: snomiao/rustify
+          ref: ${{ inputs.scripts-ref }}
+          path: .rustify
+          sparse-checkout: templates/npm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-dist
+          path: npm-dist
+      - name: Install from the registry and run
+        shell: bash
+        env:
+          SMOKE: ${{ inputs.smoke }}
+          EXPECT: ${{ inputs.smoke-expect }}
+          REGISTRY: ${{ inputs.registry }}
+          EXTRA: ${{ inputs.smoke-extra }}
+        run: |
+          set -- --dist npm-dist --run "$SMOKE" --registry "$REGISTRY"
+          if [ -n "$EXPECT" ]; then set -- "$@" --expect "$EXPECT"; fi
+          while IFS= read -r line; do
+            if [ -n "$line" ]; then set -- "$@" --also "$line"; fi
+          done <<< "$EXTRA"
+          # The registry can take a moment to serve a version it just accepted.
+          for attempt in 1 2 3 4 5; do
+            node .rustify/templates/npm/smoke.mjs "$@" && exit 0
+            sleep 20
+          done
+          exit 1

@@ -1,0 +1,15 @@
+[package]
+name = "rustify"
+version = "0.1.0"
+edition = "2021"
+description = "Tracks the TypeScript-to-Rust migration of a set of projects and how they are delivered through npm"
+license = "MIT"
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+[workspace]
+exclude = ["tests/e2e/toy"]

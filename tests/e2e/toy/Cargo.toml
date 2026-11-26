@@ -1,0 +1,11 @@
+[package]
+name = "rustify-e2e-toy"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "toy"
+path = "src/main.rs"
+
+[workspace]
