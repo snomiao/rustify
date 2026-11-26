@@ -5,17 +5,18 @@
 #               the modules it calls
 #   Rust        rs/src/main.rs and rs/src/slack.rs, in full
 #
-# No feature is `verified`. tests/parity.sh only runs `bun run test`;
-# tests/parity.test.ts compares stdout for two invocations (`news --limit 5`,
-# `search deploy --count 10`), skips the comparison unless
-# rs/target/release/slack exists (CI never builds it), and as the two
-# implementations stand their output for both cases differs. It is not a proof
-# of anything yet.
+# search, slack-hub#119: `verified` means tests/parity.test.ts shows it. That
+# test runs every case once per implementation in a fresh HOME against a fresh
+# mock (tests/mock.ts) and compares stdout, stderr, the exit code, every
+# request (with its Authorization and Cookie headers) and every file left
+# behind; it runs in rustify's parity job against the binary just built, and a
+# missing binary fails it. The shared machinery search needed (credentials,
+# dotenv, the cache, errors, the message line) is complete but proven only
+# through search, so those entries stay `partial`.
 #
-# In every `partial` note: Rust takes its token only from SLACK_MCP_XOXP_TOKEN,
-# has no -w/--workspace, no session cookie and no rate-limit waiting. Those are
-# tracked once, under "Credentials and identity" and "Cross-cutting", and not
-# repeated per command.
+# The first Rust versions of read, thread, news, send and dump were moved to
+# rs/src/legacy.rs, unreachable: the binary hands those commands back, so they
+# are `missing` (parity/README.md). Their notes keep what that code did.
 
 reconciled = "e315b19"
 
@@ -23,17 +24,15 @@ reconciled = "e315b19"
 
 [[feature]]
 name = "read / msgs with no target (overview of joined channels)"
-status = "partial"
+status = "missing"
 ts = "ts/cli.ts:507 cmdMsgs + dispatch ts/cli.ts:6206"
-rs = "rs/src/main.rs:236"
-note = "Rust registers only `msgs`, not the primary name `read`. Same selection (joined channels, 10 most recently updated, 3 of the last 5 plain messages) but the header is `── #name ─…` where TS prints `-- #name ---…`, the 3 messages come newest-first where TS prints oldest-first, and Rust reads only the first 200 conversations where TS pages through all of them."
+note = "Handed back to the JavaScript. The first Rust version, which ran only without a package root, is kept in rs/src/legacy.rs but no longer reached; it differed as follows. Rust registers only `msgs`, not the primary name `read`. Same selection (joined channels, 10 most recently updated, 3 of the last 5 plain messages) but the header is `── #name ─…` where TS prints `-- #name ---…`, the 3 messages come newest-first where TS prints oldest-first, and Rust reads only the first 200 conversations where TS pages through all of them."
 
 [[feature]]
 name = "read <target> / msgs <target> (channel or DM history)"
-status = "partial"
+status = "missing"
 ts = "ts/cli.ts:428 cmdMsgsTarget + dispatch ts/cli.ts:6206"
-rs = "rs/src/main.rs:191"
-note = "Rust: `msgs <target> [-n 20]` only. Output differs: Rust prints a `── #name ──` header and `[time] <name|@handle> text` lines, TS prints no header and `<UTC ISO>  @handle:  text` lines (see `message line format`). Absent in Rust: a permalink carrying thread_ts reads that thread; alias targets; --format/--json; --unreplied."
+note = "Handed back to the JavaScript. The first Rust version, which ran only without a package root, is kept in rs/src/legacy.rs but no longer reached; it differed as follows. Rust: `msgs <target> [-n 20]` only. Output differs: Rust prints a `── #name ──` header and `[time] <name|@handle> text` lines, TS prints no header and `<UTC ISO>  @handle:  text` lines (see `message line format`). Absent in Rust: a permalink carrying thread_ts reads that thread; alias targets; --format/--json; --unreplied."
 
 [[feature]]
 name = "read --format jsonl / --json"
@@ -49,10 +48,9 @@ note = "Keeps only messages whose last word (thread replies included) is someone
 
 [[feature]]
 name = "thread <target> <ts>"
-status = "partial"
+status = "missing"
 ts = "ts/cli.ts:479 cmdThread + dispatch ts/cli.ts:6226"
-rs = "rs/src/main.rs:225"
-note = "Rust: `thread <target> <ts> [-n 100]`. Line format differs as for `read`. The ts argument differs: TS takes a Slack ts or an ISO stamp that must carry 6 fractional digits and is read as UTC (anything else is an error); Rust takes a number, RFC 3339, or a zone-less ISO stamp read as LOCAL time, and passes anything else through without an error."
+note = "Handed back to the JavaScript. The first Rust version, which ran only without a package root, is kept in rs/src/legacy.rs but no longer reached; it differed as follows. Rust: `thread <target> <ts> [-n 100]`. Line format differs as for `read`. The ts argument differs: TS takes a Slack ts or an ISO stamp that must carry 6 fractional digits and is read as UTC (anything else is an error); Rust takes a number, RFC 3339, or a zone-less ISO stamp read as LOCAL time, and passes anything else through without an error."
 
 [[feature]]
 name = "thread --format jsonl|tsv / --json"
@@ -68,70 +66,74 @@ note = "Only messages after a ts; reads every page and refuses to return a threa
 
 [[feature]]
 name = "news"
-status = "partial"
+status = "missing"
 ts = "ts/cli.ts:541 cmdNews + dispatch ts/cli.ts:6643"
-rs = "rs/src/main.rs:283"
-note = "Same query (search.messages `to:me`, first page of 100, cut to --limit/-l, default 20). Output differs: Rust groups by UTC day, newest first, a `┄` rule, two lines per item (`💬 or 🔔 <#chan or @display name>  HH:MM`, then `name: first line cut to 80 chars`); TS groups by local day, oldest first inside a day, a `-` rule, one full message line per item (`<UTC ISO>  #chan  @handle:  text` plus reactions/files). tests/parity.test.ts has this case but cannot pass as written."
+note = "Handed back to the JavaScript. The first Rust version, which ran only without a package root, is kept in rs/src/legacy.rs but no longer reached; it differed as follows. Same query (search.messages `to:me`, first page of 100, cut to --limit/-l, default 20). Output differs: Rust groups by UTC day, newest first, a `┄` rule, two lines per item (`💬 or 🔔 <#chan or @display name>  HH:MM`, then `name: first line cut to 80 chars`); TS groups by local day, oldest first inside a day, a `-` rule, one full message line per item (`<UTC ISO>  #chan  @handle:  text` plus reactions/files). tests/parity.test.ts checks that `news --limit 5` reaches the JavaScript unchanged."
 
 [[feature]]
 name = "search <query>"
-status = "partial"
+status = "verified"
 ts = "ts/cli.ts:633 cmdSearch + dispatch ts/cli.ts:6651"
-rs = "rs/src/main.rs:340"
-note = "Arguments and paging match (--count/-n, default 100, pages of 100). The default output does not: TS prints one formatted line per match (`<UTC ISO>  #chan  @handle:  text`), Rust prints the raw response as JSON. tests/parity.test.ts has `search deploy --count 10` but cannot pass as written."
+rs = "rs/src/search.rs; rs/src/msgfmt.rs; rs/src/config.rs; rs/src/api.rs"
+proof = "tests/parity.test.ts"
+note = "Served natively for `search <query>` with --count/-n N (a plain decimal), --json, -w/--workspace NAME (also as --name=value) and --as-user, after the command in any order. Handed back: every other shape (usage errors, --help, -n10, --json true, repeated flags, global flags before the command); `slack @<who>`; a settings.yml in the global or the nearest .slack-hub/ scope (the middleware reads identities with bun's YAML parser, which no crate matches); the .env files bun loads from the cwd, a cwd bunfig.toml, BUN_OPTIONS; proxy and CA variables; files the JavaScript would fail to read (profiles.json of another shape, a lockfile, dotenv file or cache.json it cannot read); and, before anything is printed, a response the JavaScript would fail on in its runtime's words (no connection, not JSON, a TypeError in the newline repair, a mention id a RegExp cannot hold). The proof compares against ts/cli.ts. The published dist/cli.js differs from it: bun reads the `// @bun` bundle as Latin-1, so its non-ASCII literals print as mojibake and its `•` marker regex misses; native search prints what ts/cli.ts prints."
 
 [[feature]]
 name = "search --json"
-status = "partial"
+status = "verified"
 ts = "ts/cli.ts:660"
-rs = "rs/src/main.rs:340 + rs/src/slack.rs:80 search_all"
-note = "Rust prints the merged response as pretty JSON, but always, and has no --json flag: `search --json` is a clap usage error. Key order also differs: serde_json (no preserve_order) sorts keys alphabetically, TS keeps Slack's order."
+rs = "rs/src/search.rs; rs/src/js.rs stringify_pretty"
+proof = "tests/parity.test.ts"
+note = "JSON.stringify(resp, null, 2) byte for byte: Slack's key order with integer-like keys first, JavaScript number printing (1.0 as 1, integers past 2^53 rounded, exponents), its escapes; the last page holding every match so far; the newline repair applied to the text."
 
 [[feature]]
 name = "search: bot token falls back to a user-token profile of the same workspace"
-status = "missing"
+status = "verified"
 ts = "ts/cli.ts:625 findUserTokenProfile"
-note = "On not_allowed_token_type with an xoxb- token: retry with a sibling profile's user token (same teamId only), else a 3-line error naming `slack auth login`."
+rs = "rs/src/search.rs; rs/src/config.rs user_token_profile"
+proof = "tests/parity.test.ts"
+note = "Same team only, the profile's surfaced cookie, the Note line, the 3-line error without one. The trigger is a substring test on the error text, so a query containing not_allowed_token_type triggers it on any error; Rust does the same."
 
 [[feature]]
 name = "dump"
-status = "partial"
+status = "missing"
 ts = "ts/cli.ts:796 cmdDump + dispatch ts/cli.ts:8304"
-rs = "rs/src/main.rs:344"
-note = "Closest of the six: same flags (--days/-d 7, --limit/-l 200, --filter/-f), same selection, headings, `SKIP` lines and stderr summary. Different: message stamps are UTC in Rust and local time in TS (ts/format.ts formatYmdHm); Rust reads only the first 200 conversations where TS pages through all."
+note = "Handed back to the JavaScript. The first Rust version, which ran only without a package root, is kept in rs/src/legacy.rs but no longer reached; it differed as follows. Closest of the six: same flags (--days/-d 7, --limit/-l 200, --filter/-f), same selection, headings, `SKIP` lines and stderr summary. Different: message stamps are UTC in Rust and local time in TS (ts/format.ts formatYmdHm); Rust reads only the first 200 conversations where TS pages through all."
 
 [[feature]]
 name = "message line format (timestamps, author, multi-line text)"
 status = "partial"
 ts = "ts/cli.ts:281 formatMsgLine"
-rs = "rs/src/main.rs:74 format_message + rs/src/main.rs:34 fmt_ts"
-note = "TS: `<UTC ISO with microseconds>  [#chan  ]@handle:  text`, continuation lines indented two spaces, `  [+N replies]` on thread parents. Rust: `[time] <display name|@handle> text` with lines joined by ` ↵ `, time in the LOCAL zone as HH:MM / MM-DD HH:MM on a terminal and ISO when piped, `  [N replies]` and `  [reply in thread]`. Nothing in TS switches format on a terminal."
+rs = "rs/src/msgfmt.rs Fmt::line"
+note = "formatMsgLine and its two-tier handle lookup are ported and proven by tests/parity.test.ts as search prints them, with a #chan or @dm label. read and thread print the line without a label and are not ported."
 
 [[feature]]
 name = "reactions, files and forwarded messages in read output"
-status = "missing"
+status = "partial"
 ts = "ts/cli.ts:312 + ts/attachments.ts"
-note = "Per message: `:name:×count` reactions, `📎 name (size) [file id]` per file, and the author/channel/text/permalink of forwarded or shared messages (link unfurls left out)."
+rs = "rs/src/msgfmt.rs"
+note = "Ported and proven in search's lines: `:name:×count`, file sizes (toFixed rounding), forwarded, shared and bot attachments, and their mentions looked up at once as Promise.all does. read is not ported."
 
 [[feature]]
 name = "<@U…> mentions shown as @name"
 status = "partial"
 ts = "ts/format.ts:390 resolveMentions"
-rs = "rs/src/slack.rs:242 resolve_mentions"
-note = "Same result for `<@UID>` and `<@UID|label>` (display name, else real name, else handle, else the id). Rust's label clean-up searches for the text `@name|` anywhere, so a literal `@name|…>` elsewhere in the message is cut as well; TS replaces only the `<@UID|label>` token."
+rs = "rs/src/msgfmt.rs resolve_mentions_all"
+note = "Ported exactly and proven through search, including the `$&`, `$$`, `` $` `` and `$'` a replacement string expands and the RegExp built from the id (an id it could not build hands back). Other commands are not ported."
 
 [[feature]]
 name = "<!date^…> markup shown as a date"
 status = "partial"
 ts = "ts/format.ts:421 resolveDateMarkup"
-rs = "rs/src/slack.rs:275 resolve_date_markup"
-note = "Well-formed markup renders the same (`Weekday, Mon DD, YYYY`, UTC). Malformed markup (non-numeric epoch, no format part) is left as it is by TS and replaced by its fallback text by Rust."
+rs = "rs/src/msgfmt.rs resolve_date_markup"
+note = "Ported exactly (malformed markup is left as it is, an out-of-range date falls back) and proven through search. Other commands are not ported."
 
 [[feature]]
 name = "line breaks restored in messages Slack stored flattened"
-status = "missing"
+status = "partial"
 ts = "ts/newlines.ts + ts/slack.ts:297 repairMessages"
-note = "Applied to every history / replies / search response, so it changes what read, thread, news, search and dump print for messages sent with blocks."
+rs = "rs/src/newlines.rs"
+note = "Ported and applied to search responses (text and --json), proven with the restore-newlines samples. Rust does not fetch history or replies yet."
 
 [[feature]]
 name = "channel ls"
@@ -229,24 +231,21 @@ note = "--limit/-l 100, --format text|jsonl, --json, --as-bot (public API instea
 
 [[feature]]
 name = "send <target> <message>"
-status = "partial"
+status = "missing"
 ts = "ts/cli.ts:2471 cmdSend + dispatch ts/cli.ts:6662"
-rs = "rs/src/main.rs:420 + rs/src/slack.rs:104 send"
-note = "Both post chat.postMessage with text plus one markdown block, and both have --channel-id and --user-id. Different or absent in Rust: the confirm flag is --confirm, not --code (see the gate); the target must start with # or @ (TS also takes raw ids, permalinks and aliases); success prints `✓ Sent (ts: …)` where TS prints `✓ Sent: <permalink>`; an empty message is not refused; none of TS's other flags (--as-bot, --broadcast, --no-mentions, --to, --any-thread, --json, --fix-urls, --allow-url-adjacent); no sent-log record or message metadata. Rust runtime errors print as `Error: …`; TS maps Slack error codes to guidance."
+note = "Handed back to the JavaScript. The first Rust version, which ran only without a package root, is kept in rs/src/legacy.rs but no longer reached; it differed as follows. Both post chat.postMessage with text plus one markdown block, and both have --channel-id and --user-id. Different or absent in Rust: the confirm flag is --confirm, not --code (see the gate); the target must start with # or @ (TS also takes raw ids, permalinks and aliases); success prints `✓ Sent (ts: …)` where TS prints `✓ Sent: <permalink>`; an empty message is not refused; none of TS's other flags (--as-bot, --broadcast, --no-mentions, --to, --any-thread, --json, --fix-urls, --allow-url-adjacent); no sent-log record or message metadata. Rust runtime errors print as `Error: …`; TS maps Slack error codes to guidance."
 
 [[feature]]
 name = "confirm-hash safety gate (--code)"
-status = "partial"
+status = "missing"
 ts = "ts/cli.ts:1267 requireCode + ts/cli.ts:1167 safetyCode"
-rs = "rs/src/main.rs:445"
-note = "Rust gates only `send`, and differently: flag --confirm (TS --code on every gated command); hash = sha256(last 5 plain channel messages as ts:text + message), TS = sha256(channel id, thread ts, last message text, message as it will post, acting user id) so a code is bound to destination and identity; Rust prints the preview only when stderr is a terminal, TS always prints it on stdout; messages are `Rerun with --confirm=` / `Confirm hash mismatch. Expected:` vs `Rerun with --code=` / `Code mismatch (got …, expected …)`. Absent: the From: identity line, the destination label, thread-tail preview, terminal-control stripping of names. TS gates: send, reply, outbox flush, ask, poll, edit, tick, delete, upload, schedule send/rm, pinlog new/set/note, channel create/rename/invite, drafts edit/delete, todos add/done/edit/rm, lists create/add/set/share."
+note = "Handed back to the JavaScript. The first Rust version, which ran only without a package root, is kept in rs/src/legacy.rs but no longer reached; it differed as follows. Rust gates only `send`, and differently: flag --confirm (TS --code on every gated command); hash = sha256(last 5 plain channel messages as ts:text + message), TS = sha256(channel id, thread ts, last message text, message as it will post, acting user id) so a code is bound to destination and identity; Rust prints the preview only when stderr is a terminal, TS always prints it on stdout; messages are `Rerun with --confirm=` / `Confirm hash mismatch. Expected:` vs `Rerun with --code=` / `Code mismatch (got …, expected …)`. Absent: the From: identity line, the destination label, thread-tail preview, terminal-control stripping of names. TS gates: send, reply, outbox flush, ask, poll, edit, tick, delete, upload, schedule send/rm, pinlog new/set/note, channel create/rename/invite, drafts edit/delete, todos add/done/edit/rm, lists create/add/set/share."
 
 [[feature]]
 name = "send: thread replies (#chan:<ts>, @user:<ts>, message permalink)"
-status = "partial"
+status = "missing"
 ts = "ts/cli.ts:1327 parseTargetThread"
-rs = "rs/src/main.rs:158"
-note = "Rust replies in a thread only through a --thread <ts> flag that TS does not have. TS reads the thread from the target: `#chan:<ts>` (Slack ts or ISO), or a message permalink (its ?thread_ts, else the message itself). Rust accepts neither form. TS also previews the thread's last 3 messages in the gate."
+note = "Handed back to the JavaScript. The first Rust version, which ran only without a package root, is kept in rs/src/legacy.rs but no longer reached; it differed as follows. Rust replies in a thread only through a --thread <ts> flag that TS does not have. TS reads the thread from the target: `#chan:<ts>` (Slack ts or ISO), or a message permalink (its ?thread_ts, else the message itself). Rust accepts neither form. TS also previews the thread's last 3 messages in the gate."
 
 [[feature]]
 name = "send --broadcast (also send to channel)"
@@ -726,32 +725,36 @@ note = "A Cloudflare Worker, not part of the CLI. projects.toml lists `worker` u
 name = "token resolution order"
 status = "partial"
 ts = "ts/profiles.ts:251 resolveToken"
-rs = "rs/src/main.rs:187"
-note = "Rust reads one variable, SLACK_MCP_XOXP_TOKEN, which TS treats as legacy (used only when no profile exists, with a warning otherwise). Absent: SLACK_TOKEN, the .slack-hub/.env.local walk from the cwd to $HOME, ~/.slack-hub/.env.local, SLACK_WORKSPACE, the .slack-cli/workspace lockfiles, profiles.json, and the multi-line guidance when nothing is found (Rust prints `Error: environment variable not found`)."
+rs = "rs/src/config.rs resolve_token"
+note = "All of resolveToken is ported and proven through search: -w, SLACK_TOKEN, the legacy variables and their warning, the directory walk, SLACK_WORKSPACE, both lockfiles and every error text. Other commands are handed back."
 
 [[feature]]
 name = "dotenv files"
 status = "partial"
 ts = "ts/cli.ts:174 loadDotenv + ts/cli.ts:203"
-rs = "rs/src/main.rs:182"
-note = "Rust loads ~/.config/slack-cli/.env, then the nearest .env in the cwd or any parent (dotenvy). TS loads ~/.slack-cli/.env.local, ~/.config/slack-cli/.env, ./.slack-cli/.env.local, ./.env.local, ./.env (cwd only, no parent search) and remembers which file supplied each variable (used by the bot-intent refusal)."
+rs = "rs/src/config.rs Config::load"
+note = "The CLI's own loader is ported (five files, the first value wins, its quote stripping) and proven through search. The files bun loads from the cwd before the script runs (.env, .env.local, .env.<NODE_ENV>[.local]) are not: their presence hands back. Under bun those beat the global files, while ./.slack-cli/.env.local does not. SLACK_RATELIMIT_WAIT_SEC from a dotenv file is ignored, as in the TypeScript (read at import)."
 
 [[feature]]
 name = "-w / --workspace"
-status = "missing"
+status = "partial"
 ts = "ts/cli.ts:6152"
+rs = "rs/src/search.rs parse; rs/src/config.rs"
+note = "On search, after the command; before it (`slack -w x search …`) is handed back."
 
 [[feature]]
 name = "profiles.json (several workspaces; one cookie shared per identity; mode 0600)"
-status = "missing"
+status = "partial"
 ts = "ts/profiles.ts"
-note = "~/.config/slack-cli/profiles.json."
+rs = "rs/src/config.rs load_profiles"
+note = "Read for the token and the cookie (an identity's shared cookie included) and proven through search; a file of another shape hands back. Writing it (auth) is not ported."
 
 [[feature]]
 name = "desktop session tokens (xoxc-) with the xoxd cookie"
-status = "missing"
+status = "partial"
 ts = "ts/slack.ts:78 callOnce + ts/profiles.ts:353 resolveCookie"
-note = "SLACK_COOKIE, legacy SLACK_MCP_XOXD_COOKIE, or the profile; sent as `Cookie: d=…`; internal endpoints (drafts, saved items, list records, client boot) need it; dedicated errors when it is missing."
+rs = "rs/src/api.rs call_once; rs/src/config.rs resolve_cookie"
+note = "On the public Web API calls search makes: where the cookie comes from, the `Cookie: d=…` header, the missing-cookie error; proven through search. The internal endpoints are not ported."
 
 [[feature]]
 name = "--as-bot / SLACK_BOT_TOKEN"
@@ -844,36 +847,37 @@ ts = "ts/cli.ts:8619"
 
 [[feature]]
 name = "target forms (#channel, @user, permalink, raw id)"
-status = "partial"
+status = "missing"
 ts = "ts/slack.ts:1003 resolveChannel + ts/slack.ts:968 parseSlackPermalink"
-rs = "rs/src/slack.rs:157 resolve_channel"
-note = "Rust has #name (exact, case-insensitive), @user (normalised match on handle, real name, display name; existing DM only), app.slack.com/client/T…/C… links and raw ids. Absent: <workspace>.slack.com/archives/… permalinks (with ?thread_ts and &cid); `#C…` and `@U…` id forms; a bare U… id meaning the DM with that person; @me / @you / your own handle through auth.test; Slack Connect partners found through the DM list; the not-found error that says how many accounts were searched. Rust accepts any 9+ alphanumeric string as an id; TS requires C/D/G plus 8+ capitals or digits."
+note = "Handed back to the JavaScript. The first Rust version, which ran only without a package root, is kept in rs/src/legacy.rs but no longer reached; it differed as follows. Rust has #name (exact, case-insensitive), @user (normalised match on handle, real name, display name; existing DM only), app.slack.com/client/T…/C… links and raw ids. Absent: <workspace>.slack.com/archives/… permalinks (with ?thread_ts and &cid); `#C…` and `@U…` id forms; a bare U… id meaning the DM with that person; @me / @you / your own handle through auth.test; Slack Connect partners found through the DM list; the not-found error that says how many accounts were searched. Rust accepts any 9+ alphanumeric string as an id; TS requires C/D/G plus 8+ capitals or digits."
 
 [[feature]]
 name = "SLACK_API_BASE"
-status = "ported"
+status = "verified"
 ts = "ts/slack.ts:40"
-rs = "rs/src/slack.rs:15"
+rs = "rs/src/api.rs base"
+proof = "tests/parity.test.ts"
+note = "Every case points both implementations at the mock with it; one sets it from a dotenv file with a trailing slash. An empty value hands back."
 
 [[feature]]
 name = "rate-limit waiting (HTTP 429 / ratelimited; SLACK_RATELIMIT_WAIT_SEC)"
-status = "missing"
+status = "partial"
 ts = "ts/slack.ts:60 withRateLimitWait"
-note = "One-shot commands wait out Retry-After for up to 120 s in total, one stderr line per wait. Rust does not look at the HTTP status."
+rs = "rs/src/api.rs get, retry"
+note = "withRateLimitWait and withRateLimitRetry are ported and proven through search: Retry-After as parseInt reads it, the budget read before the dotenv files, no sleep under a test runner, setTimeout's 1 ms floor. Waits during attachment lookups run one after another in Rust, concurrently in the TypeScript. A server that keeps answering 429 with Retry-After: 0 is retried forever by both."
 
 [[feature]]
 name = "error messages and exit codes"
 status = "partial"
 ts = "ts/cli.ts:6142 + ts/cli.ts:1210 friendlySlackError + ts/cli.ts:8916"
-rs = "rs/src/slack.rs:31 + rs/src/main.rs:180"
-note = "Both exit 1 on a Slack API error. Text differs: Rust prints `Error: Slack error on <method>: <code>`; TS prints the bare message, with the query string after the method on GET calls, and maps common codes (missing_scope, channel_not_found, …) to guidance on write commands. Usage errors exit 2 in Rust (clap) and 1 in TS (yargs .fail). TS's command-specific codes have no Rust counterpart: 2 for refusals, ask 2..7, poll 3, stream 0/2/3, inbox nudge 1, 141 on a closed pipe."
+rs = "rs/src/api.rs; rs/src/search.rs fail"
+note = "search's are ported and proven: Slack's error with the query as URLSearchParams spells it, the xoxc and xoxb guidance, the handler's message with exit 1. Usage errors are handed back. Other commands' codes are not ported."
 
 [[feature]]
 name = "--help and usage errors"
-status = "partial"
+status = "missing"
 ts = "ts/cli.ts:6135"
-rs = "rs/src/main.rs:109"
-note = "Rust has clap's generated help for its six commands; the text is not yargs'. Rust reads the token before parsing arguments, so `slack --help` without SLACK_MCP_XOXP_TOKEN fails with `Error: environment variable not found`. TS is strict (unknown commands and flags are errors) and prints the message, then the help, on a usage error."
+note = "Handed back to the JavaScript: yargs prints them, and Rust takes only the argument shapes it implements. The clap help of the first Rust commands (rs/src/legacy.rs) is no longer reached."
 
 [[feature]]
 name = "--version"
@@ -883,16 +887,18 @@ note = "TS never calls .version(), so this is yargs' default; what it prints fro
 
 [[feature]]
 name = "complete output on a pipe; exit 141 when the reader goes away"
-status = "partial"
+status = "verified"
 ts = "ts/stdout.ts"
-rs = "rs/src/main.rs:207"
-note = "The TS module works around Bun dropping console output on a full pipe. Rust has no code for this: println! blocks, so the dropped-lines problem should not arise (not tested), but a closed pipe makes println! panic (exit 101) where TS exits 141."
+rs = "rs/src/out.rs"
+proof = "tests/parity.test.ts"
+note = "Every case reads both outputs whole through a pipe, and `| head -c 100` makes both exit 141 with nothing on stderr. A Node or bun parent gives the child a socket pair instead, where the writer sees EPIPE or ENOTCONN depending on timing, for both implementations alike; ENOTCONN is reported as the TypeScript reports it. On a terminal stderr is red as bun's console.error prints it, unless NO_COLOR is set (proven through a pty)."
 
 [[feature]]
 name = "lookup cache (~/.config/slack-cli/cache.json; --no-cache on todo / mytodo)"
-status = "missing"
+status = "partial"
 ts = "ts/cache.ts"
-note = "#name → channel id and user id → handle, 1 hour, keyed by workspace. Used by read/thread/news/search for author handles."
+rs = "rs/src/cache.rs"
+note = "The user-handle half is ported and proven through search: scoped by team, the hour's TTL, expired and malformed entries, the whole file rewritten in JavaScript key order. Channel entries are only kept. A cache.json that is not JSON hands back. --no-cache is not ported."
 
 [[feature]]
 name = "slack-term rename notice (SLACK_HUB_NO_RENAME_NOTICE)"
@@ -902,5 +908,7 @@ note = "Printed on stderr when installed under the old npm name. A candidate for
 
 [[feature]]
 name = "legacy slack-term names still read (SLACK_TERM_* variables, .slack-term/ and slack-term config dirs)"
-status = "missing"
+status = "partial"
 ts = "ts/brand.ts"
+rs = "rs/src/config.rs"
+note = "What search reads, proven through search: ./.slack-term/.env.local in the directory walk, ~/.slack-term/.env.local, SLACK_TERM_HOME and ~/.config/slack-term (a settings.yml in either hands back)."
