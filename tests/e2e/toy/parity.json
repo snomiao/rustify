@@ -1,0 +1,6 @@
+{
+  "cases": [
+    { "name": "exit code is compared", "args": ["exit", "5"] },
+    { "name": "arguments are passed through", "args": ["one", "two words"] }
+  ]
+}

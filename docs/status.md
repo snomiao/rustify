@@ -6,6 +6,21 @@
 | slack-hub | 0 verified, 1 ported, 19 partial, 132 missing of 152 | JavaScript | port the missing features |
 | rechrome | not started | JavaScript | write the parity ledger |
 | otoji | started, not measured | JavaScript | write the parity ledger |
+| codehost | not started | JavaScript | write the parity ledger |
+| fbi-proxy | started, not measured | JavaScript | write the parity ledger |
+| onenote-cli | not started | JavaScript | write the parity ledger |
+| dotenvdotenc | not started | JavaScript | write the parity ledger |
+| qqdocs | not started | JavaScript | write the parity ledger |
+| winrpc | unknown | unknown | clone the repository |
+| chatwork-cli | unknown | unknown | clone the repository |
+| genvx | not started | JavaScript | write the parity ledger |
+| rustdesk.skill | unknown | unknown | clone the repository |
+| wtx | unknown | unknown | clone the repository |
+| gchat-cli | not started | JavaScript | write the parity ledger |
+| Comfy-AI | not started | JavaScript | write the parity ledger |
+| bunto | unknown | unknown | clone the repository |
+| snocommit | not started | JavaScript | write the parity ledger |
+| comfy-codesearch-cli | unknown | unknown | clone the repository |
 
 ## agent-yes
 
@@ -115,3 +130,222 @@
 - `ok  ` crates.io has `otoji` 0.1.62
 - `info` npm has `otoji` 0.1.62
 - `todo` `bun i -g otoji` installs JavaScript, not the Rust binary (`otoji` → `otoji-node.mjs`)
+
+## codehost
+
+**Checkout**
+
+- `info` `/code/snomiao/codehost/tree/main` on `main` at `d3e1033`
+
+**Code**
+
+- `info` TypeScript/JS to replace: 10,512 lines in 68 files; its tests: 1,694 lines, about 147 cases
+- `info` Rust: 0 lines in 0 files, 0 tests
+- `info` `worker` stays TypeScript: Cloudflare Worker
+
+**Parity ledger**
+
+- `todo` no ledger at `parity/codehost.toml`, so progress cannot be measured
+- `todo` no Rust port exists yet
+
+**Delivery**
+
+- `info` npm has `codehost` 0.40.0
+- `warn` the newest release tag in this checkout is `v0.34.0` — it is behind npm; fetch before trusting the code counts
+- `todo` `bun i -g codehost` installs JavaScript, not the Rust binary (`ch` → `src/cli/index.ts`, `codehost` → `src/cli/index.ts`)
+
+## fbi-proxy
+
+**Checkout**
+
+- `info` `/code/snomiao/fbi-proxy/tree/main` on `main` at `549fd8a`
+
+**Code**
+
+- `info` TypeScript/JS to replace: 229 lines in 4 files; its tests: 0 lines, about 0 cases
+- `info` Rust: 484 lines in 1 files, 0 tests
+- `info` by file name, 4 of 4 TypeScript modules have no Rust module of the same name (229 lines). A rough signal only: Rust code is often organised differently. Largest: `ts/dSpawn.ts` (113), `ts/cli.ts` (57), `ts/buildFbiProxy.ts` (48), `ts/getProxyFilename.ts` (11)
+
+**Parity ledger**
+
+- `todo` no ledger at `parity/fbi-proxy.toml`, so progress cannot be measured
+
+**Delivery**
+
+- `info` crate `fbi-proxy` 0.1.1 builds: `fbi-proxy`
+- `todo` no workflow uses the shared build pipeline (`snomiao/rustify/.github/workflows/rust-npm-build.yml`)
+- `todo` `package.json` has no `rustify.bins` (which npm command runs which cargo bin)
+- `ok  ` crates.io has `fbi-proxy` 1.18.0
+- `info` npm has `fbi-proxy` 1.18.0
+- `warn` the newest release tag in this checkout is `v1.7.0` — it is behind npm; fetch before trusting the code counts
+- `info` Cargo.toml says 0.1.1 and package.json says 1.7.0; at release the workflow stamps one version into the binary and the package
+- `todo` `bun i -g fbi-proxy` installs JavaScript, not the Rust binary (`fbi-proxy` → `dist/cli.js`)
+
+## onenote-cli
+
+**Checkout**
+
+- `info` `/code/snomiao/onenote-cli/tree/main` on `main` at `9af05e1`
+
+**Code**
+
+- `info` TypeScript/JS to replace: 6,273 lines in 9 files; its tests: 0 lines, about 0 cases
+- `info` Rust: 0 lines in 0 files, 0 tests
+
+**Parity ledger**
+
+- `todo` no ledger at `parity/onenote-cli.toml`, so progress cannot be measured
+- `todo` no Rust port exists yet
+
+**Delivery**
+
+- `warn` `onenote-cli` on crates.io belongs to another project (https://github.com/rvben/onenote-cli) — pick a different crate name
+- `info` npm has `onenote-cli` 0.2.0
+- `todo` `bun i -g onenote-cli` installs JavaScript, not the Rust binary (`onenote` → `src/index.ts`, `onenote-cli` → `src/index.ts`)
+
+## dotenvdotenc
+
+**Checkout**
+
+- `info` `/code/snomiao/dotenvdotenc/tree/main` on `main` at `c566a04`
+
+**Code**
+
+- `info` TypeScript/JS to replace: 1,047 lines in 1 files; its tests: 1,271 lines, about 94 cases
+- `info` Rust: 0 lines in 0 files, 0 tests
+
+**Parity ledger**
+
+- `todo` no ledger at `parity/dotenvdotenc.toml`, so progress cannot be measured
+- `todo` no Rust port exists yet
+
+**Delivery**
+
+- `info` npm has `dotenvdotenc` 0.4.0
+- `warn` the newest release tag in this checkout is `v0.3.0` — it is behind npm; fetch before trusting the code counts
+- `todo` `bun i -g dotenvdotenc` installs JavaScript, not the Rust binary (`dede` → `dede.ts`)
+
+## qqdocs
+
+**Checkout**
+
+- `info` `/code/snomiao/qqdocs/tree/main` on `main` at `ea064c4`
+
+**Code**
+
+- `info` TypeScript/JS to replace: 2,191 lines in 4 files; its tests: 372 lines, about 32 cases
+- `info` Rust: 0 lines in 0 files, 0 tests
+
+**Parity ledger**
+
+- `todo` no ledger at `parity/qqdocs.toml`, so progress cannot be measured
+- `todo` no Rust port exists yet
+
+**Delivery**
+
+- `info` npm has `qqdocs` 1.26.0
+- `todo` `bun i -g qqdocs` installs JavaScript, not the Rust binary (`qqdoc` → `bin/qqdocs.ts`, `qqdocs` → `bin/qqdocs.ts`)
+
+## winrpc
+- `todo` no checkout found under `/code/snomiao/winrpc`
+
+## chatwork-cli
+- `todo` no checkout found under `/code/snomiao/chatwork-cli`
+
+## genvx
+
+**Checkout**
+
+- `info` `/code/snomiao/genvx/tree/main` on `main` at `8809766`
+
+**Code**
+
+- `info` TypeScript/JS to replace: 1,512 lines in 3 files; its tests: 431 lines, about 12 cases
+- `info` Rust: 0 lines in 0 files, 0 tests
+
+**Parity ledger**
+
+- `todo` no ledger at `parity/genvx.toml`, so progress cannot be measured
+- `todo` no Rust port exists yet
+
+**Delivery**
+
+- `info` npm has `genvx` 1.1.0
+- `todo` `bun i -g genvx` installs JavaScript, not the Rust binary (`genvx` → `src/cli.ts`)
+
+## rustdesk.skill
+- `todo` no checkout found under `/code/snomiao/rustdesk.skill`
+
+## wtx
+- `todo` no checkout found under `/code/snomiao/wtx`
+
+## gchat-cli
+
+**Checkout**
+
+- `info` `/code/snomiao/gchat-cli/tree/main` on `main` at `fd70e59`
+
+**Code**
+
+- `info` TypeScript/JS to replace: 868 lines in 11 files; its tests: 178 lines, about 18 cases
+- `info` Rust: 0 lines in 0 files, 0 tests
+
+**Parity ledger**
+
+- `todo` no ledger at `parity/gchat-cli.toml`, so progress cannot be measured
+- `todo` no Rust port exists yet
+
+**Delivery**
+
+- `info` npm has `gchat-cli` 1.2.0
+- `todo` `bun i -g gchat-cli` installs JavaScript, not the Rust binary (`gchat` → `ts/cli.ts`)
+
+## Comfy-AI
+
+**Checkout**
+
+- `info` `/code/snomiao/Comfy-AI/tree/main` on `main` at `b677817`
+
+**Code**
+
+- `info` TypeScript/JS to replace: 418 lines in 6 files; its tests: 0 lines, about 0 cases
+- `info` Rust: 0 lines in 0 files, 0 tests
+
+**Parity ledger**
+
+- `todo` no ledger at `parity/Comfy-AI.toml`, so progress cannot be measured
+- `todo` no Rust port exists yet
+
+**Delivery**
+
+- `info` npm has `comfy-ai` 1.2.2
+- `warn` the newest release tag in this checkout is `v1.0.0` — it is behind npm; fetch before trusting the code counts
+- `todo` `bun i -g comfy-ai` installs JavaScript, not the Rust binary (`comfy-ai` → `dist/cli.js`)
+
+## bunto
+- `todo` no checkout found under `/code/snomiao/bunto`
+
+## snocommit
+
+**Checkout**
+
+- `info` `/code/snomiao/snocommit/tree/main` on `main` at `bf7735c`
+
+**Code**
+
+- `info` TypeScript/JS to replace: 136 lines in 5 files; its tests: 0 lines, about 0 cases
+- `info` Rust: 0 lines in 0 files, 0 tests
+
+**Parity ledger**
+
+- `todo` no ledger at `parity/snocommit.toml`, so progress cannot be measured
+- `todo` no Rust port exists yet
+
+**Delivery**
+
+- `info` npm has `snocommit` 0.1.0
+- `warn` the newest release tag in this checkout is `v1.0.2` — it is behind npm; fetch before trusting the code counts
+- `todo` `bun i -g snocommit` installs JavaScript, not the Rust binary (`chore` → `dist/cli-chore.js`, `docs` → `dist/cli-docs.js`, `feat` → `dist/cli-feat.js`, … (7 commands))
+
+## comfy-codesearch-cli
+- `todo` no checkout found under `/code/snomiao/comfy-codesearch-cli`

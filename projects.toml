@@ -54,3 +54,115 @@ manifest = "Cargo.toml"
 ts = ["cli", "signal", "scripts"]
 rust = ["src"]
 keep_ts = { "web" = "browser app; out of scope until decided" }
+
+# ── The rest of the public command-line projects (2026-11-27 inventory) ──────
+# In rough order of size. None has a parity ledger yet.
+
+[[project]]
+name = "codehost"
+repo = "snomiao/codehost"
+npm = "codehost"
+crate = "codehost"
+ts = ["src"]
+keep_ts = { "worker" = "Cloudflare Worker" }
+
+[[project]]
+name = "fbi-proxy"
+repo = "snomiao/fbi-proxy"
+npm = "fbi-proxy"
+crate = "fbi-proxy"
+manifest = "Cargo.toml"
+ts = ["ts"]
+rust = ["rs"]
+
+[[project]]
+name = "onenote-cli"
+repo = "snomiao/onenote-cli"
+npm = "onenote-cli"
+crate = "onenote-cli"
+ts = ["src"]
+
+[[project]]
+name = "dotenvdotenc"
+repo = "snomiao/dotenvdotenc"
+npm = "dotenvdotenc"
+crate = "dotenvdotenc"
+ts = ["."]
+
+[[project]]
+name = "qqdocs"
+repo = "snomiao/qqdocs"
+npm = "qqdocs"
+crate = "qqdocs"
+ts = ["src", "bin"]
+
+[[project]]
+name = "winrpc"
+repo = "snomiao/winrpc"
+npm = "winrpc"
+crate = "winrpc"
+ts = ["."]
+
+[[project]]
+name = "chatwork-cli"
+repo = "snomiao/chatwork-cli"
+npm = "chatwork-cli"
+crate = "chatwork-cli"
+ts = ["."]
+
+[[project]]
+name = "genvx"
+repo = "snomiao/genvx"
+npm = "genvx"
+crate = "genvx"
+ts = ["src"]
+
+[[project]]
+name = "rustdesk.skill"
+repo = "snomiao/rustdesk.skill"
+npm = "rustdesk-skill"
+crate = "rustdesk-skill"
+ts = ["."]
+
+[[project]]
+name = "wtx"
+repo = "snomiao/wtx"
+npm = "@snomiao/wtx"
+crate = "wtx"
+ts = ["src"]
+keep_ts = { "lib" = "React component library, runs in the browser" }
+
+[[project]]
+name = "gchat-cli"
+repo = "snomiao/gchat-cli"
+npm = "gchat-cli"
+crate = "gchat-cli"
+ts = ["ts", "tests"]
+
+[[project]]
+name = "Comfy-AI"
+repo = "snomiao/Comfy-AI"
+npm = "comfy-ai"
+crate = "comfy-ai"
+ts = ["src", "ts"]
+
+[[project]]
+name = "bunto"
+repo = "snomiao/bunto"
+npm = "bunto"
+crate = "bunto"
+ts = ["."]
+
+[[project]]
+name = "snocommit"
+repo = "snomiao/snocommit"
+npm = "snocommit"
+crate = "snocommit"
+ts = ["src"]
+
+[[project]]
+name = "comfy-codesearch-cli"
+repo = "snomiao/comfy-codesearch-cli"
+npm = "comfy-codesearch"
+crate = "comfy-codesearch"
+ts = ["."]

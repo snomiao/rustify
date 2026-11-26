@@ -135,6 +135,25 @@ from a job in the project's own workflow. Projects never list platforms.
 After a release, run the audit again: "`bun i -g` gives" should read
 "native binary, all platforms".
 
+## Step 4 — port commands
+
+Do this when a project has a ledger and the user wants the port itself to
+move. The procedure is `docs/porting.md`; follow it exactly. In short:
+
+1. A project without a crate: `cargo run -q --release -- scaffold <project>`
+   starts one whose binary hands every command back to the JavaScript.
+2. One command at a time: write its parity cases first and make them pass
+   TypeScript against TypeScript, then port until they pass against Rust
+   (`templates/parity/parity.mjs`), then switch the command over in `main.rs`.
+3. Pass the test to the pipeline with `parity:` so CI holds the line, and set
+   the ledger entry to `verified` with the cases file as `proof`.
+
+Each project is a large, self-contained job that needs its whole codebase in
+view. Give it to its own agent — or to the lane that already owns the project
+— with `docs/porting.md` as the brief, rather than porting several projects
+in one session. Project pull requests are merged by the owner or the owning
+lane, not by you.
+
 ## Changing the pipeline itself
 
 After changing anything in `templates/` or `.github/workflows/`:

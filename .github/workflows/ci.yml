@@ -67,6 +67,11 @@ jobs:
         legacy hello => js cli: hello
         toy js handed back => js cli: js handed back
       package: tests/e2e/toy/package.json
+      # Stands for a project's parity tests: the freshly built binary is there
+      # and runs, and so is the parity runner.
+      parity: |
+        "$RUSTIFY_BIN_DIR/toy" --version | grep -q "version=0.0.0-ci."
+        node "$RUSTIFY_PARITY" --cases tests/e2e/toy/parity.json --ts "$RUSTIFY_BIN_DIR/toy" --rs "$RUSTIFY_BIN_DIR/toy"
 
   # The publish action, run for real against a throwaway registry on this
   # runner: publish what the pipeline packed, publish it again, then install
