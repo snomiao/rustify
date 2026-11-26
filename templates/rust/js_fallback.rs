@@ -1,4 +1,6 @@
-//! rustify JS fallback v1 — copy into the crate as `src/js_fallback.rs`.
+//! rustify JS fallback v3 — copy into the crate as `src/js_fallback.rs`.
+//! (v2: waits for the JavaScript on Ctrl+C on Windows. v3: starts the
+//! JavaScript with the runtime its own `#!` line names.)
 //!
 //! For the time when the Rust binary is already the command users run but some
 //! commands still exist only in the package's JavaScript. The binary handles

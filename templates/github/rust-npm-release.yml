@@ -14,8 +14,11 @@ name: rust-npm-release
 
 on:
   pull_request:
+    # The TypeScript is listed too: once a `parity:` test exists, a change on
+    # either side has to rerun it.
     paths:
       - "__RUST_DIR__/**"
+__TS_PATHS__
       - "package.json"
       - ".github/workflows/rust-npm-release.yml"
   workflow_dispatch:

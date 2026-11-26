@@ -17,10 +17,15 @@ fn native() -> bool {
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    match args.first().map(String::as_str) {
-        // Ported commands go here, one arm each, once their parity cases pass:
-        //   Some("status") if native() => status::run(&args[1..]),
+    // Arguments that are not valid UTF-8 are for the JavaScript to deal with.
+    let args: Option<Vec<String>> = std::env::args_os().skip(1).map(|arg| arg.into_string().ok()).collect();
+    match args.as_deref().and_then(|args| args.first()).map(String::as_str) {
+        // Ported commands go here, one arm each, once their parity cases pass.
+        // An arm takes only the invocations it implements exactly and hands
+        // back the rest, before it has printed or changed anything:
+        //   Some("status") if native() => status::run(&args.unwrap()[1..]),
+        // Guard anything the binary answers itself with native(), `--version`
+        // included.
         _ => js_fallback::run(__JS_ENTRY_EXPRESSION__),
     }
 }

@@ -27,8 +27,9 @@ on:
         required: true
         type: string
       bins:
-        description: "Cargo bin names to ship, space separated"
-        required: true
+        description: "Cargo bin names to build and ship, space separated. Not needed with prebuilt."
+        required: false
+        default: ""
         type: string
       smoke:
         description: "Command that must exit 0 and print the released version, e.g. `mycli --version`"
@@ -65,17 +66,22 @@ on:
         default: ""
         type: string
       smoke-extra:
-        description: "More commands to run after installing, one per line: `<command> [args] => <text it must print>`. Use it for commands that are still JavaScript or handed back to it."
+        description: "More commands to run after installing, one per line: `<command> [args] => <text it must print>`, optionally followed by ` !> <text it must not print>`, and optionally led by `[<exit code>] ` when the command is meant to fail. Use it for commands that are still JavaScript or handed back to it."
         required: false
         default: ""
         type: string
       prebuilt:
-        description: "Skip the build here. An earlier job of your workflow has built the binaries itself and uploaded one artifact per platform, named native-<platform key> (linux-x64, darwin-arm64, win32-x64, …), with the binaries at its top level. For projects whose build needs its own runners or steps."
+        description: "Skip the build here. An earlier job of your workflow has built the binaries itself and uploaded one artifact per platform, named native-<platform key> (linux-x64, darwin-arm64, win32-x64, …), with the binaries at its top level. For projects whose build needs its own runners or steps. Stamping the version into those binaries is then your build's job; this workflow only stamps package.json."
         required: false
         default: false
         type: boolean
       parity:
         description: "Command that proves the Rust binary behaves like the TypeScript. Runs on Linux x64 with the freshly built binaries in $RUSTIFY_BIN_DIR, and has to pass before anything can be published. Example: `bun install --frozen-lockfile && bun test tests/parity.test.ts`"
+        required: false
+        default: ""
+        type: string
+      smoke-env:
+        description: "Environment for the smoke commands, one NAME=value per line. For switching off a fallback the test must not take, such as a download."
         required: false
         default: ""
         type: string
@@ -133,6 +139,11 @@ jobs:
         if: inputs.pre-build != ''
         shell: bash
         run: ${{ inputs.pre-build }}
+
+      - name: Check inputs
+        shell: bash
+        run: |
+          if [ -z "$BINS" ]; then echo "::error::the bins input is empty: name the cargo bins to build"; exit 1; fi
 
       - name: Build (cargo-zigbuild)
         if: matrix.zig
@@ -331,10 +342,14 @@ jobs:
           SMOKE: ${{ inputs.smoke }}
           EXPECT: ${{ inputs.smoke-expect }}
           EXTRA: ${{ inputs.smoke-extra }}
+          SMOKE_ENV: ${{ inputs.smoke-env }}
         run: |
           set -- --dist npm-dist --run "$SMOKE"
           if [ -n "$EXPECT" ]; then set -- "$@" "--expect=$EXPECT"; fi
           while IFS= read -r line; do
             if [ -n "$line" ]; then set -- "$@" --also "$line"; fi
           done <<< "$EXTRA"
+          while IFS= read -r line; do
+            if [ -n "$line" ]; then set -- "$@" --env "$line"; fi
+          done <<< "$SMOKE_ENV"
           node .rustify/templates/npm/smoke.mjs "$@"

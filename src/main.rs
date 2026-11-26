@@ -837,6 +837,19 @@ fn audit_delivery(s: &mut Section, project: &Project, dir: &Path, offline: bool)
 
 // ───────────────────────────────── vendor ──────────────────────────────────
 
+/// Workflow `paths:` lines for the directories that hold a project's
+/// TypeScript: `src` is `"src/**"`, the repository root is every `.ts` file.
+fn ts_paths(dirs: &[String]) -> String {
+    let lines: Vec<String> = dirs
+        .iter()
+        .map(|dir| match dir.trim_end_matches('/') {
+            "." | "" => "      - \"**.ts\"".to_string(),
+            dir => format!("      - \"{dir}/**\""),
+        })
+        .collect();
+    lines.join("\n")
+}
+
 /// The JavaScript file each command of a package runs, as published:
 /// command name → file, relative to the package root.
 fn js_entries(package: &Json) -> Vec<(String, String)> {
@@ -979,9 +992,15 @@ fn vendor(args: &[String]) -> i32 {
         eprintln!("rustify: no checkout of {name} found");
         return 1;
     };
-    let Some(manifest) = &project.manifest else {
-        eprintln!("rustify: {name} has no `manifest` in projects.toml — there is no crate to release yet");
-        return 1;
+    // projects.toml may not know about a crate that was only just scaffolded.
+    let default_manifest = "rs/Cargo.toml".to_string();
+    let manifest = match &project.manifest {
+        Some(manifest) => manifest,
+        None if dir.join(&default_manifest).is_file() => &default_manifest,
+        None => {
+            eprintln!("rustify: {name} has no crate yet (no `manifest` in projects.toml, no rs/Cargo.toml) — run `rustify scaffold {name}` first");
+            return 1;
+        }
     };
     let workflow = dir.join(".github/workflows").join(WORKFLOW);
     if workflow.exists() {
@@ -1015,7 +1034,8 @@ fn vendor(args: &[String]) -> i32 {
         .replace("__MANIFEST__", manifest)
         .replace("__BINS__", &bins.join(" "))
         .replace("__SMOKE__", &format!("{command} --version"))
-        .replace("\"__RUST_DIR__/**\"", &format!("\"{}\"", if rust_dir.is_empty() { "src/**".to_string() } else { format!("{rust_dir}/**") }));
+        .replace("\"__RUST_DIR__/**\"", &format!("\"{}\"", if rust_dir.is_empty() { "src/**".to_string() } else { format!("{rust_dir}/**") }))
+        .replace("__TS_PATHS__", &ts_paths(&project.ts));
     if !dry {
         fs::create_dir_all(workflow.parent().unwrap()).expect("create workflows directory");
         fs::write(&workflow, text).expect("write workflow");
@@ -1073,6 +1093,12 @@ mod tests {
         );
         assert_eq!(entries(r#"{"name":"@me/x","bin":"cli.mjs"}"#), [("x".to_string(), "cli.mjs".to_string())]);
         assert!(entries(r#"{"name":"x"}"#).is_empty());
+    }
+
+    #[test]
+    fn typescript_directories_become_workflow_paths() {
+        assert_eq!(ts_paths(&["src".to_string(), "bin/".to_string()]), "      - \"src/**\"\n      - \"bin/**\"");
+        assert_eq!(ts_paths(&[".".to_string()]), "      - \"**.ts\"");
     }
 
     #[test]

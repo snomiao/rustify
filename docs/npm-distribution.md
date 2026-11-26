@@ -192,7 +192,9 @@ A pull request runs steps 1–3 only.
 A project whose build needs its own runners or steps (large C++ dependencies,
 system libraries) keeps its build: its own jobs upload one artifact per
 platform, named `native-<platform key>`, and it calls the workflow with
-`prebuilt: true`, which then only packs, tests and smoke-tests. A project that
+`prebuilt: true`, which then only packs, tests and smoke-tests. Stamping the
+release version into the binaries is then that build's job; the workflow
+stamps `package.json` only. A project that
 cannot build every platform lists the ones it ships in `rustify.platforms`;
 the launcher tells users of the others that there is no build for them.
 
@@ -252,6 +254,10 @@ session.
 The Mac also ran `tests/e2e/run.sh` in full. A machine with bun and no npm is
 supported throughout: the launcher's shebang is bun, and the packer falls back
 to `bun publish` and `bun pm pack`.
+
+The upgrade test covers both places a running binary can sit: hard-linked into
+the main package (a command that is the binary) and in the platform package
+only (a JavaScript command that starts it).
 
 Not verified:
 

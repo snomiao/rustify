@@ -153,6 +153,8 @@ move. The procedure is `docs/porting.md`; follow it exactly. In short:
 2. One command at a time: write its parity cases first and make them pass
    TypeScript against TypeScript, then port until they pass against Rust
    (`templates/parity/parity.mjs`), then switch the command over in `main.rs`.
+   Rust takes only the situations it implements exactly and hands back the
+   rest; `--handback` proves which cases it really answers itself.
 3. Pass the test to the pipeline with `parity:` so CI holds the line, and set
    the ledger entry to `verified` with the cases file as `proof`.
 

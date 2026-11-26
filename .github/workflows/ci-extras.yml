@@ -32,3 +32,9 @@ jobs:
       smoke: toyjs --version
       # Starts with `--` on purpose: such a text has to survive as well.
       smoke-expect: --version"]
+      # The toy echoes this variable, and never prints the forbidden text.
+      smoke-env: |
+        RUSTIFY_PACKAGE_ROOT=from-smoke-env
+      smoke-extra: |
+        toyjs probe => root=from-smoke-env !> no native binary
+        [7] toyjs exit 7 => args=["exit", "7"]
