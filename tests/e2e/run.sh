@@ -18,7 +18,8 @@ REPO="$(cd "$HERE/../.." && pwd)"
 PACK="$REPO/templates/npm/pack.mjs"
 RUNTIME="${RUNTIME:-bun}"
 NAME="rustify-e2e-toy"
-WORK="$(mktemp -d)"
+# Resolved, because macOS hands out temp directories behind a symlink.
+WORK="$(cd "$(mktemp -d)" && pwd -P)"
 REG_PID=""
 cleanup() {
   [ -n "${KEEP:-}" ] && { echo "kept: $WORK"; [ -n "$REG_PID" ] && kill "$REG_PID" 2>/dev/null; return; }
@@ -77,7 +78,7 @@ for _ in $(seq 50); do [ -s "$WORK/registry.url" ] && break; sleep 0.1; done
 REGISTRY="$(cat "$WORK/registry.url")"
 [ -n "$REGISTRY" ] || die "registry did not start"
 echo "//${REGISTRY#http://}/:_authToken=e2e" > "$WORK/npmrc"
-export NPM_CONFIG_USERCONFIG="$WORK/npmrc"
+export NPM_CONFIG_USERCONFIG="$WORK/npmrc" NPM_CONFIG_TOKEN=e2e
 
 release() { # $1 = version
   build "$1"
@@ -103,7 +104,9 @@ check_install() { # $1 = label, $2 = bin dir, $3 = node_modules dir
   if is_script "$bin"; then die "$label: the command is still a script after the first run"; fi
   pass "$label: after the first run the command is the native binary"
   out="$("$bin" again)"
-  [[ "$out" == *"exe=$(realpath "$bin")"* ]] && pass "$label: second run is native, from the package's own bin directory" \
+  # Linux reports the resolved file; macOS reports the path it was started through.
+  [[ "$out" == *"exe=$(realpath "$bin") "* || "$out" == *"exe=$bin "* ]] \
+    && pass "$label: second run is native, with no launcher in between" \
     || die "$label: second run printed: $out"
   is_script "$2/toy-alias" && die "$label: the second command was not linked" || true
   out="$("$2/toy-alias")"
@@ -122,9 +125,13 @@ grep -qi "blocked" "$WORK/bun-install.log" && die "bun reported a blocked instal
 check_install bun "$BUN_INSTALL/bin" "$BUN_MODS"
 
 echo "== npm i -g"
-NPM_PREFIX="$WORK/npm"
-npm i -g --prefix "$NPM_PREFIX" "$NAME" --registry "$REGISTRY" >"$WORK/npm-install.log" 2>&1 || { cat "$WORK/npm-install.log"; die "npm i -g failed"; }
-check_install npm "$NPM_PREFIX/bin" "$NPM_PREFIX/lib/node_modules/$NAME/node_modules"
+if command -v npm >/dev/null 2>&1; then
+  NPM_PREFIX="$WORK/npm"
+  npm i -g --prefix "$NPM_PREFIX" "$NAME" --registry "$REGISTRY" >"$WORK/npm-install.log" 2>&1 || { cat "$WORK/npm-install.log"; die "npm i -g failed"; }
+  check_install npm "$NPM_PREFIX/bin" "$NPM_PREFIX/lib/node_modules/$NAME/node_modules"
+else
+  echo "  skip  npm is not installed on this machine"
+fi
 
 echo "== upgrade"
 release 1.2.4
