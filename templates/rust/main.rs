@@ -7,8 +7,7 @@
 
 mod js_fallback;
 
-/// The package's JavaScript entry, relative to the package root.
-const JS_ENTRY: &str = "__JS_ENTRY__";
+__JS_ENTRY_DEFINITION__
 
 /// `__ENV___NO_NATIVE=1` hands every command back to the JavaScript: the way
 /// out for a user if a ported command misbehaves.
@@ -22,6 +21,6 @@ fn main() {
     match args.first().map(String::as_str) {
         // Ported commands go here, one arm each, once their parity cases pass:
         //   Some("status") if native() => status::run(&args[1..]),
-        _ => js_fallback::run(JS_ENTRY),
+        _ => js_fallback::run(__JS_ENTRY_EXPRESSION__),
     }
 }

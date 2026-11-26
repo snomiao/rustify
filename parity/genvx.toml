@@ -1,0 +1,238 @@
+# Parity ledger for genvx. Format and rules: parity/README.md.
+#
+# Written while porting, on branch feat/rust-port of snomiao/genvx (the crate
+# is rs/ there; nothing of it is on main yet, so read this ledger with
+# `rustify audit genvx --at <that worktree>`). Read in full at 8809766:
+# src/cli.ts, src/index.ts, src/hooks.ts.
+#
+# How the two fit together. The Rust binary is meant to be the installed
+# command. rs/src/args.rs lists the plain invocations it answers itself;
+# every other invocation goes back to src/cli.ts, and so does an invocation
+# whose surroundings the binary does not imitate (a terminal to ask on, a
+# `.env` file in syntax bun interprets, a bunfig.toml, NODE_ENV — see the
+# entries below). It always goes back before anything is printed or changed.
+# Status here is what the binary does on its own, so what goes back is
+# `missing`.
+#
+# Rust-only behaviour with no TypeScript counterpart: `GENVX_NO_NATIVE=1`
+# hands every invocation back (the template's way out for users), and
+# `GENVX_PACKAGE_ROOT` tells the binary where the package is.
+#
+# Proofs. All were run and seen passing on Linux x64 with bun 1.4.0 and
+# git 2.47 on 2026-11-26, against rs/target/release/genvx:
+# - rs/parity.json (written by rs/parity.gen.mjs): CASES_TOTAL cases through
+#   rustify's parity runner, TypeScript against the binary. Compared: stdout,
+#   stderr, exit code and the `after` probes (files, modes, git state, and
+#   what was pushed, decrypted with node:crypto). Normalised: the `[Nms]`
+#   timings, the timestamp in backup directory names, the generated key.
+# - rs/parity-native.mjs: the same cases against a stand-in package, which
+#   shows who answered. CASES_NATIVE cases were answered by the binary itself and
+#   CASES_HANDBACK were handed back, each as its case says it should be. A `verified`
+#   below rests only on cases the binary answered.
+# - rs/cross-compat.sh: both implementations on one gitstore, each reading
+#   what the other wrote (CROSS_CHECKS checks).
+# - `cargo test` in rs/: the crypto, base64/hex, parseInt and UTF-8 decoding
+#   against values recorded from bun.
+#
+# Nothing is verified on macOS or Windows: the cases need a POSIX shell and
+# GNU stat, and the pipeline's parity job runs on Linux. See the last entry.
+
+reconciled = "8809766"
+
+# ───────────────────────────── Commands ─────────────────────────────
+
+[[feature]]
+name = "branch / b"
+status = "verified"
+ts = "src/cli.ts:222; src/index.ts:70 parseGitRemote; src/index.ts:84 getBranchName; src/index.ts:92 getGitRemote"
+rs = "rs/src/main.rs branch; rs/src/project.rs"
+proof = "rs/parity.json cases `branch: …`"
+note = "The TypeScript's reading of remotes is kept as it is: `git@host:owner/repo` only works when the host ends in `.com`; `ssh://` and local-path remotes are `Invalid git remote URL`. A remote with non-ASCII characters goes back (JavaScript lower-casing is not imitated)."
+
+[[feature]]
+name = "push / p / save, when nothing is asked (--yes, or no terminal on stdin)"
+status = "verified"
+ts = "src/cli.ts:127; src/index.ts:576 pushToGitstore"
+rs = "rs/src/main.rs sync_command; rs/src/sync.rs push"
+proof = "rs/parity.json cases `push: …`; rs/cross-compat.sh"
+note = "Left out on purpose: for each changed file the TypeScript runs `git diff --numstat` on two temp files and never uses the result. Messages for file system errors other than ENOENT (permission denied, disk full) follow bun's wording by analogy and are not covered by a case."
+
+[[feature]]
+name = "pull / load, when nothing is asked"
+status = "verified"
+ts = "src/cli.ts:138; src/index.ts:643 pullFromGitstore"
+rs = "rs/src/main.rs sync_command; rs/src/sync.rs pull"
+proof = "rs/parity.json cases `pull: …`; rs/cross-compat.sh"
+
+[[feature]]
+name = "diff / d"
+status = "verified"
+ts = "src/cli.ts:149; src/index.ts:711 diffWithGitstore"
+rs = "rs/src/main.rs sync_command; rs/src/sync.rs diff"
+proof = "rs/parity.json cases `diff: …`; rs/cross-compat.sh"
+
+[[feature]]
+name = "the question before push and pull on a terminal (Proceed with push? [Y/n])"
+status = "missing"
+ts = "src/index.ts:45 confirmAction; src/index.ts:527 displayAndConfirm"
+note = "With a terminal on stdin and no --yes, push and pull go back to the JavaScript before anything happens. The parity runner has no terminal, so an answer typed at the prompt could not be compared."
+
+[[feature]]
+name = "setup / init, when nothing is asked (--yes, or no terminal on stdin)"
+status = "verified"
+ts = "src/cli.ts:99; src/index.ts:784 setupConfig"
+rs = "rs/src/main.rs setup_command; rs/src/setup.rs"
+proof = "rs/parity.json cases `setup: …`"
+note = "Includes the hook installation at the end, with the limits of `hooks install` below (then the whole command goes back). The generated key differs per run by nature; the cases check its shape (44 base64 characters) and that it is the one written to the file. On Windows `--dir` goes back (node's Windows path rules)."
+
+[[feature]]
+name = "setup / init, interactive"
+status = "missing"
+ts = "src/index.ts:784 setupConfig; src/index.ts:57 promptInput"
+note = "The questions (where to save, store URL, key, confirm, hooks). Goes back whenever stdin is a terminal and --yes is not given."
+
+[[feature]]
+name = "hooks install, local mode (.git/hooks)"
+status = "verified"
+ts = "src/cli.ts:160; src/hooks.ts:210 installHooks; src/hooks.ts:131 installLocal; src/hooks.ts:92 writeChainedHook"
+rs = "rs/src/hooks.rs cmd_install"
+proof = "rs/parity.json cases `hooks install: …`"
+note = "Also what the TypeScript does in a linked worktree: it writes to .git/worktrees/<name>/hooks, where git does not look."
+
+[[feature]]
+name = "hooks install, shared mode (.githooks, or .husky under husky)"
+status = "partial"
+ts = "src/hooks.ts:184 installShared; src/hooks.ts:171 addPrepareScript"
+rs = "rs/src/hooks.rs plan; rs/src/hooks.rs install"
+note = "Answered by Rust and covered by cases where the hooks go to .husky, or to .githooks in a project without a package.json. With a package.json the TypeScript adds a `prepare` script by JSON.parse and JSON.stringify of the whole file (key order, number formatting); that is not ported and the invocation goes back."
+
+[[feature]]
+name = "hooks install, lefthook mode (lefthook-local.yml)"
+status = "partial"
+ts = "src/hooks.ts:158 installLefthook"
+rs = "rs/src/hooks.rs plan; rs/src/hooks.rs install"
+note = "Answered by Rust and covered by cases only when no `lefthook` program is on PATH. When there is one the TypeScript runs `lefthook install`; no case has such a program, so the invocation goes back. On Windows it always goes back."
+
+[[feature]]
+name = "hooks uninstall"
+status = "verified"
+ts = "src/hooks.ts:233 uninstallHooks; src/hooks.ts:106 removeChainedHook"
+rs = "rs/src/hooks.rs cmd_uninstall"
+proof = "rs/parity.json cases `hooks uninstall: …`"
+
+[[feature]]
+name = "hooks status"
+status = "verified"
+ts = "src/hooks.ts:272 hooksStatus; src/hooks.ts:45 detectHookManager"
+rs = "rs/src/hooks.rs cmd_status"
+proof = "rs/parity.json cases `hooks status: …`"
+
+[[feature]]
+name = "hooks run [event] (what the installed hooks call)"
+status = "verified"
+ts = "src/hooks.ts:293 runHook"
+rs = "rs/src/main.rs hooks_run; rs/src/hooks.rs cmd_run"
+proof = "rs/parity.json cases `hooks run: …`; rs/cross-compat.sh"
+note = "The event must look like a hook name (letters, digits, - and _); anything else goes back."
+
+[[feature]]
+name = "--help, --version and usage errors"
+status = "missing"
+ts = "src/cli.ts:64 runCli (yargs)"
+note = "yargs' own text, including `Unknown command: version / Did you mean --version?`. Always handed back; the cases `yargs: …` hold that line."
+
+[[feature]]
+name = "argument spellings beyond the plain ones"
+status = "missing"
+ts = "src/cli.ts:64 runCli (yargs)"
+note = "Flags before the command, `--yes=false`, `--yes false`, `--no-yes`, `-yg url`, `-g=url`, a flag given twice (yargs makes an array of it), `--`, unknown flags (yargs ignores them), quoted or empty values. rs/src/args.rs lists what is taken; the rest goes back, and the cases `yargs: …` hold that line."
+
+# ───────────────────────────── Behaviour ─────────────────────────────
+
+[[feature]]
+name = "where store and key come from (--gitstore, GENVX_STORE, GENVX_KEY, GENVX_CONFIG_DIR, ./.env.local, ./.env, ~/.genvx)"
+status = "verified"
+ts = "src/index.ts:233 loadEnvConfig; src/index.ts:265 getEncryptionKey; src/index.ts:277 getGitstoreConfig; src/cli.ts:53 resolveGitstore"
+rs = "rs/src/env.rs load_config"
+proof = "rs/parity.json cases `config: …`"
+note = "Order, the simple line format (no quotes, no comments after a value), that every variable in those files also reaches git, and that the files are only read when the store or the key is first asked for. A config file that exists and cannot be read makes the TypeScript crash with bun's error dump: that goes back. So does GENVX_CONFIG_DIR with a `..` after a directory name, and on Windows any GENVX_CONFIG_DIR."
+
+[[feature]]
+name = ".env files bun loads by itself before the program starts"
+status = "partial"
+ts = "src/cli.ts:1 (#!/usr/bin/env bun)"
+rs = "rs/src/env.rs startup; rs/src/env.rs read_plain_dotenv"
+note = "Not written anywhere in the TypeScript, but real: bun puts .env.development.local, .env.local, .env.development and .env of the current directory into process.env, so a key in ./.env.development works, quotes around a value in ./.env are stripped, and all of it reaches git. Rust reproduces the order and the syntax where a value is literal: KEY=value, KEY=\"value\", KEY='value', a # comment after it, blank lines, CRLF (covered by the cases `branch: .env …` and several `config: …`). Not ported, so the invocation goes back: $VAR expansion, backslash escapes, values over several lines, `export`, indented lines, keys with . or -, a quote inside a value; NODE_ENV, BUN_ENV, BUN_OPTIONS or NODE_OPTIONS in the environment; a bunfig.toml in the directory or the user's config; a .env that sets HOME, PATH, NODE_*, BUN_* and the like. A project whose .env uses such syntax therefore runs every genvx command through the JavaScript, as today."
+
+[[feature]]
+name = "encrypted files, format v2 (written and read)"
+status = "verified"
+ts = "src/index.ts:122 encrypt; src/index.ts:142 decryptV2"
+rs = "rs/src/crypto.rs"
+proof = "rs/parity.json cases `pull: …` (fixed ciphertexts written by the TypeScript) and `push: …` (what Rust wrote, decrypted with node:crypto); rs/cross-compat.sh; rs/src/crypto.rs tests"
+note = "scrypt (N = 2^17 written, 2^1 to 2^17 read, as bun allows under the TypeScript's memory limit) and AES-256-GCM with a 16-byte IV. bun would also read an IV of any other length; Rust reads 16 and 12 and calls the rest undecryptable. genvx has only ever written 16."
+
+[[feature]]
+name = "encrypted files, old format v1 (read only)"
+status = "verified"
+ts = "src/index.ts:161 decryptV1"
+rs = "rs/src/crypto.rs decrypt_v1"
+proof = "rs/parity.json cases `pull: old v1 format`, `pull: v1 …`; rs/src/crypto.rs tests"
+
+[[feature]]
+name = "plaintext store (--no-encrypt)"
+status = "partial"
+ts = "src/cli.ts:79; src/index.ts:558 resolveRemoteFiles"
+rs = "rs/src/sync.rs pull_pairs; rs/src/args.rs"
+note = "In the TypeScript `--no-encrypt` changes nothing: yargs reads it as `encrypt = false` and the program looks at an option named `no-encrypt`, so a key is still required and files are still encrypted. Rust takes the flag and likewise ignores it (cases `config: --no-encrypt does not lift the need for a key`, `push: --no-encrypt still encrypts`). Reading a plaintext store while a key is set is covered too, including the TypeScript's failure on new files (`ENOENT … .env.enc`). The spellings that do switch encryption off (`--noEncrypt`, `--no-encrypt=true`) go back, so writing plaintext is not ported."
+
+[[feature]]
+name = "which files are synced (.env* in every directory except skipped ones and nested repositories)"
+status = "verified"
+ts = "src/index.ts:331 findEnvFiles"
+rs = "rs/src/sync.rs find_env_files"
+proof = "rs/parity.json cases `push: which files count`, `pull: store files in skipped directories are not seen`"
+note = "Files are listed and processed in the order the directory gives them, as in the TypeScript (not sorted)."
+
+[[feature]]
+name = "the list of changes (New, + KEY, (Updated), - KEY, formatting changes)"
+status = "verified"
+ts = "src/index.ts:188 parseEnvVars; src/index.ts:202 diffEnvVars; src/index.ts:481 displayChanges"
+rs = "rs/src/sync.rs display_changes"
+proof = "rs/parity.json cases `push: how variables are read for the listing`, `pull: changed, added and removed variables`, `diff: both sides differ`"
+
+[[feature]]
+name = "working copy in .genvx/ (node_modules/.genvx/ if node_modules exists): clone, first branch, reuse, clean-up"
+status = "verified"
+ts = "src/index.ts:283 getGenvxDir; src/index.ts:304 syncGitstore; src/index.ts:914 cleanup; src/cli.ts:23 withCleanup"
+rs = "rs/src/sync.rs sync_gitstore; rs/src/sync.rs cleanup"
+proof = "rs/parity.json cases `push: first push creates the project's branch`, `pull: a working directory left by an earlier run is updated, not cloned again`, `pull: wrong key leaves the working directory behind`, `push: store path does not exist`"
+note = "Including what the TypeScript does on an error: it exits before its clean-up, so .genvx/ with the clone stays, and git's own failures show as `Failed with exit code N`."
+
+[[feature]]
+name = "refusing to run in the gitstore"
+status = "verified"
+ts = "src/cli.ts:34 guardGitstore; src/index.ts:286 isInsideGitstoreDir"
+rs = "rs/src/main.rs sync_command; rs/src/project.rs same_repository; rs/src/sync.rs inside_gitstore_dir"
+proof = "rs/parity.json cases `config: refuses to run in the gitstore repository itself`, `config: gitstore guard, pull and diff`; rs/cross-compat.sh part 6 (inside .genvx/gitstore)"
+
+[[feature]]
+name = "file modes (600 on env files that were written or pushed, 755 on hooks)"
+status = "verified"
+ts = "src/index.ts:23 ensureSecurePermissions; src/hooks.ts:101"
+rs = "rs/src/sync.rs secure_permissions; rs/src/hooks.rs write_chained_hook"
+proof = "rs/parity.json `stat` probes in the push, pull, hooks install and setup cases"
+
+[[feature]]
+name = "backup of a file a hook is about to overwrite (.genvx/backups/<time>/)"
+status = "verified"
+ts = "src/index.ts:636 backupLocalFile"
+rs = "rs/src/sync.rs pull; rs/src/sync.rs backup_stamp"
+proof = "rs/parity.json cases `hooks run: pulls changed files and backs up what it overwrites`, `hooks run: backup of a file in a subdirectory`, `hooks run: earlier backups are kept`; rs/src/sync.rs tests"
+
+[[feature]]
+name = "Windows"
+status = "ported"
+ts = "src/index.ts:14 isWindows"
+rs = "rs/src/sync.rs; rs/src/env.rs; rs/src/setup.rs"
+note = "The crate type-checks for x86_64-pc-windows-msvc and takes the same invocations there, with back-slashed paths, no chmod, USERPROFILE as the home directory and case-insensitive variable names. None of it has been run: no case runs on Windows. macOS takes the Unix code that the cases cover on Linux, and has not been run either."

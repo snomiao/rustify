@@ -38,7 +38,14 @@ project's users get nothing new yet, so no release should be cut.
 
 A package with several commands (`ay`, `claude-yes`, …) still needs only one
 cargo bin: map every command to it in `rustify.bins`. The binary learns which
-command it was started as from its own name.
+command it was started as from its own name, and the scaffold writes the
+lookup from command to JavaScript file when the commands run different files.
+
+One thing the hand-back cannot keep: under node, a script started through a
+command's symlink sees that symlink's path in `process.argv[1]`; handed back,
+it sees its own real path. (Under bun it always saw the real path.) A package
+that runs on node, shares one file between several commands and tells them
+apart by `argv[1]` needs its own answer, such as one small file per command.
 
 ## 2. Write the cases before the code
 

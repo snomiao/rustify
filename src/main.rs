@@ -837,18 +837,46 @@ fn audit_delivery(s: &mut Section, project: &Project, dir: &Path, offline: bool)
 
 // ───────────────────────────────── vendor ──────────────────────────────────
 
-/// The JavaScript file a package runs for its first command, as published.
-fn js_entry(package: &Json) -> Option<String> {
+/// The JavaScript file each command of a package runs, as published:
+/// command name → file, relative to the package root.
+fn js_entries(package: &Json) -> Vec<(String, String)> {
     let bin = match &package["publishConfig"]["bin"] {
         Json::Null => &package["bin"],
         published => published,
     };
-    let entry = match bin {
-        Json::String(file) => file.clone(),
-        Json::Object(map) => map.values().next()?.as_str()?.to_string(),
-        _ => return None,
-    };
-    Some(entry.trim_start_matches("./").to_string())
+    let clean = |file: &str| file.trim_start_matches("./").to_string();
+    match bin {
+        Json::String(file) => {
+            let name = package["name"].as_str().unwrap_or("").rsplit('/').next().unwrap_or("").to_string();
+            vec![(name, clean(file))]
+        }
+        Json::Object(map) => map
+            .iter()
+            .filter_map(|(command, file)| Some((command.clone(), clean(file.as_str()?))))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The part of `main.rs` that says which JavaScript file to hand back to.
+/// One constant when every command runs the same file; otherwise a lookup by
+/// the name the binary was started as.
+fn entry_code(entries: &[(String, String)]) -> (String, String) {
+    let first = &entries[0].1;
+    if entries.iter().all(|(_, file)| file == first) {
+        return (
+            format!("/// The package's JavaScript entry, relative to the package root.\nconst JS_ENTRY: &str = \"{first}\";\n"),
+            "JS_ENTRY".to_string(),
+        );
+    }
+    let mut code = String::from(
+        "/// The command this binary was started as.\nfn command() -> String {\n    std::env::args_os()\n        .next()\n        .map(std::path::PathBuf::from)\n        .and_then(|path| path.file_stem().map(|stem| stem.to_string_lossy().into_owned()))\n        .unwrap_or_default()\n}\n\n/// The JavaScript entry of each command, relative to the package root.\nfn js_entry(command: &str) -> &'static str {\n    match command {\n",
+    );
+    for (command, file) in &entries[1..] {
+        let _ = writeln!(code, "        \"{command}\" => \"{file}\",");
+    }
+    let _ = writeln!(code, "        _ => \"{first}\", // {}\n    }}\n}}", entries[0].0);
+    (code, "js_entry(&command())".to_string())
 }
 
 fn scaffold(args: &[String]) -> i32 {
@@ -881,9 +909,16 @@ fn scaffold(args: &[String]) -> i32 {
             return 1;
         }
     };
-    let Some(entry) = js_entry(&package) else {
+    let entries = js_entries(&package);
+    if entries.is_empty() {
         eprintln!("rustify: package.json of {name} has no `bin`, so there is no command to take over");
         return 1;
+    }
+    let (entry_definition, entry_expression) = entry_code(&entries);
+    let entry = if entry_expression == "JS_ENTRY" {
+        format!("`{}`", entries[0].1)
+    } else {
+        "the JavaScript file of the command it was started as".to_string()
     };
     let crate_name = project.crate_name.clone().unwrap_or_else(|| project.name.clone());
     let commands: Vec<String> = match &package["bin"] {
@@ -901,7 +936,8 @@ fn scaffold(args: &[String]) -> i32 {
         .expect("templates/rust/main.rs")
         .replace("__NAME__", &crate_name)
         .replace("__ENV__", &crate_name.to_uppercase().replace(['-', '.'], "_"))
-        .replace("__JS_ENTRY__", &entry);
+        .replace("__JS_ENTRY_DEFINITION__\n", &entry_definition)
+        .replace("__JS_ENTRY_EXPRESSION__", &entry_expression);
     let fallback = fs::read_to_string(templates.join("js_fallback.rs"))
         .expect("templates/rust/js_fallback.rs")
         .replace("\"RUSTIFY_PACKAGE_ROOT\"", &format!("\"{root_env}\""));
@@ -920,7 +956,7 @@ fn scaffold(args: &[String]) -> i32 {
     }
     let bins: Vec<String> = commands.iter().map(|c| format!("\"{c}\": \"{crate_name}\"")).collect();
     say!(
-        "\nThe binary hands every command to `{entry}`, so nothing changes for users yet.\n\nNext:\n  1. add to package.json:\n       \"rustify\": {{ \"mode\": \"hybrid\", \"bins\": {{ {} }}, \"rootEnv\": \"{root_env}\" }}\n  2. set `manifest = \"{manifest}\"` and `rust = [...]` for {name} in projects.toml\n  3. `rustify vendor {name}` adds the release workflow\n  4. build it (`cargo build --release --manifest-path {manifest}`) and commit Cargo.lock\nNothing was committed.",
+        "\nThe binary hands every command to {entry}, so nothing changes for users yet.\n\nNext:\n  1. add to package.json:\n       \"rustify\": {{ \"mode\": \"hybrid\", \"bins\": {{ {} }}, \"rootEnv\": \"{root_env}\" }}\n  2. set `manifest = \"{manifest}\"` and `rust = [...]` for {name} in projects.toml\n  3. `rustify vendor {name}` adds the release workflow\n  4. build it (`cargo build --release --manifest-path {manifest}`) and commit Cargo.lock\nNothing was committed.",
         bins.join(", ")
     );
     0
@@ -1030,15 +1066,26 @@ mod tests {
 
     #[test]
     fn the_published_bin_is_the_js_entry() {
-        let package: Json = serde_json::from_str(
-            r#"{"bin":{"slack":"./ts/cli.ts"},"publishConfig":{"bin":{"slack":"./dist/cli.js"}}}"#,
-        )
-        .unwrap();
-        assert_eq!(js_entry(&package).as_deref(), Some("dist/cli.js"));
-        let package: Json = serde_json::from_str(r#"{"name":"x","bin":"cli.mjs"}"#).unwrap();
-        assert_eq!(js_entry(&package).as_deref(), Some("cli.mjs"));
-        let package: Json = serde_json::from_str(r#"{"name":"x"}"#).unwrap();
-        assert_eq!(js_entry(&package), None);
+        let entries = |text: &str| js_entries(&serde_json::from_str(text).unwrap());
+        assert_eq!(
+            entries(r#"{"bin":{"slack":"./ts/cli.ts"},"publishConfig":{"bin":{"slack":"./dist/cli.js"}}}"#),
+            [("slack".to_string(), "dist/cli.js".to_string())]
+        );
+        assert_eq!(entries(r#"{"name":"@me/x","bin":"cli.mjs"}"#), [("x".to_string(), "cli.mjs".to_string())]);
+        assert!(entries(r#"{"name":"x"}"#).is_empty());
+    }
+
+    #[test]
+    fn one_entry_is_a_constant_and_several_are_a_lookup() {
+        let same = [("rech".to_string(), "r.ts".to_string()), ("rechrome".to_string(), "r.ts".to_string())];
+        let (definition, expression) = entry_code(&same);
+        assert!(definition.contains("const JS_ENTRY: &str = \"r.ts\";"));
+        assert_eq!(expression, "JS_ENTRY");
+        let different = [("feat".to_string(), "dist/feat.js".to_string()), ("fix".to_string(), "dist/fix.js".to_string())];
+        let (definition, expression) = entry_code(&different);
+        assert!(definition.contains("\"fix\" => \"dist/fix.js\","));
+        assert!(definition.contains("_ => \"dist/feat.js\", // feat"));
+        assert_eq!(expression, "js_entry(&command())");
     }
 
     #[test]
