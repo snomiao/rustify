@@ -99,7 +99,10 @@ from a job in the project's own workflow. Projects never list platforms.
    Cargo.toml and package.json. Check the values under `with:` (`pre-build`
    for steps cargo needs first, `js-build` in hybrid mode, `smoke-extra` for
    commands that are still JavaScript or handed back to it — one line each,
-   `<command> [args] => <text it must print>`).
+   `<command> [args] => <text it must print>`). If the project's build needs
+   its own runners or steps, keep its build jobs, have them upload
+   `native-<platform key>` artifacts, and pass `prebuilt: true`; if it cannot
+   build all six platforms, list the ones it ships in `rustify.platforms`.
 2. Add `rustify` to the project's `package.json`:
    - `bins`: each npm command → the cargo bin that implements it.
    - `mode`: `native` when the package needs no JavaScript at all; `hybrid`

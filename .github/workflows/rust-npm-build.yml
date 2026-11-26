@@ -69,6 +69,11 @@ on:
         required: false
         default: ""
         type: string
+      prebuilt:
+        description: "Skip the build here. An earlier job of your workflow has built the binaries itself and uploaded one artifact per platform, named native-<platform key> (linux-x64, darwin-arm64, win32-x64, …), with the binaries at its top level. For projects whose build needs its own runners or steps."
+        required: false
+        default: false
+        type: boolean
       parity:
         description: "Command that proves the Rust binary behaves like the TypeScript. Runs on Linux x64 with the freshly built binaries in $RUSTIFY_BIN_DIR, and has to pass before anything can be published. Example: `bun install --frozen-lockfile && bun test tests/parity.test.ts`"
         required: false
@@ -90,6 +95,7 @@ env:
 jobs:
   build:
     name: build ${{ matrix.key }}
+    if: ${{ !inputs.prebuilt }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -183,7 +189,8 @@ jobs:
   parity:
     name: parity (Rust against TypeScript)
     needs: build
-    if: inputs.parity != ''
+    # `build` is skipped for prebuilt binaries; that must not skip this job.
+    if: ${{ !cancelled() && inputs.parity != '' && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -212,6 +219,7 @@ jobs:
   pack:
     name: pack npm packages
     needs: build
+    if: ${{ !cancelled() && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -285,6 +293,7 @@ jobs:
   smoke:
     name: smoke ${{ matrix.os }}
     needs: pack
+    if: ${{ !cancelled() && needs.pack.result == 'success' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
