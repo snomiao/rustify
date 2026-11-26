@@ -49,6 +49,8 @@ Packaging follows codex; the speed comes from a step none of them have.
   build is `slack-hub@1.2.3-linux-x64` and so on, referenced as
   `"slack-hub-linux-x64": "npm:slack-hub@1.2.3-linux-x64"`.
 - **No install script.** Nothing for bun to skip.
+- **Launchers live in the package's `rustify/` directory**, one per command,
+  so they cannot collide with a `bin/` the project already ships.
 - **The launcher runs once, then gets out of the way.**
   - Linux, macOS: the first run hard-links the native binary over the launcher
     (and over every other command of the package). From the second run on, the
@@ -127,6 +129,13 @@ invocation of it. Two ways to get there before the port is complete:
   the rest to the package's JavaScript entry point
   (`templates/rust/js_fallback.rs`). Ported commands start at native speed
   from the first release; the rest behave exactly as before.
+
+- **Binaries only**: the commands stay JavaScript and the package merely
+  carries native binaries the JavaScript starts (`"bins": {}` with the
+  binaries listed in `"extra"`). They arrive in the platform packages instead
+  of all being bundled into one package or downloaded on first run, and the
+  JavaScript finds its binary with `templates/npm/native-binary.mjs`. For a
+  package that already has a native core behind a JavaScript command.
 
 The hand-back starts the JavaScript with the runtime its own first line names
 (`#!/usr/bin/env node`, `bun`, `npx tsx`), which is what ran it before the

@@ -107,6 +107,11 @@ from a job in the project's own workflow. Projects never list platforms.
    - `bins`: each npm command → the cargo bin that implements it.
    - `mode`: `native` when the package needs no JavaScript at all; `hybrid`
      while it still ships some.
+   - `extra`: cargo bins shipped beside the others without a command of their
+     own. With `bins` empty the commands stay JavaScript and only the
+     binaries move into the platform packages; the JavaScript finds them with
+     `templates/npm/native-binary.mjs`. Use that for a package whose
+     JavaScript command already starts a native core.
    - `runtime`: `bun` (the default, matching these projects' existing
      `#!/usr/bin/env bun`) or `node`.
    - `rootEnv`: a project-specific variable name such as `SLACK_HUB_PACKAGE_ROOT`.

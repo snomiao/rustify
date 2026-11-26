@@ -1,0 +1,31 @@
+# The pipeline for a package whose commands stay JavaScript while its native
+# binaries ride along in the platform packages ("bins": {}, "extra": [...]).
+# The JavaScript finds its binary with templates/npm/native-binary.mjs, on all
+# six platforms. Kept apart from ci.yml because both would upload artifacts of
+# the same names within one run.
+
+name: ci-extras
+
+on:
+  pull_request:
+    paths-ignore: ["docs/**", "parity/**", "**.md"]
+  push:
+    branches: [main]
+    paths-ignore: ["docs/**", "parity/**", "**.md"]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-extras-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pipeline:
+    uses: ./.github/workflows/rust-npm-build.yml
+    with:
+      manifest: tests/e2e/toy/Cargo.toml
+      bins: toy
+      package: tests/e2e/toy-extras/package.json
+      js-build: cp .rustify/templates/npm/native-binary.mjs tests/e2e/toy-extras/
+      # `toyjs` is JavaScript; it prints what the native binary it found prints.
+      smoke: toyjs --version
+      smoke-expect: toy version=
