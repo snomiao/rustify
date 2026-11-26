@@ -23,7 +23,9 @@ jobs:
     uses: ./.github/workflows/rust-npm-build.yml
     with:
       manifest: tests/e2e/toy/Cargo.toml
-      bins: toy
+      # toy-helper is built everywhere and shipped on Windows only
+      # (extraPlatforms in the fixture's package.json).
+      bins: toy toy-helper
       package: tests/e2e/toy-extras/package.json
       js-build: cp .rustify/templates/npm/native-binary.mjs tests/e2e/toy-extras/
       # `toyjs` is JavaScript; it prints what the native binary it found prints.

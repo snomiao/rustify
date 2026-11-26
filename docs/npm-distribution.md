@@ -136,6 +136,8 @@ invocation of it. Two ways to get there before the port is complete:
   of all being bundled into one package or downloaded on first run, and the
   JavaScript finds its binary with `templates/npm/native-binary.mjs`. For a
   package that already has a native core behind a JavaScript command.
+  An extra that only some platforms have (a Windows-only helper) is named in
+  `"extraPlatforms"`; it is then required there and not expected elsewhere.
 
 The hand-back starts the JavaScript with the runtime its own first line names
 (`#!/usr/bin/env node`, `bun`, `npx tsx`), which is what ran it before the
