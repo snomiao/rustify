@@ -891,7 +891,7 @@ status = "verified"
 ts = "ts/stdout.ts"
 rs = "rs/src/out.rs"
 proof = "tests/parity.test.ts"
-note = "Every case reads both outputs whole through a pipe, and `| head -c 100` makes both exit 141 with nothing on stderr. A Node or bun parent gives the child a socket pair instead, where the writer sees EPIPE or ENOTCONN depending on timing, for both implementations alike; ENOTCONN is reported as the TypeScript reports it. On a terminal stderr is red as bun's console.error prints it, unless NO_COLOR is set (proven through a pty)."
+note = "Every case reads both outputs whole through a pipe, and `| head -c 100` makes both exit 141 with nothing on stderr. A bun parent gives the child a socket pair instead (Node's libuv does the same, not checked here), where the writer sees EPIPE or ENOTCONN depending on timing, for both implementations alike; ENOTCONN is reported as the TypeScript reports it. On a terminal stderr is red as bun's console.error prints it, unless NO_COLOR is set (proven through a pty)."
 
 [[feature]]
 name = "lookup cache (~/.config/slack-cli/cache.json; --no-cache on todo / mytodo)"
