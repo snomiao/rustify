@@ -97,7 +97,9 @@ name = "qqdocs"
 repo = "snomiao/qqdocs"
 npm = "qqdocs"
 crate = "qqdocs"
+manifest = "rs/Cargo.toml"
 ts = ["src", "bin"]
+rust = ["rs/src"]
 
 [[project]]
 name = "winrpc"
