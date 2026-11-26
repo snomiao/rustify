@@ -12,7 +12,7 @@
 | dotenvdotenc | not started | JavaScript | write the parity ledger |
 | qqdocs | not started | JavaScript | write the parity ledger |
 | winrpc | unknown | unknown | clone the repository |
-| chatwork-cli | unknown | unknown | clone the repository |
+| chatwork-cli | not started | nothing (not on npm) | write the parity ledger |
 | genvx | not started | JavaScript | write the parity ledger |
 | rustdesk.skill | unknown | unknown | clone the repository |
 | wtx | unknown | unknown | clone the repository |
@@ -287,7 +287,24 @@
 - `todo` no checkout found under `/code/snomiao/winrpc`
 
 ## chatwork-cli
-- `todo` no checkout found under `/code/snomiao/chatwork-cli`
+
+**Checkout**
+
+- `info` `/code/snomiao/chatwork-cli/tree/main` on `main` at `5e79a99`
+
+**Code**
+
+- `info` TypeScript/JS to replace: 1,534 lines in 15 files; its tests: 644 lines, about 47 cases
+- `info` Rust: 0 lines in 0 files, 0 tests
+
+**Parity ledger**
+
+- `todo` no ledger at `parity/chatwork-cli.toml`, so progress cannot be measured
+- `todo` no Rust port exists yet
+
+**Delivery**
+
+- `todo` `chatwork-cli` is not on npm
 
 ## genvx
 
@@ -335,6 +352,7 @@
 **Delivery**
 
 - `info` npm has `gchat-cli` 1.2.0
+- `warn` the newest release tag in this checkout is `v1.0.0` — it is behind npm; fetch before trusting the code counts
 - `todo` `bun i -g gchat-cli` installs JavaScript, not the Rust binary (`gchat` → `ts/cli.ts`)
 
 ## Comfy-AI

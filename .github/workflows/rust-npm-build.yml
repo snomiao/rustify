@@ -333,7 +333,7 @@ jobs:
           EXTRA: ${{ inputs.smoke-extra }}
         run: |
           set -- --dist npm-dist --run "$SMOKE"
-          if [ -n "$EXPECT" ]; then set -- "$@" --expect "$EXPECT"; fi
+          if [ -n "$EXPECT" ]; then set -- "$@" "--expect=$EXPECT"; fi
           while IFS= read -r line; do
             if [ -n "$line" ]; then set -- "$@" --also "$line"; fi
           done <<< "$EXTRA"

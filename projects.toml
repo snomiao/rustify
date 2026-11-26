@@ -76,6 +76,7 @@ crate = "fbi-proxy"
 manifest = "Cargo.toml"
 ts = ["ts"]
 rust = ["rs"]
+ignore = ["lab", "e2e"]
 
 [[project]]
 name = "onenote-cli"
