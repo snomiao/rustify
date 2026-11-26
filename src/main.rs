@@ -113,9 +113,10 @@ fn main() {
     let code = match args.first().map(String::as_str) {
         Some("audit") => audit(&args[1..]),
         Some("vendor") => vendor(&args[1..]),
+        Some("scaffold") => scaffold(&args[1..]),
         _ => {
             eprintln!(
-                "usage:\n  rustify audit [project...] [--offline] [--write]\n      report every project's port and delivery status\n      --offline  skip the npm and crates.io lookups\n      --write    also save the report to docs/status.md\n  rustify vendor <project> [--dry-run]\n      add the release workflow to a project that has none"
+                "usage:\n  rustify audit [project...] [--offline] [--write]\n      report every project's port and delivery status\n      --offline  skip the npm and crates.io lookups\n      --write    also save the report to docs/status.md\n  Every command takes `--at <checkout>` with one project name, to work on a\n  checkout other than the project's default one (a feature worktree).\n  rustify scaffold <project> [--dry-run]\n      start a Rust crate in a project that has none: a binary that hands\n      every command back to the JavaScript, ready for commands to move in\n  rustify vendor <project> [--dry-run]\n      add the release workflow to a project that has none"
             );
             2
         }
@@ -172,6 +173,23 @@ fn locate(project: &Project, root: &Path) -> Option<PathBuf> {
     [base.join("tree/main"), base.join("tree/master"), base.clone()]
         .into_iter()
         .find(|p| p.join(".git").exists())
+}
+
+/// Value of `--at <dir>`: work on this checkout instead of the project's
+/// default one (a feature worktree, for instance).
+fn at(args: &[String]) -> Option<PathBuf> {
+    let i = args.iter().position(|a| a == "--at")?;
+    args.get(i + 1).map(PathBuf::from)
+}
+
+/// The arguments that are neither flags nor the value of `--at`.
+fn positional(args: &[String]) -> Vec<&String> {
+    let skip = args.iter().position(|a| a == "--at").map(|i| i + 1);
+    args.iter()
+        .enumerate()
+        .filter(|(i, a)| !a.starts_with("--") && Some(*i) != skip)
+        .map(|(_, a)| a)
+        .collect()
 }
 
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
@@ -282,7 +300,12 @@ fn thousands(n: usize) -> String {
 fn audit(args: &[String]) -> i32 {
     let offline = args.iter().any(|a| a == "--offline");
     let write = args.iter().any(|a| a == "--write");
-    let wanted: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
+    let wanted: Vec<&String> = positional(args);
+    let here = at(args);
+    if here.is_some() && wanted.len() != 1 {
+        eprintln!("rustify: --at needs exactly one project name");
+        return 2;
+    }
     let home = home();
     let registry = load_registry(&home);
     let root = checkout_root(&home);
@@ -298,7 +321,7 @@ fn audit(args: &[String]) -> i32 {
         if !wanted.is_empty() && !wanted.contains(&&project.name) {
             continue;
         }
-        sections.push((project, audit_project(project, &home, &root, offline)));
+        sections.push((project, audit_project(project, &home, &root, offline, here.as_deref())));
     }
 
     let mut report = String::from("# Rustify status\n\n");
@@ -331,9 +354,9 @@ fn audit(args: &[String]) -> i32 {
     0
 }
 
-fn audit_project(project: &Project, home: &Path, root: &Path, offline: bool) -> Section {
+fn audit_project(project: &Project, home: &Path, root: &Path, offline: bool, here: Option<&Path>) -> Section {
     let mut s = Section { port: "unknown".into(), install: "unknown".into(), ..Default::default() };
-    let Some(dir) = locate(project, root) else {
+    let Some(dir) = here.map(Path::to_path_buf).filter(|d| d.is_dir()).or_else(|| locate(project, root)) else {
         s.todo(
             format!("no checkout found under `{}`", root.join(&project.name).display()),
             "clone the repository",
@@ -616,6 +639,11 @@ fn audit_delivery(s: &mut Section, project: &Project, dir: &Path, offline: bool)
             }
             Some(at) => {
                 s.ok(format!("builds and smoke-tests every platform through the shared pipeline (`@{at}`)"));
+                if workflows.lines().any(|l| l.trim_start().starts_with("parity:")) {
+                    s.ok("the pipeline runs the project's parity tests before anything can be published");
+                } else {
+                    s.info("no `parity:` command is passed to the pipeline, so nothing compares Rust with TypeScript in CI");
+                }
                 match reference(PUBLISH_ACTION) {
                     Some(_) => s.ok("publishing goes through the shared pipeline"),
                     None => {
@@ -792,10 +820,25 @@ fn audit_delivery(s: &mut Section, project: &Project, dir: &Path, offline: bool)
 
 // ───────────────────────────────── vendor ──────────────────────────────────
 
-fn vendor(args: &[String]) -> i32 {
+/// The JavaScript file a package runs for its first command, as published.
+fn js_entry(package: &Json) -> Option<String> {
+    let bin = match &package["publishConfig"]["bin"] {
+        Json::Null => &package["bin"],
+        published => published,
+    };
+    let entry = match bin {
+        Json::String(file) => file.clone(),
+        Json::Object(map) => map.values().next()?.as_str()?.to_string(),
+        _ => return None,
+    };
+    Some(entry.trim_start_matches("./").to_string())
+}
+
+fn scaffold(args: &[String]) -> i32 {
     let dry = args.iter().any(|a| a == "--dry-run");
-    let Some(name) = args.iter().find(|a| !a.starts_with("--")) else {
-        eprintln!("usage: rustify vendor <project> [--dry-run]");
+    let names = positional(args);
+    let Some(name) = names.first().copied() else {
+        eprintln!("usage: rustify scaffold <project> [--at <checkout>] [--dry-run]");
         return 2;
     };
     let home = home();
@@ -804,7 +847,82 @@ fn vendor(args: &[String]) -> i32 {
         eprintln!("rustify: no project named {name} in projects.toml");
         return 2;
     };
-    let Some(dir) = locate(project, &checkout_root(&home)) else {
+    let Some(dir) = at(args).filter(|d| d.is_dir()).or_else(|| locate(project, &checkout_root(&home))) else {
+        eprintln!("rustify: no checkout of {name} found");
+        return 1;
+    };
+    let manifest = project.manifest.clone().unwrap_or_else(|| "rs/Cargo.toml".to_string());
+    let crate_dir = dir.join(&manifest).parent().map(Path::to_path_buf).unwrap_or_else(|| dir.clone());
+    if dir.join(&manifest).exists() {
+        eprintln!("rustify: {} already exists — nothing to scaffold", dir.join(&manifest).display());
+        return 1;
+    }
+    let package: Json = match fs::read_to_string(dir.join("package.json")).ok().and_then(|t| serde_json::from_str(&t).ok()) {
+        Some(package) => package,
+        None => {
+            eprintln!("rustify: {name} has no readable package.json");
+            return 1;
+        }
+    };
+    let Some(entry) = js_entry(&package) else {
+        eprintln!("rustify: package.json of {name} has no `bin`, so there is no command to take over");
+        return 1;
+    };
+    let crate_name = project.crate_name.clone().unwrap_or_else(|| project.name.clone());
+    let commands: Vec<String> = match &package["bin"] {
+        Json::Object(map) => map.keys().cloned().collect(),
+        _ => vec![package["name"].as_str().unwrap_or(&crate_name).to_string()],
+    };
+    let license = package["license"].as_str().unwrap_or("MIT");
+    let description = package["description"].as_str().unwrap_or("").replace('\\', "\\\\").replace('"', "\\\"");
+    let root_env = format!("{}_PACKAGE_ROOT", crate_name.to_uppercase().replace(['-', '.'], "_"));
+    let cargo_toml = format!(
+        "[package]\nname = \"{crate_name}\"\nversion = \"0.0.0\"\nedition = \"2021\"\ndescription = \"{description}\"\nlicense = \"{license}\"\n\n[[bin]]\nname = \"{crate_name}\"\npath = \"src/main.rs\"\n\n[profile.release]\nopt-level = 3\nlto = \"thin\"\nstrip = true\n"
+    );
+    let templates = home.join("templates/rust");
+    let main_rs = fs::read_to_string(templates.join("main.rs"))
+        .expect("templates/rust/main.rs")
+        .replace("__NAME__", &crate_name)
+        .replace("__ENV__", &crate_name.to_uppercase().replace(['-', '.'], "_"))
+        .replace("__JS_ENTRY__", &entry);
+    let fallback = fs::read_to_string(templates.join("js_fallback.rs"))
+        .expect("templates/rust/js_fallback.rs")
+        .replace("\"RUSTIFY_PACKAGE_ROOT\"", &format!("\"{root_env}\""));
+    let files = [
+        (crate_dir.join("Cargo.toml"), cargo_toml),
+        (crate_dir.join("src/main.rs"), main_rs),
+        (crate_dir.join("src/js_fallback.rs"), fallback),
+        (crate_dir.join(".gitignore"), "/target\n".to_string()),
+    ];
+    for (file, content) in &files {
+        if !dry {
+            fs::create_dir_all(file.parent().unwrap()).expect("create crate directory");
+            fs::write(file, content).expect("write crate file");
+        }
+        say!("{} {}", if dry { "would write" } else { "wrote      " }, file.display());
+    }
+    let bins: Vec<String> = commands.iter().map(|c| format!("\"{c}\": \"{crate_name}\"")).collect();
+    say!(
+        "\nThe binary hands every command to `{entry}`, so nothing changes for users yet.\n\nNext:\n  1. add to package.json:\n       \"rustify\": {{ \"mode\": \"hybrid\", \"bins\": {{ {} }}, \"rootEnv\": \"{root_env}\" }}\n  2. set `manifest = \"{manifest}\"` and `rust = [...]` for {name} in projects.toml\n  3. `rustify vendor {name}` adds the release workflow\n  4. build it (`cargo build --release --manifest-path {manifest}`) and commit Cargo.lock\nNothing was committed.",
+        bins.join(", ")
+    );
+    0
+}
+
+fn vendor(args: &[String]) -> i32 {
+    let dry = args.iter().any(|a| a == "--dry-run");
+    let names = positional(args);
+    let Some(name) = names.first().copied() else {
+        eprintln!("usage: rustify vendor <project> [--at <checkout>] [--dry-run]");
+        return 2;
+    };
+    let home = home();
+    let registry = load_registry(&home);
+    let Some(project) = registry.project.iter().find(|p| &p.name == name) else {
+        eprintln!("rustify: no project named {name} in projects.toml");
+        return 2;
+    };
+    let Some(dir) = at(args).filter(|d| d.is_dir()).or_else(|| locate(project, &checkout_root(&home))) else {
         eprintln!("rustify: no checkout of {name} found");
         return 1;
     };
@@ -891,6 +1009,29 @@ mod tests {
         assert_eq!(found, ["ts/tail.ts", "ts/cli.ts"]);
         assert_eq!(locations("rs/src/main.rs").collect::<Vec<_>>(), ["rs/src/main.rs"]);
         assert_eq!(locations(" ; ").count(), 0);
+    }
+
+    #[test]
+    fn the_published_bin_is_the_js_entry() {
+        let package: Json = serde_json::from_str(
+            r#"{"bin":{"slack":"./ts/cli.ts"},"publishConfig":{"bin":{"slack":"./dist/cli.js"}}}"#,
+        )
+        .unwrap();
+        assert_eq!(js_entry(&package).as_deref(), Some("dist/cli.js"));
+        let package: Json = serde_json::from_str(r#"{"name":"x","bin":"cli.mjs"}"#).unwrap();
+        assert_eq!(js_entry(&package).as_deref(), Some("cli.mjs"));
+        let package: Json = serde_json::from_str(r#"{"name":"x"}"#).unwrap();
+        assert_eq!(js_entry(&package), None);
+    }
+
+    #[test]
+    fn at_and_positional_arguments_are_told_apart() {
+        let args: Vec<String> = ["--at", "/w/x", "genvx", "--dry-run"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(at(&args), Some(PathBuf::from("/w/x")));
+        assert_eq!(positional(&args), [&"genvx".to_string()]);
+        let args: Vec<String> = ["genvx".to_string()].to_vec();
+        assert_eq!(at(&args), None);
+        assert_eq!(positional(&args).len(), 1);
     }
 
     #[test]

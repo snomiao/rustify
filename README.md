@@ -44,13 +44,14 @@ How it works: [docs/npm-distribution.md](docs/npm-distribution.md).
 |---|---|
 | `projects.toml` | The projects being migrated |
 | `parity/` | One ledger per project: every TypeScript feature and how far Rust has it |
-| `src/` | The `rustify` tool (`audit`, `vendor`) |
+| `src/` | The `rustify` tool (`audit`, `scaffold`, `vendor`) |
 | `.github/workflows/rust-npm-build.yml` | Reusable workflow projects call: six platforms built, packed, install-tested on Linux, macOS and Windows |
 | `.github/workflows/rust-npm-verify.yml` | Reusable workflow: the same install test against the real registry, after publishing |
 | `actions/publish/` | Action a project's own job uses to publish what was built |
 | `templates/npm/` | Packer, launcher, smoke test and the one platform list |
 | `templates/github/` | The small workflow a project adds to use all of the above |
-| `templates/rust/` | Helper for binaries that still hand some commands to JavaScript |
+| `templates/rust/` | Starting point for a project's crate: an entry that hands commands back to JavaScript until they are ported |
+| `templates/parity/` | Runner that compares the TypeScript and the Rust implementation case by case |
 | `tests/e2e/run.sh`, `tests/unit/` | Local rehearsal of the npm delivery; unit tests of the launcher |
 | `.claude/skills/rustify/` | The `/rustify` skill |
 | `docs/` | Purpose, design, per-project surveys, latest status |

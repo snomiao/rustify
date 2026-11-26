@@ -3,8 +3,9 @@
 rustify coordinates the migration of snomiao's TypeScript portfolio to Rust,
 with exactly the same features as the TypeScript versions.
 
-Projects in scope: `agent-yes`, `rechrome`, `slack-hub`, `otoji`, and others to
-be listed here as they are added.
+Projects in scope: the owner's public command-line projects, listed in
+[`projects.toml`](../projects.toml). `agent-yes`, `rechrome`, `slack-hub` and
+`otoji` come first.
 
 ## Ground rules
 
@@ -29,6 +30,7 @@ Start with `agent-yes` and `slack-hub`.
 ## Where things are
 
 - [Latest status](status.md) — written by `rustify audit --write`
+- [Porting a project, command by command](porting.md) — the procedure
 - [Delivering Rust through npm](npm-distribution.md) — design and what is verified
 - [全平台原生速度方案](native-speed.zh.md) — Windows plan and the public-repo layout (Chinese)
 - Parity ledgers: [`parity/`](../parity/README.md)

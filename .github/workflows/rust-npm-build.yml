@@ -69,6 +69,11 @@ on:
         required: false
         default: ""
         type: string
+      parity:
+        description: "Command that proves the Rust binary behaves like the TypeScript. Runs on Linux x64 with the freshly built binaries in $RUSTIFY_BIN_DIR, and has to pass before anything can be published. Example: `bun install --frozen-lockfile && bun test tests/parity.test.ts`"
+        required: false
+        default: ""
+        type: string
       scripts-ref:
         description: "Use the packer and smoke test from another ref of rustify. Default: the commit this workflow file was loaded from, so the two always match."
         required: false
@@ -171,6 +176,38 @@ jobs:
           path: native/${{ matrix.key }}
           if-no-files-found: error
           retention-days: 7
+
+  # The project's own proof that Rust and TypeScript behave the same, run
+  # against the binary that was just built. The packer and the parity runner of
+  # this repo are available in .rustify/templates.
+  parity:
+    name: parity (Rust against TypeScript)
+    needs: build
+    if: inputs.parity != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ inputs.scripts-ref || job.workflow_sha }}
+          path: .rustify
+          sparse-checkout: templates
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-linux-x64
+          path: .rustify-bin
+      - run: chmod +x .rustify-bin/*
+      - name: Run the parity tests
+        env:
+          RUSTIFY_BIN_DIR: ${{ github.workspace }}/.rustify-bin
+          RUSTIFY_PARITY: ${{ github.workspace }}/.rustify/templates/parity/parity.mjs
+        run: ${{ inputs.parity }}
 
   pack:
     name: pack npm packages
