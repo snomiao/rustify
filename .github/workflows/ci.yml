@@ -68,3 +68,35 @@ jobs:
         toy js handed back => js cli: js handed back
       package: tests/e2e/toy/package.json
       scripts-ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+  # The publish action, run for real against a throwaway registry on this
+  # runner: publish what the pipeline packed, publish it again, then install
+  # from that registry the way rust-npm-verify does. What it cannot cover is
+  # npm's own side: trusted publishing and provenance.
+  publish-rehearsal:
+    name: publish action (local registry)
+    needs: pipeline
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      REGISTRY: http://127.0.0.1:4873
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Start a throwaway registry
+        run: |
+          node templates/npm/registry.mjs "$RUNNER_TEMP/registry" 4873 > "$RUNNER_TEMP/registry.url" &
+          for i in $(seq 50); do [ -s "$RUNNER_TEMP/registry.url" ] && break; sleep 0.2; done
+          test "$(cat "$RUNNER_TEMP/registry.url")" = "$REGISTRY"
+      - uses: ./actions/publish
+        with:
+          registry: ${{ env.REGISTRY }}
+          provenance: "false"
+      - name: Publishing the same release again changes nothing
+        run: |
+          node templates/npm/pack.mjs publish --out npm-dist --registry "$REGISTRY" | tee again.log
+          test "$(grep -c "already published" again.log)" = 7
+      - name: Install from that registry and run
+        run: |
+          node templates/npm/smoke.mjs --dist npm-dist --run "toy --version" --registry "$REGISTRY" \
+            --also "legacy hello => js cli: hello" --also "toy js handed back => js cli: js handed back"
