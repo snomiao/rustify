@@ -70,6 +70,12 @@ tests already have, or recorded responses. A project that has such a harness
 can keep its own test instead of `parity.mjs`; what matters is that one test
 runs both implementations and compares everything they print.
 
+A case can also cover an invocation that Rust hands back. Built in the repo,
+the binary does not know where the package is, so tell it: put
+`"<PROJECT>_PACKAGE_ROOT": "<absolute path of the repo>"` in the cases' `env`
+(the JavaScript entry named in `main.rs` has to exist there, so build it
+first if it is a build product).
+
 ## 3. Port the command
 
 Read all of the TypeScript the command runs, including the helpers and the

@@ -30,6 +30,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: cargo build --release
       - run: cargo test --release
+      # The hand-back helper is a template; the toy compiles it, so its tests run there.
+      - run: cargo test --manifest-path tests/e2e/toy/Cargo.toml
       - run: node --test tests/unit/*.test.mjs
       - name: End-to-end rehearsal (bun launcher)
         run: tests/e2e/run.sh

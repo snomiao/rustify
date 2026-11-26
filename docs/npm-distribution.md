@@ -128,6 +128,10 @@ invocation of it. Two ways to get there before the port is complete:
   (`templates/rust/js_fallback.rs`). Ported commands start at native speed
   from the first release; the rest behave exactly as before.
 
+The hand-back starts the JavaScript with the runtime its own first line names
+(`#!/usr/bin/env node`, `bun`, `npx tsx`), which is what ran it before the
+binary existed, and falls back to the other of bun and node.
+
 Only hand a command to Rust when its ledger entry is `ported` or `verified`.
 A `partial` Rust command behaves differently from what users have today.
 
