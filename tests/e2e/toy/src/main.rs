@@ -12,8 +12,9 @@ fn main() {
     let root = std::env::var("RUSTIFY_PACKAGE_ROOT").unwrap_or_default();
     let args: Vec<String> = std::env::args().skip(1).collect();
     println!(
-        "toy version={} exe={} argv0={} root={} args={:?}",
+        "toy version={} arch={} exe={} argv0={} root={} args={:?}",
         option_env!("TOY_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")),
+        std::env::consts::ARCH,
         exe,
         argv0,
         root,

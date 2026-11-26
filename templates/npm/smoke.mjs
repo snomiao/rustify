@@ -103,7 +103,7 @@ function check(installer, registry) {
         `and should print "${expect}". Output:\n${first.text}`,
     );
   }
-  ok(`${installer}: first run works`);
+  ok(`${installer}: first run works — ${first.text.trim().split("\n")[0].slice(0, 160)}`);
 
   const second = runOnce(bin);
   if (second.code !== 0 || !second.text.includes(expect)) {

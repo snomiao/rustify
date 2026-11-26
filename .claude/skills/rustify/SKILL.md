@@ -133,7 +133,7 @@ After a release, run the audit again: "`bun i -g` gives" should read
 
 After changing anything in `templates/` or `.github/workflows/`:
 
-1. `node --test tests/unit/` and `tests/e2e/run.sh` (builds a toy binary,
+1. `node --test tests/unit/*.test.mjs` and `tests/e2e/run.sh` (builds a toy binary,
    publishes it to a throwaway local registry, installs it with bun and npm
    into a temp directory, checks the result).
 2. Open a PR here. The `ci` workflow runs the whole pipeline on the toy binary
