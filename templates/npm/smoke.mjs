@@ -17,7 +17,8 @@
 //                         write --expect=<text> if the text starts with --
 //   --env NAME=value      set for the commands under test; repeatable
 //   --also "<command> [args] => <text> !> <text it must not print>"
-//                         the part from `!>` on is optional
+//                         the part from `!>` on is optional; a leading `[2] `
+//                         expects exit code 2 instead of 0
 //                         one more command of the package that must exit 0
 //                         and print <text>; repeatable. Use it for commands
 //                         that are still JavaScript or are handed back to it.
@@ -230,12 +231,16 @@ function check(installer, registry) {
 // The additional commands given with --also.
 function extras(installer, home) {
   for (const extra of opts.also) {
-    const [line, rest = ""] = extra.split("=>").map((part) => part.trim());
+    const [left, rest = ""] = extra.split("=>").map((part) => part.trim());
     const [wanted, unwanted = ""] = rest.split("!>").map((part) => part.trim());
+    // `[2] mycli bad-arg => usage` expects exit code 2 instead of 0.
+    const exit = left.match(/^\[(\d+)\]\s+/);
+    const line = exit ? left.slice(exit[0].length) : left;
+    const code = exit ? Number(exit[1]) : 0;
     const [name, ...extraArgs] = line.split(/\s+/).filter(Boolean);
     const result = runOnce(binFor(installer, home, name), extraArgs);
-    if (result.code !== 0 || !result.text.includes(wanted)) {
-      bad(`${installer}: \`${line}\` exited ${result.code} and should print "${wanted}". Output:\n${result.text}`);
+    if (result.code !== code || !result.text.includes(wanted)) {
+      bad(`${installer}: \`${line}\` exited ${result.code} and should exit ${code} and print "${wanted}". Output:\n${result.text}`);
     } else if (unwanted && result.text.includes(unwanted)) {
       bad(`${installer}: \`${line}\` must not print "${unwanted}". Output:\n${result.text}`);
     } else {

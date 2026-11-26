@@ -99,3 +99,62 @@ test("a failing setup command is reported as broken, not as a pass", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("<CWD> and <HOME> in a case stand for the directories of the run", () => {
+  const dir = setup();
+  try {
+    const r = run(dir, {
+      cases: [
+        {
+          name: "placeholders",
+          args: ["echo", "<CWD>/a", "<HOME>/b"],
+          env: { GREETING: "<HOME>" },
+          files: { "ref.txt": "<CWD>\n" },
+          after: ["cat ref.txt", "test -d '<HOME>' && echo home-exists"],
+        },
+        { name: "env placeholder reaches the program", args: ["env"], env: { GREETING: "<CWD>", TZ: "UTC" } },
+      ],
+    }, ["--show"]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /all 2 case\(s\) behave the same/);
+    // --show prints what was compared, with the run's paths normalised again.
+    assert.match(r.stdout, /<CWD>\/a <HOME>\/b/);
+    assert.match(r.stdout, /home-exists/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("--handback tells the cases the binary answers from the ones it hands back", () => {
+  // Stands for a binary: hands `back …` to the entry under $DEMO_ROOT, answers the rest.
+  const dir = setup(`
+    if (cmd === "back") {
+      const { spawnSync } = require("child_process");
+      const r = spawnSync(process.execPath, [require("path").join(process.env.DEMO_ROOT, "dist/cli.js"), ...rest], { stdio: "inherit" });
+      process.exit(r.status);
+    }
+  `);
+  const handback = (cases) => {
+    fs.writeFileSync(path.join(dir, "parity.json"), JSON.stringify({ cases }));
+    return spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--rs", `${process.execPath} rs.cjs`, "--handback", "DEMO_ROOT=dist/cli.js"], { cwd: dir, encoding: "utf8" });
+  };
+  try {
+    const good = handback([
+      { name: "native", args: ["echo", "x"] },
+      { name: "goes back", args: ["back", "y"], handback: "not ported" },
+    ]);
+    assert.equal(good.status, 0, good.stdout + good.stderr);
+    assert.match(good.stdout, /1 case\(s\) answered by the binary, 1 handed back to the JavaScript, as the cases say/);
+
+    const wrong = handback([
+      { name: "believed native", args: ["back", "x"] },
+      { name: "believed handed back", args: ["echo", "y"], handback: "not ported" },
+    ]);
+    assert.equal(wrong.status, 1);
+    assert.match(wrong.stdout, /WRONG {3}believed native\n\s+reached the JavaScript/);
+    assert.match(wrong.stdout, /WRONG {3}believed handed back\n\s+was answered by the binary/);
+    assert.match(wrong.stdout, /2 of 2 case\(s\) went the wrong way/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

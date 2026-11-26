@@ -77,6 +77,20 @@ flag) once, not once per command. Leave out test tooling and code that
 counterpart goes in the `note` of the nearest feature and in your report to the
 owner — under exact parity it has to be removed or blessed.
 
+## Native here, handed back there
+
+A ported command usually answers its plain use itself and hands some
+situations back to the JavaScript (unusual spellings of its flags, a
+configuration it does not read yet). Record that as it is:
+
+- the command is `verified` when its plain use is proven, with `proof`;
+- each situation that still goes back gets its own entry, `missing` or
+  `partial`, whose `note` says when it happens — especially when it is the
+  common case, because then users see no difference yet;
+- machinery several commands share (where the token comes from, how a line is
+  formatted) is `verified` only as far as the proving cases exercise it; say
+  in the `note` which command's cases those are.
+
 ## Keeping it current
 
 `reconciled` is the short commit of the project the ledger was checked

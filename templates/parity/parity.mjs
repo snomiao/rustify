@@ -1,12 +1,22 @@
 #!/usr/bin/env node
-// rustify parity runner v1 — zero dependencies, runs on node or bun.
+// rustify parity runner v2 — zero dependencies, runs on node or bun.
 //
 // Runs the same command lines against two implementations of a CLI and fails
 // unless they behave the same: stdout, stderr, exit code, and whatever they
 // leave behind. It is the proof behind a `verified` entry in a parity ledger.
 //
 //   parity.mjs --cases parity.json --ts "bun ts/cli.ts" --rs "rs/target/release/mycli"
-//              [--filter <text>] [--keep]
+//              [--filter <text>] [--show] [--keep]
+//
+// A binary that hands some invocations back to the JavaScript passes those
+// cases by construction. To prove which cases the binary answers itself:
+//
+//   parity.mjs --cases parity.json --rs "rs/target/release/mycli" \
+//              --handback MYCLI_PACKAGE_ROOT=dist/cli.js
+//
+// runs only the binary, with a stand-in package whose JavaScript entry does
+// nothing but say it was reached, and fails unless exactly the cases marked
+// "handback" got there.
 //
 // Every case runs once per implementation, each time in its own fresh
 // directory with its own empty HOME, so nothing leaks between runs or in from
@@ -25,10 +35,15 @@
 //         "files": { "a.txt": "hello\n" },       // created in the directory first
 //         "setup": ["git init -q"],              // shell commands run first
 //         "after": ["cat .myclirc", "ls -a"],    // their output is compared too
-//         "normalize": [["pid \\d+", "pid <N>"]] // optional, on top of the global list
+//         "normalize": [["pid \\d+", "pid <N>"]], // optional, on top of the global list
+//         "handback": "usage errors belong to yargs"  // optional: this case is
+//                                  // MEANT to reach the JavaScript, and why
 //       }
 //     ]
 //   }
+//
+// <CWD> and <HOME> in `args`, `env`, `stdin`, `files`, `setup` and `after`
+// stand for the directories of the run.
 //
 // The paths of the temp directories are replaced by <CWD> and <HOME> before
 // comparing. Anything else that legitimately varies between two runs
@@ -49,8 +64,11 @@ function parseArgs(argv) {
 }
 
 const opts = parseArgs(process.argv.slice(2));
-if (!opts.cases || !opts.ts || !opts.rs) {
-  console.error('usage: parity.mjs --cases <file.json> --ts "<command>" --rs "<command>" [--filter <text>] [--keep]');
+if (!opts.cases || !opts.rs || (!opts.ts && !opts.handback)) {
+  console.error(
+    'usage: parity.mjs --cases <file.json> --ts "<command>" --rs "<command>" [--filter <text>] [--show] [--keep]\n' +
+      '       parity.mjs --cases <file.json> --rs "<command>" --handback <ROOT_ENV>=<js entry> [--filter <text>]',
+  );
   process.exit(2);
 }
 const isWindows = process.platform === "win32";
@@ -63,37 +81,44 @@ const command = (text) =>
     .split(/\s+/)
     .filter(Boolean)
     .map((token) => (fs.existsSync(path.resolve(launchDir, token)) && /[\\/.]/.test(token) ? path.resolve(launchDir, token) : token));
-const impls = { ts: command(opts.ts), rs: command(opts.rs) };
+const impls = { ts: opts.ts ? command(opts.ts) : null, rs: command(opts.rs) };
+const MARKER = "__RUSTIFY_HANDED_BACK__";
 const work = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "rustify-parity-"));
 
 function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function runCase(testCase, impl, index) {
+function runCase(testCase, impl, index, extraEnv = {}) {
   const root = path.join(work, `${index}-${impl}`);
   const cwd = path.join(root, "cwd");
   const home = path.join(root, "home");
   fs.mkdirSync(cwd, { recursive: true });
   fs.mkdirSync(home, { recursive: true });
+  // <CWD> and <HOME> in what a case says stand for this run's directories.
+  const here = (text) => String(text).split("<CWD>").join(cwd).split("<HOME>").join(home);
+  const hereAll = (object) => Object.fromEntries(Object.entries(object || {}).map(([k, v]) => [k, here(v)]));
   for (const [file, content] of Object.entries(testCase.files || {})) {
     const target = path.join(cwd, file);
     fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, content);
+    fs.writeFileSync(target, here(content));
   }
   const env = {
     PATH: process.env.PATH,
     HOME: home,
     USERPROFILE: home,
     XDG_CONFIG_HOME: path.join(home, ".config"),
-    XDG_CACHE_HOME: path.join(home, ".cache"),
     XDG_DATA_HOME: path.join(home, ".local", "share"),
+    // Outside HOME: a JavaScript runtime fills its cache, a native binary
+    // does not, and that must not show up as a difference in HOME.
+    XDG_CACHE_HOME: path.join(root, "cache"),
     TMPDIR: process.env.TMPDIR || os.tmpdir(),
     ...(isWindows ? { SystemRoot: process.env.SystemRoot, TEMP: process.env.TEMP, TMP: process.env.TMP, PATHEXT: process.env.PATHEXT } : {}),
-    ...(spec.env || {}),
-    ...(testCase.env || {}),
+    ...hereAll(spec.env),
+    ...hereAll(testCase.env),
+    ...extraEnv,
   };
-  const shell = (line) => spawnSync(line, { cwd, env, shell: true, encoding: "utf8", timeout: 120_000 });
+  const shell = (line) => spawnSync(here(line), { cwd, env, shell: true, encoding: "utf8", timeout: 120_000 });
   for (const line of testCase.setup || []) {
     const result = shell(line);
     if (result.status !== 0) {
@@ -101,10 +126,10 @@ function runCase(testCase, impl, index) {
     }
   }
   const [program, ...baseArgs] = impls[impl];
-  const result = spawnSync(program, [...baseArgs, ...(testCase.args || [])], {
+  const result = spawnSync(program, [...baseArgs, ...(testCase.args || []).map(here)], {
     cwd,
     env,
-    input: testCase.stdin ?? "",
+    input: here(testCase.stdin ?? ""),
     encoding: "utf8",
     timeout: (testCase.timeout || 120) * 1000,
   });
@@ -136,8 +161,46 @@ function show(label, text) {
 
 let failed = 0;
 let ran = 0;
-try {
+
+// --handback ROOT_ENV=entry: which cases does the binary answer itself?
+function handbackCheck() {
+  const eq = String(opts.handback).indexOf("=");
+  if (eq < 1) {
+    console.error("--handback needs <ROOT_ENV>=<js entry>, e.g. MYCLI_PACKAGE_ROOT=dist/cli.js");
+    process.exit(2);
+  }
+  const [rootEnv, entry] = [opts.handback.slice(0, eq), opts.handback.slice(eq + 1)];
+  const standIn = path.join(work, "stand-in");
+  fs.mkdirSync(path.dirname(path.join(standIn, entry)), { recursive: true });
+  fs.writeFileSync(path.join(standIn, "package.json"), JSON.stringify({ name: "stand-in", version: "0.0.0" }));
+  fs.writeFileSync(path.join(standIn, entry), `console.log(${JSON.stringify(MARKER)});\n`);
+  let native = 0;
+  let back = 0;
   spec.cases.forEach((testCase, index) => {
+    if (typeof opts.filter === "string" && !testCase.name.includes(opts.filter)) return;
+    ran++;
+    const run = runCase(testCase, "rs", index, { [rootEnv]: standIn });
+    if (run.broken) {
+      failed++;
+      return console.log(`  BROKEN  ${testCase.name}\n      ${run.broken}`);
+    }
+    const reached = run.observed.stdout.includes(MARKER);
+    if (reached) back++;
+    else native++;
+    if (reached === Boolean(testCase.handback)) return;
+    failed++;
+    console.log(
+      reached
+        ? `  WRONG   ${testCase.name}\n      reached the JavaScript, but the case does not say "handback"`
+        : `  WRONG   ${testCase.name}\n      was answered by the binary, but the case says it is handed back (${testCase.handback})`,
+    );
+  });
+  if (ran && !failed) console.log(`${native} case(s) answered by the binary, ${back} handed back to the JavaScript, as the cases say`);
+}
+
+try {
+  if (opts.handback) handbackCheck();
+  else spec.cases.forEach((testCase, index) => {
     if (typeof opts.filter === "string" && !testCase.name.includes(opts.filter)) return;
     ran++;
     const ts = runCase(testCase, "ts", index);
@@ -151,6 +214,8 @@ try {
     const differing = Object.keys(ts.observed).filter((k) => ts.observed[k] !== rs.observed[k]);
     if (!differing.length) {
       console.log(`  same    ${testCase.name}`);
+      // --show: what was compared, so a case that proves nothing is visible.
+      if (opts.show) for (const [k, v] of Object.entries(ts.observed)) console.log(show(k, v));
       return;
     }
     failed++;
@@ -169,5 +234,9 @@ if (!ran) {
   console.log("no case ran");
   process.exit(2);
 }
-console.log(failed ? `${failed} of ${ran} case(s) differ` : `all ${ran} case(s) behave the same`);
+if (opts.handback) {
+  if (failed) console.log(`${failed} of ${ran} case(s) went the wrong way`);
+} else {
+  console.log(failed ? `${failed} of ${ran} case(s) differ` : `all ${ran} case(s) behave the same`);
+}
 process.exit(failed ? 1 : 0);
