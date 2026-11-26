@@ -50,6 +50,11 @@ subcommands, then hands a real agent launch to the Rust binary.
 - The npm entry point has to stop being TS for the port to finish. See
   [npm-distribution.md](npm-distribution.md).
 
+## Parity ledger
+
+Requested on 2026-11-27 from the agents that maintain agent-yes; it arrives as
+a pull request adding `parity/agent-yes.toml`. Do not start a second one.
+
 ## Working notes
 
 - The checkout was on branch `fix/resume-by-session-id` with uncommitted

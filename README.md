@@ -4,9 +4,11 @@ Tracks the migration of a set of TypeScript projects to Rust, at exact feature
 parity, and the delivery of the resulting binaries through npm so that
 `bun i -g <package>` gives every user the native binary.
 
-The ported code lives in each project's own repo. This repo holds the
-tracking, the tooling and the release templates. Start with
-[docs/purpose.md](docs/purpose.md).
+This is a helper repo. The ported code lives in each project's own repo, and
+each project builds and publishes its own binaries from its own workflow runs.
+What lives here is the tracking, the tooling, and the release pipeline those
+workflows call; this repo's CI only ever builds a toy binary to test that
+pipeline. Start with [docs/purpose.md](docs/purpose.md).
 
 ## Check progress
 

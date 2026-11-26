@@ -9,7 +9,9 @@ This repo tracks a migration; it does not hold the ported code. Read
 `docs/purpose.md` first if you have not this session. The rules that matter
 while working:
 
-- Rust code lives in each project's own repo, not here.
+- Rust code lives in each project's own repo, not here. So do releases: a
+  project's binaries are built and published by its own workflow runs. This
+  repo only supplies the pipeline those workflows call.
 - "Done" means exact feature parity, and that `bun i -g <package>` gives the
   user the native binary without their knowing which platform they are on.
 - Never work in a project checkout that has uncommitted changes — someone or
@@ -95,7 +97,9 @@ from a job in the project's own workflow. Projects never list platforms.
    `cargo run -q --release -- vendor <project>` writes
    `.github/workflows/rust-npm-release.yml` filled in from the project's
    Cargo.toml and package.json. Check the values under `with:` (`pre-build`
-   for steps cargo needs first, `js-build` in hybrid mode).
+   for steps cargo needs first, `js-build` in hybrid mode, `smoke-extra` for
+   commands that are still JavaScript or handed back to it — one line each,
+   `<command> [args] => <text it must print>`).
 2. Add `rustify` to the project's `package.json`:
    - `bins`: each npm command → the cargo bin that implements it.
    - `mode`: `native` when the package needs no JavaScript at all; `hybrid`
@@ -118,7 +122,9 @@ from a job in the project's own workflow. Projects never list platforms.
 4. Rehearse locally where possible, from this repo:
    build the host binary, put it in `native/<platform key>/`, then
    `node templates/npm/pack.mjs pack --package <project>/package.json --artifacts native --allow-missing`
-   and `node templates/npm/smoke.mjs --dist npm-dist --run "<command> --version"`.
+   and `node templates/npm/smoke.mjs --dist npm-dist --run "<command> --version"`
+   (add `--also "<command> --help => <text>"` for a handed-back command).
+   Pass `--version <x>` to `pack` equal to what the binary prints.
 5. Open the PR only when the user asks. Its run builds every platform and
    smoke-tests the install on Linux, macOS and Windows without publishing.
    Read the results; do not assume.

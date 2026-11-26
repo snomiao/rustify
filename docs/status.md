@@ -27,8 +27,7 @@
 **Delivery**
 
 - `info` crate `agent-yes` 1.303.1 builds: `agent-yes`, `ayrs`, `ay-spawn-hidden`
-- `todo` release scripts are not installed (`scripts/rustify/`)
-- `todo` no `.github/workflows/rust-npm-release.yml`
+- `todo` no workflow uses the shared build pipeline (`snomiao/rustify/.github/workflows/rust-npm-build.yml`)
 - `todo` `package.json` has no `rustify.bins` (which npm command runs which cargo bin)
 - `info` crate `agent-yes` is not on crates.io (the name is free)
 - `info` npm has `agent-yes` 1.308.4
@@ -59,8 +58,7 @@
 
 - `info` crate `slack-cli` 0.2.0 builds: `slack`
 - `todo` crate is named `slack-cli`; it should be `slack-hub`
-- `todo` release scripts are not installed (`scripts/rustify/`)
-- `todo` no `.github/workflows/rust-npm-release.yml`
+- `todo` no workflow uses the shared build pipeline (`snomiao/rustify/.github/workflows/rust-npm-build.yml`)
 - `todo` `package.json` has no `rustify.bins` (which npm command runs which cargo bin)
 - `info` crate `slack-hub` is not on crates.io (the name is free)
 - `info` npm has `slack-hub` 1.57.1
@@ -112,8 +110,7 @@
 **Delivery**
 
 - `info` crate `otoji` 0.1.62 builds: `otoji`, `otoji-tray`
-- `todo` release scripts are not installed (`scripts/rustify/`)
-- `todo` no `.github/workflows/rust-npm-release.yml`
+- `todo` no workflow uses the shared build pipeline (`snomiao/rustify/.github/workflows/rust-npm-build.yml`)
 - `todo` `package.json` has no `rustify.bins` (which npm command runs which cargo bin)
 - `ok  ` crates.io has `otoji` 0.1.62
 - `info` npm has `otoji` 0.1.62
