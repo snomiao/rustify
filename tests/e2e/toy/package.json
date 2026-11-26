@@ -1,0 +1,10 @@
+{
+  "name": "rustify-e2e-toy",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Fixture for rustify's own pipeline test. Never published to npm.",
+  "license": "MIT",
+  "rustify": {
+    "bins": { "toy": "toy", "toy-alias": "toy" }
+  }
+}

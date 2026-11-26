@@ -1,0 +1,59 @@
+# Publishes the npm packages that rust-npm-build packed (artifact `npm-dist`):
+# the platform builds first, the main package last, so the version users
+# install never points at binaries that are not on the registry yet.
+#
+# Run it in a job of YOUR repository, so the npm credential is requested by
+# your own workflow:
+#
+#   publish:
+#     needs: build
+#     runs-on: ubuntu-latest
+#     permissions:
+#       contents: read
+#       id-token: write        # npm trusted publishing, no stored token
+#     steps:
+#       - uses: snomiao/rustify/actions/publish@v1
+#
+# One-time setup on npmjs.com: package → Settings → Trusted Publisher →
+# GitHub Actions, your repository, and the filename of the workflow the
+# release starts from.
+
+name: rustify publish
+description: Publish the npm packages packed by rust-npm-build
+inputs:
+  artifact:
+    description: Name of the artifact that holds the packed release
+    required: false
+    default: npm-dist
+  registry:
+    description: Registry to publish to
+    required: false
+    default: https://registry.npmjs.org
+  provenance:
+    description: Attach npm provenance ("true" or "false")
+    required: false
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+        registry-url: ${{ inputs.registry }}
+    # Trusted publishing needs a recent npm.
+    - run: npm install -g npm@latest
+      shell: bash
+    - uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.artifact }}
+        path: npm-dist
+    - name: Publish
+      shell: bash
+      env:
+        PROVENANCE: ${{ inputs.provenance }}
+        REGISTRY: ${{ inputs.registry }}
+      run: |
+        chmod +x npm-dist/*/bin/*
+        set -- publish --out npm-dist --registry "$REGISTRY"
+        if [ "$PROVENANCE" = "true" ]; then set -- "$@" --provenance; fi
+        node "$GITHUB_ACTION_PATH/../../templates/npm/pack.mjs" "$@"
