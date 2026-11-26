@@ -23,9 +23,13 @@ At every step the published package is correct. Progress is the number of
 In a clean worktree of the project, on a new branch:
 
 ```bash
-rustify scaffold <project>   # rs/Cargo.toml, rs/src/main.rs, rs/src/js_fallback.rs
-rustify vendor <project>     # .github/workflows/rust-npm-release.yml
+rustify scaffold <project> --at <worktree>   # rs/Cargo.toml, rs/src/main.rs, rs/src/js_fallback.rs
+rustify vendor <project> --at <worktree>     # .github/workflows/rust-npm-release.yml
 ```
+
+`--at` names the worktree to write into; without it the project's default
+checkout is used. `rustify audit <project> --at <worktree>` reads the same
+place.
 
 Then add the `rustify` block the scaffold prints to `package.json`, build once
 and commit `Cargo.lock`. The pull request's run builds six platforms and

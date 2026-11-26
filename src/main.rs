@@ -116,7 +116,7 @@ fn main() {
         Some("scaffold") => scaffold(&args[1..]),
         _ => {
             eprintln!(
-                "usage:\n  rustify audit [project...] [--offline] [--write]\n      report every project's port and delivery status\n      --offline  skip the npm and crates.io lookups\n      --write    also save the report to docs/status.md\n  rustify scaffold <project> [--dry-run]\n      start a Rust crate in a project that has none: a binary that hands\n      every command back to the JavaScript, ready for commands to move in\n  rustify vendor <project> [--dry-run]\n      add the release workflow to a project that has none"
+                "usage:\n  rustify audit [project...] [--offline] [--write]\n      report every project's port and delivery status\n      --offline  skip the npm and crates.io lookups\n      --write    also save the report to docs/status.md\n  Every command takes `--at <checkout>` with one project name, to work on a\n  checkout other than the project's default one (a feature worktree).\n  rustify scaffold <project> [--dry-run]\n      start a Rust crate in a project that has none: a binary that hands\n      every command back to the JavaScript, ready for commands to move in\n  rustify vendor <project> [--dry-run]\n      add the release workflow to a project that has none"
             );
             2
         }
@@ -173,6 +173,23 @@ fn locate(project: &Project, root: &Path) -> Option<PathBuf> {
     [base.join("tree/main"), base.join("tree/master"), base.clone()]
         .into_iter()
         .find(|p| p.join(".git").exists())
+}
+
+/// Value of `--at <dir>`: work on this checkout instead of the project's
+/// default one (a feature worktree, for instance).
+fn at(args: &[String]) -> Option<PathBuf> {
+    let i = args.iter().position(|a| a == "--at")?;
+    args.get(i + 1).map(PathBuf::from)
+}
+
+/// The arguments that are neither flags nor the value of `--at`.
+fn positional(args: &[String]) -> Vec<&String> {
+    let skip = args.iter().position(|a| a == "--at").map(|i| i + 1);
+    args.iter()
+        .enumerate()
+        .filter(|(i, a)| !a.starts_with("--") && Some(*i) != skip)
+        .map(|(_, a)| a)
+        .collect()
 }
 
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
@@ -283,7 +300,12 @@ fn thousands(n: usize) -> String {
 fn audit(args: &[String]) -> i32 {
     let offline = args.iter().any(|a| a == "--offline");
     let write = args.iter().any(|a| a == "--write");
-    let wanted: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
+    let wanted: Vec<&String> = positional(args);
+    let here = at(args);
+    if here.is_some() && wanted.len() != 1 {
+        eprintln!("rustify: --at needs exactly one project name");
+        return 2;
+    }
     let home = home();
     let registry = load_registry(&home);
     let root = checkout_root(&home);
@@ -299,7 +321,7 @@ fn audit(args: &[String]) -> i32 {
         if !wanted.is_empty() && !wanted.contains(&&project.name) {
             continue;
         }
-        sections.push((project, audit_project(project, &home, &root, offline)));
+        sections.push((project, audit_project(project, &home, &root, offline, here.as_deref())));
     }
 
     let mut report = String::from("# Rustify status\n\n");
@@ -332,9 +354,9 @@ fn audit(args: &[String]) -> i32 {
     0
 }
 
-fn audit_project(project: &Project, home: &Path, root: &Path, offline: bool) -> Section {
+fn audit_project(project: &Project, home: &Path, root: &Path, offline: bool, here: Option<&Path>) -> Section {
     let mut s = Section { port: "unknown".into(), install: "unknown".into(), ..Default::default() };
-    let Some(dir) = locate(project, root) else {
+    let Some(dir) = here.map(Path::to_path_buf).filter(|d| d.is_dir()).or_else(|| locate(project, root)) else {
         s.todo(
             format!("no checkout found under `{}`", root.join(&project.name).display()),
             "clone the repository",
@@ -814,8 +836,9 @@ fn js_entry(package: &Json) -> Option<String> {
 
 fn scaffold(args: &[String]) -> i32 {
     let dry = args.iter().any(|a| a == "--dry-run");
-    let Some(name) = args.iter().find(|a| !a.starts_with("--")) else {
-        eprintln!("usage: rustify scaffold <project> [--dry-run]");
+    let names = positional(args);
+    let Some(name) = names.first().copied() else {
+        eprintln!("usage: rustify scaffold <project> [--at <checkout>] [--dry-run]");
         return 2;
     };
     let home = home();
@@ -824,7 +847,7 @@ fn scaffold(args: &[String]) -> i32 {
         eprintln!("rustify: no project named {name} in projects.toml");
         return 2;
     };
-    let Some(dir) = locate(project, &checkout_root(&home)) else {
+    let Some(dir) = at(args).filter(|d| d.is_dir()).or_else(|| locate(project, &checkout_root(&home))) else {
         eprintln!("rustify: no checkout of {name} found");
         return 1;
     };
@@ -888,8 +911,9 @@ fn scaffold(args: &[String]) -> i32 {
 
 fn vendor(args: &[String]) -> i32 {
     let dry = args.iter().any(|a| a == "--dry-run");
-    let Some(name) = args.iter().find(|a| !a.starts_with("--")) else {
-        eprintln!("usage: rustify vendor <project> [--dry-run]");
+    let names = positional(args);
+    let Some(name) = names.first().copied() else {
+        eprintln!("usage: rustify vendor <project> [--at <checkout>] [--dry-run]");
         return 2;
     };
     let home = home();
@@ -898,7 +922,7 @@ fn vendor(args: &[String]) -> i32 {
         eprintln!("rustify: no project named {name} in projects.toml");
         return 2;
     };
-    let Some(dir) = locate(project, &checkout_root(&home)) else {
+    let Some(dir) = at(args).filter(|d| d.is_dir()).or_else(|| locate(project, &checkout_root(&home))) else {
         eprintln!("rustify: no checkout of {name} found");
         return 1;
     };
@@ -998,6 +1022,16 @@ mod tests {
         assert_eq!(js_entry(&package).as_deref(), Some("cli.mjs"));
         let package: Json = serde_json::from_str(r#"{"name":"x"}"#).unwrap();
         assert_eq!(js_entry(&package), None);
+    }
+
+    #[test]
+    fn at_and_positional_arguments_are_told_apart() {
+        let args: Vec<String> = ["--at", "/w/x", "genvx", "--dry-run"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(at(&args), Some(PathBuf::from("/w/x")));
+        assert_eq!(positional(&args), [&"genvx".to_string()]);
+        let args: Vec<String> = ["genvx".to_string()].to_vec();
+        assert_eq!(at(&args), None);
+        assert_eq!(positional(&args).len(), 1);
     }
 
     #[test]
