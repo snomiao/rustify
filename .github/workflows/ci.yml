@@ -67,7 +67,6 @@ jobs:
         legacy hello => js cli: hello
         toy js handed back => js cli: js handed back
       package: tests/e2e/toy/package.json
-      scripts-ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
   # The publish action, run for real against a throwaway registry on this
   # runner: publish what the pipeline packed, publish it again, then install

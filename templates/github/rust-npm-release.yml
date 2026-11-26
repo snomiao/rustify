@@ -50,7 +50,7 @@ on:
 
 jobs:
   build:
-    uses: snomiao/rustify/.github/workflows/rust-npm-build.yml@v1
+    uses: snomiao/rustify/.github/workflows/rust-npm-build.yml@releases/v1
     with:
       manifest: __MANIFEST__
       bins: __BINS__
@@ -69,10 +69,10 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: snomiao/rustify/actions/publish@v1
+      - uses: snomiao/rustify/actions/publish@releases/v1
 
   verify:
     needs: [build, publish]
-    uses: snomiao/rustify/.github/workflows/rust-npm-verify.yml@v1
+    uses: snomiao/rustify/.github/workflows/rust-npm-verify.yml@releases/v1
     with:
       smoke: __SMOKE__

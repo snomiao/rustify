@@ -27,7 +27,7 @@ on what it finds.
 # .github/workflows/rust-npm-release.yml
 jobs:
   build:
-    uses: snomiao/rustify/.github/workflows/rust-npm-build.yml@v1
+    uses: snomiao/rustify/.github/workflows/rust-npm-build.yml@releases/v1
     with:
       manifest: rs/Cargo.toml
       bins: mycli
