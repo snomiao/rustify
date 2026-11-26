@@ -3,7 +3,7 @@
 | Project | Port | `bun i -g` gives | Next step |
 |---|---|---|---|
 | agent-yes | 1 verified, 8 ported, 125 partial, 201 missing of 335 | JavaScript | port the missing features |
-| slack-hub | 0 verified, 1 ported, 19 partial, 132 missing of 152 | JavaScript | port the missing features |
+| slack-hub | 5 verified, 0 ported, 14 partial, 133 missing of 152 | JavaScript | port the missing features |
 | rechrome | not started | JavaScript | write the parity ledger |
 | otoji | started, not measured | JavaScript | write the parity ledger |
 | codehost | not started | JavaScript | write the parity ledger |
@@ -13,7 +13,7 @@
 | qqdocs | not started | JavaScript | write the parity ledger |
 | winrpc | unknown | unknown | clone the repository |
 | chatwork-cli | not started | nothing (not on npm) | write the parity ledger |
-| genvx | not started | JavaScript | write the parity ledger |
+| genvx | 18 verified, 1 ported, 4 partial, 4 missing of 27 | JavaScript | port the missing features |
 | rustdesk.skill | unknown | unknown | clone the repository |
 | wtx | unknown | unknown | clone the repository |
 | gchat-cli | not started | JavaScript | write the parity ledger |
@@ -101,9 +101,36 @@
 
 **Parity ledger**
 
-- `info` 152 features: 0 verified, 1 ported but unproven, 19 partial, 132 missing, 0 dropped
+- `info` 152 features: 5 verified, 0 ported but unproven, 14 partial, 133 missing, 0 dropped
+- `warn` `search <query>`: rs path `rs/src/search.rs` does not exist
+- `warn` `search <query>`: rs path `rs/src/msgfmt.rs` does not exist
+- `warn` `search <query>`: rs path `rs/src/config.rs` does not exist
+- `warn` `search <query>`: rs path `rs/src/api.rs` does not exist
+- `warn` `search --json`: rs path `rs/src/search.rs` does not exist
+- `warn` `search --json`: rs path `rs/src/js.rs` does not exist
+- `warn` `search: bot token falls back to a user-token profile of the same workspace`: rs path `rs/src/search.rs` does not exist
+- `warn` `search: bot token falls back to a user-token profile of the same workspace`: rs path `rs/src/config.rs` does not exist
+- `warn` `message line format (timestamps, author, multi-line text)`: rs path `rs/src/msgfmt.rs` does not exist
+- `warn` `reactions, files and forwarded messages in read output`: rs path `rs/src/msgfmt.rs` does not exist
+- `warn` `<@U…> mentions shown as @name`: rs path `rs/src/msgfmt.rs` does not exist
+- `warn` `<!date^…> markup shown as a date`: rs path `rs/src/msgfmt.rs` does not exist
+- `warn` `line breaks restored in messages Slack stored flattened`: rs path `rs/src/newlines.rs` does not exist
+- `warn` `token resolution order`: rs path `rs/src/config.rs` does not exist
+- `warn` `dotenv files`: rs path `rs/src/config.rs` does not exist
+- `warn` `-w / --workspace`: rs path `rs/src/search.rs` does not exist
+- `warn` `-w / --workspace`: rs path `rs/src/config.rs` does not exist
+- `warn` `profiles.json (several workspaces; one cookie shared per identity; mode 0600)`: rs path `rs/src/config.rs` does not exist
+- `warn` `desktop session tokens (xoxc-) with the xoxd cookie`: rs path `rs/src/api.rs` does not exist
+- `warn` `desktop session tokens (xoxc-) with the xoxd cookie`: rs path `rs/src/config.rs` does not exist
+- `warn` `SLACK_API_BASE`: rs path `rs/src/api.rs` does not exist
+- `warn` `rate-limit waiting (HTTP 429 / ratelimited; SLACK_RATELIMIT_WAIT_SEC)`: rs path `rs/src/api.rs` does not exist
+- `warn` `error messages and exit codes`: rs path `rs/src/api.rs` does not exist
+- `warn` `error messages and exit codes`: rs path `rs/src/search.rs` does not exist
+- `warn` `complete output on a pipe; exit 141 when the reader goes away`: rs path `rs/src/out.rs` does not exist
+- `warn` `lookup cache (~/.config/slack-cli/cache.json; --no-cache on todo / mytodo)`: rs path `rs/src/cache.rs` does not exist
+- `warn` `legacy slack-term names still read (SLACK_TERM_* variables, .slack-term/ and slack-term config dirs)`: rs path `rs/src/config.rs` does not exist
 - `ok  ` ledger is current (reconciled at `e315b19`, no TypeScript changed since)
-- `todo` 151 feature(s) not fully ported
+- `todo` 147 feature(s) not fully ported
 
 **Delivery**
 
@@ -236,6 +263,7 @@
 
 **Delivery**
 
+- `warn` `rs/Cargo.toml` is missing or unreadable
 - `warn` `onenote-cli` on crates.io belongs to another project (https://github.com/rvben/onenote-cli) — pick a different crate name
 - `info` npm has `onenote-cli` 0.2.0
 - `todo` `bun i -g onenote-cli` installs JavaScript, not the Rust binary (`onenote` → `src/index.ts`, `onenote-cli` → `src/index.ts`)
@@ -280,6 +308,7 @@
 
 **Delivery**
 
+- `warn` `rs/Cargo.toml` is missing or unreadable
 - `info` npm has `qqdocs` 1.26.0
 - `todo` `bun i -g qqdocs` installs JavaScript, not the Rust binary (`qqdoc` → `bin/qqdocs.ts`, `qqdocs` → `bin/qqdocs.ts`)
 
@@ -319,11 +348,81 @@
 
 **Parity ledger**
 
-- `todo` no ledger at `parity/genvx.toml`, so progress cannot be measured
+- `info` 27 features: 18 verified, 1 ported but unproven, 4 partial, 4 missing, 0 dropped
+- `warn` `branch / b`: proof `rs/parity.json` does not exist
+- `warn` `branch / b`: rs path `rs/src/main.rs` does not exist
+- `warn` `branch / b`: rs path `rs/src/project.rs` does not exist
+- `warn` `push / p / save, when nothing is asked (--yes, or no terminal on stdin)`: proof `rs/parity.json` does not exist
+- `warn` `push / p / save, when nothing is asked (--yes, or no terminal on stdin)`: proof `rs/cross-compat.sh` does not exist
+- `warn` `push / p / save, when nothing is asked (--yes, or no terminal on stdin)`: rs path `rs/src/main.rs` does not exist
+- `warn` `push / p / save, when nothing is asked (--yes, or no terminal on stdin)`: rs path `rs/src/sync.rs` does not exist
+- `warn` `pull / load, when nothing is asked`: proof `rs/parity.json` does not exist
+- `warn` `pull / load, when nothing is asked`: proof `rs/cross-compat.sh` does not exist
+- `warn` `pull / load, when nothing is asked`: rs path `rs/src/main.rs` does not exist
+- `warn` `pull / load, when nothing is asked`: rs path `rs/src/sync.rs` does not exist
+- `warn` `diff / d`: proof `rs/parity.json` does not exist
+- `warn` `diff / d`: proof `rs/cross-compat.sh` does not exist
+- `warn` `diff / d`: rs path `rs/src/main.rs` does not exist
+- `warn` `diff / d`: rs path `rs/src/sync.rs` does not exist
+- `warn` `setup / init, when nothing is asked (--yes, or no terminal on stdin)`: proof `rs/parity.json` does not exist
+- `warn` `setup / init, when nothing is asked (--yes, or no terminal on stdin)`: rs path `rs/src/main.rs` does not exist
+- `warn` `setup / init, when nothing is asked (--yes, or no terminal on stdin)`: rs path `rs/src/setup.rs` does not exist
+- `warn` `hooks install, local mode (.git/hooks)`: proof `rs/parity.json` does not exist
+- `warn` `hooks install, local mode (.git/hooks)`: rs path `rs/src/hooks.rs` does not exist
+- `warn` `hooks install, shared mode (.githooks, or .husky under husky)`: rs path `rs/src/hooks.rs` does not exist
+- `warn` `hooks install, shared mode (.githooks, or .husky under husky)`: rs path `rs/src/hooks.rs` does not exist
+- `warn` `hooks install, lefthook mode (lefthook-local.yml)`: rs path `rs/src/hooks.rs` does not exist
+- `warn` `hooks install, lefthook mode (lefthook-local.yml)`: rs path `rs/src/hooks.rs` does not exist
+- `warn` `hooks uninstall`: proof `rs/parity.json` does not exist
+- `warn` `hooks uninstall`: rs path `rs/src/hooks.rs` does not exist
+- `warn` `hooks status`: proof `rs/parity.json` does not exist
+- `warn` `hooks status`: rs path `rs/src/hooks.rs` does not exist
+- `warn` `hooks run [event] (what the installed hooks call)`: proof `rs/parity.json` does not exist
+- `warn` `hooks run [event] (what the installed hooks call)`: proof `rs/cross-compat.sh` does not exist
+- `warn` `hooks run [event] (what the installed hooks call)`: rs path `rs/src/main.rs` does not exist
+- `warn` `hooks run [event] (what the installed hooks call)`: rs path `rs/src/hooks.rs` does not exist
+- `warn` `where store and key come from (--gitstore, GENVX_STORE, GENVX_KEY, GENVX_CONFIG_DIR, ./.env.local, ./.env, ~/.genvx)`: proof `rs/parity.json` does not exist
+- `warn` `where store and key come from (--gitstore, GENVX_STORE, GENVX_KEY, GENVX_CONFIG_DIR, ./.env.local, ./.env, ~/.genvx)`: rs path `rs/src/env.rs` does not exist
+- `warn` `.env files bun loads by itself before the program starts`: rs path `rs/src/env.rs` does not exist
+- `warn` `.env files bun loads by itself before the program starts`: rs path `rs/src/env.rs` does not exist
+- `warn` `encrypted files, format v2 (written and read)`: proof `rs/parity.json` does not exist
+- `warn` `encrypted files, format v2 (written and read)`: proof `rs/cross-compat.sh` does not exist
+- `warn` `encrypted files, format v2 (written and read)`: proof `rs/src/crypto.rs` does not exist
+- `warn` `encrypted files, format v2 (written and read)`: rs path `rs/src/crypto.rs` does not exist
+- `warn` `encrypted files, old format v1 (read only)`: proof `rs/parity.json` does not exist
+- `warn` `encrypted files, old format v1 (read only)`: proof `rs/src/crypto.rs` does not exist
+- `warn` `encrypted files, old format v1 (read only)`: rs path `rs/src/crypto.rs` does not exist
+- `warn` `plaintext store (--no-encrypt)`: rs path `rs/src/sync.rs` does not exist
+- `warn` `plaintext store (--no-encrypt)`: rs path `rs/src/args.rs` does not exist
+- `warn` `which files are synced (.env* in every directory except skipped ones and nested repositories)`: proof `rs/parity.json` does not exist
+- `warn` `which files are synced (.env* in every directory except skipped ones and nested repositories)`: rs path `rs/src/sync.rs` does not exist
+- `warn` `the list of changes (New, + KEY, (Updated), - KEY, formatting changes)`: proof `rs/parity.json` does not exist
+- `warn` `the list of changes (New, + KEY, (Updated), - KEY, formatting changes)`: rs path `rs/src/sync.rs` does not exist
+- `warn` `working copy in .genvx/ (node_modules/.genvx/ if node_modules exists): clone, first branch, reuse, clean-up`: proof `rs/parity.json` does not exist
+- `warn` `working copy in .genvx/ (node_modules/.genvx/ if node_modules exists): clone, first branch, reuse, clean-up`: rs path `rs/src/sync.rs` does not exist
+- `warn` `working copy in .genvx/ (node_modules/.genvx/ if node_modules exists): clone, first branch, reuse, clean-up`: rs path `rs/src/sync.rs` does not exist
+- `warn` `refusing to run in the gitstore`: proof `rs/parity.json` does not exist
+- `warn` `refusing to run in the gitstore`: proof `rs/cross-compat.sh` does not exist
+- `warn` `refusing to run in the gitstore`: rs path `rs/src/main.rs` does not exist
+- `warn` `refusing to run in the gitstore`: rs path `rs/src/project.rs` does not exist
+- `warn` `refusing to run in the gitstore`: rs path `rs/src/sync.rs` does not exist
+- `warn` `file modes (600 on env files that were written or pushed, 755 on hooks)`: proof `rs/parity.json` does not exist
+- `warn` `file modes (600 on env files that were written or pushed, 755 on hooks)`: rs path `rs/src/sync.rs` does not exist
+- `warn` `file modes (600 on env files that were written or pushed, 755 on hooks)`: rs path `rs/src/hooks.rs` does not exist
+- `warn` `backup of a file a hook is about to overwrite (.genvx/backups/<time>/)`: proof `rs/parity.json` does not exist
+- `warn` `backup of a file a hook is about to overwrite (.genvx/backups/<time>/)`: proof `rs/src/sync.rs` does not exist
+- `warn` `backup of a file a hook is about to overwrite (.genvx/backups/<time>/)`: rs path `rs/src/sync.rs` does not exist
+- `warn` `backup of a file a hook is about to overwrite (.genvx/backups/<time>/)`: rs path `rs/src/sync.rs` does not exist
+- `warn` `Windows`: rs path `rs/src/sync.rs` does not exist
+- `warn` `Windows`: rs path `rs/src/env.rs` does not exist
+- `warn` `Windows`: rs path `rs/src/setup.rs` does not exist
+- `ok  ` ledger is current (reconciled at `8809766`, no TypeScript changed since)
+- `todo` 8 feature(s) not fully ported
 - `todo` no Rust port exists yet
 
 **Delivery**
 
+- `warn` `rs/Cargo.toml` is missing or unreadable
 - `info` npm has `genvx` 1.1.0
 - `todo` `bun i -g genvx` installs JavaScript, not the Rust binary (`genvx` → `src/cli.ts`)
 

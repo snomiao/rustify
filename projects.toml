@@ -83,7 +83,9 @@ name = "onenote-cli"
 repo = "snomiao/onenote-cli"
 npm = "onenote-cli"
 crate = "onenote-cli"
+manifest = "rs/Cargo.toml"
 ts = ["src"]
+rust = ["rs/src"]
 
 [[project]]
 name = "dotenvdotenc"
@@ -120,7 +122,9 @@ name = "genvx"
 repo = "snomiao/genvx"
 npm = "genvx"
 crate = "genvx"
+manifest = "rs/Cargo.toml"
 ts = ["src"]
+rust = ["rs/src"]
 
 [[project]]
 name = "rustdesk.skill"

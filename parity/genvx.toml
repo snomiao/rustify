@@ -19,18 +19,20 @@
 # `GENVX_PACKAGE_ROOT` tells the binary where the package is.
 #
 # Proofs. All were run and seen passing on Linux x64 with bun 1.4.0 and
-# git 2.47 on 2026-11-26, against rs/target/release/genvx:
-# - rs/parity.json (written by rs/parity.gen.mjs): CASES_TOTAL cases through
+# git 2.47 on 2026-11-26, against the release binary built from
+# feat/rust-port at 0612b59 (the one later commit, e5d02e9, only adds a line
+# to the workflow):
+# - rs/parity.json (written by rs/parity.gen.mjs): 316 cases through
 #   rustify's parity runner, TypeScript against the binary. Compared: stdout,
 #   stderr, exit code and the `after` probes (files, modes, git state, and
 #   what was pushed, decrypted with node:crypto). Normalised: the `[Nms]`
 #   timings, the timestamp in backup directory names, the generated key.
 # - rs/parity-native.mjs: the same cases against a stand-in package, which
-#   shows who answered. CASES_NATIVE cases were answered by the binary itself and
-#   CASES_HANDBACK were handed back, each as its case says it should be. A `verified`
+#   shows who answered. 238 cases were answered by the binary itself and
+#   78 were handed back, each as its case says it should be. A `verified`
 #   below rests only on cases the binary answered.
 # - rs/cross-compat.sh: both implementations on one gitstore, each reading
-#   what the other wrote (CROSS_CHECKS checks).
+#   what the other wrote (10 checks).
 # - `cargo test` in rs/: the crypto, base64/hex, parseInt and UTF-8 decoding
 #   against values recorded from bun.
 #
