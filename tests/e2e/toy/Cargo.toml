@@ -8,4 +8,9 @@ publish = false
 name = "toy"
 path = "src/main.rs"
 
+# Stands for a helper binary that only some platforms ship.
+[[bin]]
+name = "toy-helper"
+path = "src/helper.rs"
+
 [workspace]

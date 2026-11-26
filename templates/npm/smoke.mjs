@@ -64,6 +64,15 @@ if ((plan.unsupported || []).includes(hostKey)) {
 }
 const [command, ...args] = String(opts.run).split(/\s+/).filter(Boolean);
 const expect = opts.expect || plan.version;
+// Install scripts of the release itself, read from what was packed.
+const ownInstallScripts = (() => {
+  try {
+    const scripts = JSON.parse(fs.readFileSync(path.join(dist, "main", "package.json"), "utf8")).scripts || {};
+    return ["preinstall", "install", "postinstall"].filter((name) => scripts[name]);
+  } catch {
+    return [];
+  }
+})();
 const work = fs.mkdtempSync(path.join(os.tmpdir(), "rustify-smoke-"));
 let failures = 0;
 const timings = [];
@@ -117,8 +126,12 @@ function check(installer, registry) {
   if (install.status !== 0) {
     return bad(`${installer}: install of ${spec} failed\n${install.stdout || ""}${install.stderr || ""}`);
   }
-  if (/blocked \d+ postinstall/i.test(`${install.stdout}${install.stderr}`)) {
-    bad(`${installer}: the release relies on an install script, which ${installer} did not run`);
+  // bun does not run install scripts on a global install. The release must
+  // not need one of its own; a dependency's is not the release's business.
+  if (ownInstallScripts.length && installer === "bun") {
+    bad(`${installer}: the package has its own ${ownInstallScripts.join(", ")} script, which bun does not run for a global install`);
+  } else if (/blocked \d+ postinstall/i.test(`${install.stdout}${install.stderr}`)) {
+    console.log(`  note  ${installer}: bun did not run an install script of a dependency (\`bun pm -g untrusted\` names it); the package behaves as it does for every bun user`);
   }
   if (!fs.existsSync(bin)) return bad(`${installer}: ${bin} was not created`);
   ok(`${installer}: installed ${spec}`);
@@ -137,12 +150,11 @@ function check(installer, registry) {
     return bad(`${installer}: second run exited ${second.code}. Output:\n${second.text}`);
   }
   // Binaries the package ships without a command must have arrived as well.
-  for (const extra of plan.extra || []) {
+  for (const extra of (plan.extra || {})[hostKey] || []) {
     try {
       const dir = path.dirname(createRequire(path.join(packageDir, "package.json")).resolve(`${plan.name}-${hostKey}/package.json`));
       const file = path.join(dir, "bin", extra + (isWindows ? ".exe" : ""));
       if (fs.existsSync(file)) ok(`${installer}: the \`${extra}\` binary for ${hostKey} is installed beside the package`);
-      else if ((plan.commands || []).length) ok(`${installer}: no \`${extra}\` binary for ${hostKey} (optional)`);
       else bad(`${installer}: ${file} is missing`);
     } catch {
       bad(`${installer}: the platform package ${plan.name}-${hostKey} is not installed`);

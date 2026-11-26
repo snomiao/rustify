@@ -9,6 +9,7 @@
   "rustify": {
     "mode": "hybrid",
     "bins": {},
-    "extra": ["toy"]
+    "extra": ["toy", "toy-helper"],
+    "extraPlatforms": { "toy-helper": ["win32-x64", "win32-arm64"] }
   }
 }

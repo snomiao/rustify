@@ -30,6 +30,8 @@
 //     "mode":    "native" | "hybrid",   // hybrid keeps the package's JS files
 //     "runtime": "bun" | "node",        // shebang of the launcher
 //     "extra":   ["<cargo bin shipped beside the others, without a command>"],
+//     "extraPlatforms": { "<extra>": ["win32-x64", ...] },  // an extra that only
+//                // some platforms have; without an entry it ships everywhere
 //     "platforms": ["linux-x64", ...]   // only if the project cannot build all;
 //                                       // default: every platform in platforms.json
 //   }
@@ -97,6 +99,12 @@ function packedFiles(dir) {
   }
 }
 
+// The binaries without a command that the build for `key` carries: every
+// entry of rustify.extra, minus those rustify.extraPlatforms keeps elsewhere.
+function extrasFor(cfg, key) {
+  return (cfg.extra || []).filter((bin) => !cfg.extraPlatforms?.[bin] || cfg.extraPlatforms[bin].includes(key));
+}
+
 function pack(opts) {
   const pkgPath = path.resolve(opts.package || "package.json");
   const projectDir = path.dirname(pkgPath);
@@ -117,7 +125,12 @@ function pack(opts) {
   const out = path.resolve(opts.out || "npm-dist");
   const mode = cfg.mode || "native";
   const runtime = cfg.runtime || "bun";
-  const cargoBins = [...new Set([...Object.values(cfg.bins), ...(cfg.extra || [])])];
+  cfg.extraPlatforms = cfg.extraPlatforms || {};
+  for (const [bin, keys] of Object.entries(cfg.extraPlatforms)) {
+    if (!cfg.extra.includes(bin)) fail(`rustify.extraPlatforms names "${bin}", which is not in rustify.extra`);
+    const bad = keys.filter((k) => !PLATFORMS[k]);
+    if (bad.length) fail(`rustify.extraPlatforms["${bin}"] names unknown platforms: ${bad.join(", ")}`);
+  }
 
   fs.rmSync(out, { recursive: true, force: true });
   const publish = [];
@@ -131,19 +144,17 @@ function pack(opts) {
     const platform = PLATFORMS[key];
     const src = path.join(artifacts, key);
     const ext = key.startsWith("win32") ? ".exe" : "";
-    // What a command starts must be there. Binaries shipped without a command
-    // may exist on some platforms only, unless they are all the package ships.
-    const needed = Object.keys(cfg.bins).length ? Object.values(cfg.bins) : cfg.extra;
-    const required = needed.map((b) => path.join(src, b + ext));
-    if (!required.every((f) => fs.existsSync(f))) {
-      missing.push(key);
+    // Every binary a command starts, and every extra meant for this platform,
+    // has to be there.
+    const shipped = [...new Set([...Object.values(cfg.bins), ...extrasFor(cfg, key)])];
+    const absent = shipped.filter((b) => !fs.existsSync(path.join(src, b + ext)));
+    if (absent.length) {
+      missing.push(fs.existsSync(src) ? `${key} (lacks ${absent.join(", ")})` : key);
       continue;
     }
     const dir = path.join(out, key);
-    for (const bin of cargoBins) {
+    for (const bin of shipped) {
       const from = path.join(src, bin + ext);
-      // Extras may exist on some platforms only (a Windows-only helper).
-      if (!fs.existsSync(from)) continue;
       const to = path.join(dir, "bin", bin + ext);
       fs.mkdirSync(path.dirname(to), { recursive: true });
       fs.copyFileSync(from, to);
@@ -206,6 +217,7 @@ function pack(opts) {
   }
   manifest.version = version;
   manifest.rustify = { bins: cfg.bins, extra: cfg.extra, launcher: 3 };
+  if (Object.keys(cfg.extraPlatforms).length) manifest.rustify.extraPlatforms = cfg.extraPlatforms;
   if (cfg.rootEnv) manifest.rustify.rootEnv = cfg.rootEnv;
 
   const launcher = fs
@@ -233,7 +245,7 @@ function pack(opts) {
     publish,
     unsupported: Object.keys(PLATFORMS).filter((k) => !wanted.includes(k)),
     commands: Object.keys(cfg.bins),
-    extra: cfg.extra,
+    extra: Object.fromEntries(publish.filter((p) => p.dir !== "main").map((p) => [p.dir, extrasFor(cfg, p.dir)])),
     launcherDir: LAUNCHER_DIR,
   });
   console.log(`packed ${project.name}@${version} (${mode}) → ${out}`);
