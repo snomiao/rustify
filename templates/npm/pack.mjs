@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// rustify npm packer v2 — zero dependencies, runs on node or bun.
+// rustify npm packer v3 — zero dependencies, runs on node or bun.
 //
 // Turns prebuilt native binaries into npm packages that install with
 // `bun i -g <name>` or `npm i -g <name>` on any supported machine:
@@ -23,7 +23,10 @@
 //
 // Configuration lives in the project's package.json:
 //   "rustify": {
-//     "bins":    { "<npm command>": "<cargo bin name>", ... },
+//     "bins":    { "<npm command>": "<cargo bin name>", ... },  // may be empty:
+//                // then the commands stay JavaScript, the binaries in "extra"
+//                // ride along in the platform packages, and the JavaScript
+//                // finds them with templates/npm/native-binary.mjs
 //     "mode":    "native" | "hybrid",   // hybrid keeps the package's JS files
 //     "runtime": "bun" | "node",        // shebang of the launcher
 //     "extra":   ["<cargo bin shipped beside the others, without a command>"],
@@ -70,6 +73,10 @@ function copyIfExists(from, to) {
   }
 }
 
+// Where the main package keeps its launchers. Its own directory, so that it
+// cannot collide with a `bin/` the project already ships.
+const LAUNCHER_DIR = "rustify";
+
 const SHARED_FIELDS = ["description", "license", "author", "homepage", "repository", "bugs", "keywords"];
 
 // The files the package manager would put in the tarball of the package in
@@ -95,8 +102,11 @@ function pack(opts) {
   const projectDir = path.dirname(pkgPath);
   const project = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
   const cfg = project.rustify;
-  if (!cfg || !cfg.bins || !Object.keys(cfg.bins).length) {
-    fail(`${pkgPath} has no "rustify.bins" — map each npm command to a cargo bin name.`);
+  if (!cfg) fail(`${pkgPath} has no "rustify" block.`);
+  cfg.bins = cfg.bins || {};
+  cfg.extra = cfg.extra || [];
+  if (!Object.keys(cfg.bins).length && !cfg.extra.length) {
+    fail(`${pkgPath}: "rustify" names no binary. Map npm commands to cargo bins in "bins", or list binaries to ship without a command in "extra".`);
   }
   if (project.private) fail(`${pkgPath} is marked "private", so npm would refuse to publish it.`);
   if (!opts.artifacts) fail("--artifacts <dir> is required");
@@ -121,7 +131,10 @@ function pack(opts) {
     const platform = PLATFORMS[key];
     const src = path.join(artifacts, key);
     const ext = key.startsWith("win32") ? ".exe" : "";
-    const required = Object.values(cfg.bins).map((b) => path.join(src, b + ext));
+    // What a command starts must be there. Binaries shipped without a command
+    // may exist on some platforms only, unless they are all the package ships.
+    const needed = Object.keys(cfg.bins).length ? Object.values(cfg.bins) : cfg.extra;
+    const required = needed.map((b) => path.join(src, b + ext));
     if (!required.every((f) => fs.existsSync(f))) {
       missing.push(key);
       continue;
@@ -174,23 +187,25 @@ function pack(opts) {
       delete scripts[s];
     }
     manifest.scripts = scripts;
-    manifest.bin = { ...((project.publishConfig || {}).bin || project.bin || {}) };
-    if (Array.isArray(manifest.files) && !manifest.files.includes("bin")) {
-      manifest.files = [...manifest.files, "bin"];
+    const ownBin = (project.publishConfig || {}).bin || project.bin || {};
+    manifest.bin = typeof ownBin === "string" ? { [project.name]: ownBin } : { ...ownBin };
+    if (Object.keys(cfg.bins).length && Array.isArray(manifest.files) && !manifest.files.includes(LAUNCHER_DIR)) {
+      manifest.files = [...manifest.files, LAUNCHER_DIR];
     }
     manifest.optionalDependencies = { ...(project.optionalDependencies || {}), ...optionalDependencies };
   } else if (mode === "native") {
+    if (!Object.keys(cfg.bins).length) fail(`"native" mode needs commands in rustify.bins; a package that only ships binaries beside its JavaScript is "hybrid".`);
     manifest = { name: project.name };
     for (const f of SHARED_FIELDS) if (project[f] !== undefined) manifest[f] = project[f];
     manifest.bin = {};
-    manifest.files = ["bin"];
+    manifest.files = [LAUNCHER_DIR];
     manifest.optionalDependencies = optionalDependencies;
     for (const f of ["README.md", "LICENSE"]) copyIfExists(path.join(projectDir, f), path.join(main, f));
   } else {
     fail(`unknown rustify.mode "${mode}" (use "native" or "hybrid")`);
   }
   manifest.version = version;
-  manifest.rustify = { bins: cfg.bins, launcher: 2 };
+  manifest.rustify = { bins: cfg.bins, extra: cfg.extra, launcher: 3 };
   if (cfg.rootEnv) manifest.rustify.rootEnv = cfg.rootEnv;
 
   const launcher = fs
@@ -198,18 +213,29 @@ function pack(opts) {
     .replace("__RUNTIME__", runtime);
   for (const npmBin of Object.keys(cfg.bins)) {
     if (!/^[A-Za-z0-9._-]+$/.test(npmBin)) fail(`"${npmBin}" is not a usable command name`);
-    manifest.bin[npmBin] = `bin/${npmBin}`;
-    const file = path.join(main, "bin", npmBin);
+    manifest.bin[npmBin] = `${LAUNCHER_DIR}/${npmBin}`;
+    const file = path.join(main, LAUNCHER_DIR, npmBin);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, launcher, { mode: 0o755 });
   }
   // Launchers have no extension. This keeps them CommonJS even when the
-  // package itself is "type": "module".
-  writeJson(path.join(main, "bin", "package.json"), { type: "commonjs" });
+  // package itself is "type": "module". The binary also recognises its
+  // package by this file.
+  if (Object.keys(cfg.bins).length) {
+    writeJson(path.join(main, LAUNCHER_DIR, "package.json"), { type: "commonjs" });
+  }
   writeJson(path.join(main, "package.json"), manifest);
   publish.push({ dir: "main", tag });
 
-  writeJson(path.join(out, "publish.json"), { name: project.name, version, publish, unsupported: Object.keys(PLATFORMS).filter((k) => !wanted.includes(k)) });
+  writeJson(path.join(out, "publish.json"), {
+    name: project.name,
+    version,
+    publish,
+    unsupported: Object.keys(PLATFORMS).filter((k) => !wanted.includes(k)),
+    commands: Object.keys(cfg.bins),
+    extra: cfg.extra,
+    launcherDir: LAUNCHER_DIR,
+  });
   console.log(`packed ${project.name}@${version} (${mode}) → ${out}`);
   for (const p of publish) console.log(`  ${p.dir.padEnd(13)} dist-tag ${p.tag}`);
   if (missing.length) console.log(`  not included: ${missing.join(", ")}`);

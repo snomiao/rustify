@@ -25,6 +25,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -132,7 +133,26 @@ function check(installer, registry) {
   if (second.code !== 0 || !second.text.includes(expect)) {
     return bad(`${installer}: second run exited ${second.code}. Output:\n${second.text}`);
   }
-  const native = path.join(packageDir, "bin", command + (isWindows ? ".exe" : ""));
+  // Binaries the package ships without a command must have arrived as well.
+  for (const extra of plan.extra || []) {
+    try {
+      const dir = path.dirname(createRequire(path.join(packageDir, "package.json")).resolve(`${plan.name}-${hostKey}/package.json`));
+      const file = path.join(dir, "bin", extra + (isWindows ? ".exe" : ""));
+      if (fs.existsSync(file)) ok(`${installer}: the \`${extra}\` binary for ${hostKey} is installed beside the package`);
+      else if ((plan.commands || []).length) ok(`${installer}: no \`${extra}\` binary for ${hostKey} (optional)`);
+      else bad(`${installer}: ${file} is missing`);
+    } catch {
+      bad(`${installer}: the platform package ${plan.name}-${hostKey} is not installed`);
+    }
+  }
+
+  // A command that stays JavaScript has nothing to turn native.
+  if (plan.commands && !plan.commands.includes(command)) {
+    ok(`${installer}: \`${command}\` is a JavaScript command of this package (second run: ${second.ms.toFixed(0)} ms)`);
+    return extras(installer, home);
+  }
+
+  const native = path.join(packageDir, plan.launcherDir || "bin", command + (isWindows ? ".exe" : ""));
   if (isWindows) {
     if (!fs.existsSync(native)) {
       return bad(`${installer}: ${native} is missing, so the binary runs from the platform package`);
@@ -179,7 +199,11 @@ function check(installer, registry) {
       `(first run through the launcher: ${first.ms.toFixed(0)} ms)`,
   );
   timings.push({ installer, first: first.ms, installed, direct });
+  extras(installer, home);
+}
 
+// The additional commands given with --also.
+function extras(installer, home) {
   for (const extra of opts.also) {
     const [line, wanted = ""] = extra.split("=>").map((part) => part.trim());
     const [name, ...extraArgs] = line.split(/\s+/).filter(Boolean);
