@@ -44,20 +44,43 @@ Nearly everything else, by TS module:
   named `slack-cli` (v0.2.0), a name already taken on crates.io by another
   project, so it needs renaming before it can be published.
 
-## Pipeline
+## Pipeline and port
 
-snomiao/slack-hub PR #117 puts the project on the shared pipeline, build and
-install test only. The binary answers `--version` and hands everything else
-back to `dist/cli.js`; `SLACK_HUB_NATIVE=1` runs the Rust commands instead. A
-command moves to Rust by handling it before the hand-back in `rs/src/main.rs`,
-once its ledger entry is `ported` or `verified`. The same PR renames the crate
-to `slack-hub` and makes it compile on Windows.
+Four pull requests in snomiao/slack-hub, none merged yet:
 
-Its run was green on all six platforms with bun and npm. `slack --version`,
-answered by the binary, started in 1.3 ms on Linux x64 and 5.4 ms on macOS
-arm64 — the same as the binary run directly — and in 24 ms against 16.5 ms on
-Windows x64, where the package manager's shim stays in the path. `slack
---help`, handed back to JavaScript, worked on every machine.
+| PR | What | State |
+|---|---|---|
+| #117 | The Rust `slack` built and install-tested on six platforms; hands every command back to `dist/cli.js`. Renames the crate to `slack-hub`, makes it compile on Windows. | green (the red `TypeScript` check fails on `main` too; #112 fixes it) |
+| #119 | `search` answered natively. `tests/parity.test.ts`: 164 cases, comparing stdout, stderr, exit code, every request the mock received and every file left in `HOME`. | green, parity job included |
+| #120 | `news` answered natively: 209 cases. | green |
+| #118 | Release wiring: build, install-test, then tag and publish the native package. Rehearsed from the branch with nothing published. | merging it turns native publishing on |
+
+#119 and #120 are stacked on #117; #118 is stacked on #117 as well and does
+not yet pass `parity:` to the build, which it should before it is switched on.
+
+`search` against a local mock: 13 ms native, against 158 ms for the bundled
+JavaScript.
+
+What still goes to the JavaScript besides unported commands: any machine with
+a `settings.yml` in `~/.config/slack-hub/` or the nearest `.slack-hub/` (bun's
+YAML parser reads identities from it on every command, and no Rust crate
+parses exactly like it), `.env` files bun itself loads, proxy and certificate
+variables. The first of these is the common case for configured machines, so
+most of them see no speed-up yet. `SLACK_HUB_NO_NATIVE=1` hands everything
+back.
+
+Found in the TypeScript on the way and left as it is, for the owner:
+
+- 1.57.1's bundle starts with `// @bun`; bun then reads it as Latin-1 and
+  prints non-ASCII text as mojibake (real Node prints it correctly);
+- a server that keeps answering 429 with `Retry-After: 0` makes the retry
+  loop spin forever;
+- `./.slack-cli/.env.local` is meant to win over the global files, but the
+  first value wins, so the global ones do;
+- the bot-token fallback is chosen by searching the error text, so a query
+  containing `not_allowed_token_type` triggers it on any error;
+- `news` never passes the `-w` workspace's cookie, and "Yesterday" means now
+  minus 24 hours.
 
 ## Useful starting points
 

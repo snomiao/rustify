@@ -15,9 +15,10 @@ Rust crate for the tray icon and is not part of the CLI.
 
 - npm: `rechrome`, published by semantic-release. The commands `rech` and
   `rechrome` are `rechrome.ts`, run by bun.
-- Rust: snomiao/rechrome PR #120 adds `rs/`, a binary that hands every command
-  to `rechrome.ts`, and the pipeline workflow (build and install test only).
-  Its run was green on all six platforms.
+- Rust: `rs/` is on `main` since snomiao/rechrome PR #120 (merged
+  2026-11-26): a binary that hands every command to `rechrome.ts`, and the
+  pipeline workflow (build and install test only), green on all six
+  platforms.
 - No parity ledger yet. Writing one is the first step of the port.
 
 ## Notes for whoever ports it
