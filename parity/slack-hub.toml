@@ -5,9 +5,10 @@
 #               the modules it calls
 #   Rust        rs/src/main.rs and rs/src/slack.rs, in full
 #
-# search, slack-hub#119: `verified` means tests/parity.test.ts shows it. That
-# test runs every case once per implementation in a fresh HOME against a fresh
-# mock (tests/mock.ts) and compares stdout, stderr, the exit code, every
+# search (slack-hub#119) and news (#120): `verified` means
+# tests/parity.test.ts shows it. That test runs every case once per
+# implementation in a fresh HOME against a fresh mock (tests/mock.ts) and
+# compares stdout, stderr, the exit code, every
 # request (with its Authorization and Cookie headers) and every file left
 # behind; it runs in rustify's parity job against the binary just built, and a
 # missing binary fails it. The shared machinery search needed (credentials,
@@ -66,9 +67,11 @@ note = "Only messages after a ts; reads every page and refuses to return a threa
 
 [[feature]]
 name = "news"
-status = "missing"
+status = "verified"
 ts = "ts/cli.ts:541 cmdNews + dispatch ts/cli.ts:6643"
-note = "Handed back to the JavaScript. The first Rust version, which ran only without a package root, is kept in rs/src/legacy.rs but no longer reached; it differed as follows. Same query (search.messages `to:me`, first page of 100, cut to --limit/-l, default 20). Output differs: Rust groups by UTC day, newest first, a `┄` rule, two lines per item (`💬 or 🔔 <#chan or @display name>  HH:MM`, then `name: first line cut to 80 chars`); TS groups by local day, oldest first inside a day, a `-` rule, one full message line per item (`<UTC ISO>  #chan  @handle:  text` plus reactions/files). tests/parity.test.ts checks that `news --limit 5` reaches the JavaScript unchanged."
+rs = "rs/src/news.rs; rs/src/msgfmt.rs; rs/src/cli.rs"
+proof = "tests/parity.test.ts"
+note = "Served natively for `news` with --limit/-l N (a plain decimal), -w/--workspace NAME and --as-user, in slack-hub#120. The local day of each match as dayLabel computes it (Today, Yesterday, else `Weekday, Mon DD` in en-US) is proven in eight zones, among them a half-hour DST and UTC+14. Like cmdNews it sends no session cookie of its own: a desktop token gets resolveCookie()'s, without --workspace. Handed back besides what search hands back: a TZ bun reads as UTC (POSIX rules, unknown names, empty, a leading `:`), TZ set by a dotenv file, dates before 1970 or after 2099, and news' own usage errors."
 
 [[feature]]
 name = "search <query>"
