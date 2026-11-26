@@ -18,7 +18,8 @@ REPO="$(cd "$HERE/../.." && pwd)"
 PACK="$REPO/templates/npm/pack.mjs"
 RUNTIME="${RUNTIME:-bun}"
 NAME="rustify-e2e-toy"
-WORK="$(mktemp -d)"
+# Resolved, because macOS hands out temp directories behind a symlink.
+WORK="$(cd "$(mktemp -d)" && pwd -P)"
 REG_PID=""
 cleanup() {
   [ -n "${KEEP:-}" ] && { echo "kept: $WORK"; [ -n "$REG_PID" ] && kill "$REG_PID" 2>/dev/null; return; }
