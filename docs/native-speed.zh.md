@@ -98,7 +98,10 @@ Linux 和 macOS 上安装后的命令和二进制本身一样快。Windows 上�
 - 真机验证（`tests/e2e/upgrade.mjs`）：在 Windows 11（bun 1.4.2 和 npm）、只有 bun
   没有 npm 的 Mac（arm64）和 Linux 上，命令正在运行时升级：包管理器升级成功，正在
   运行的旧进程不受影响，新启动的命令立刻是新版本。
-- 没有测过的：用 pnpm 或 yarn 全局安装；Windows 上交还给 JS 时按 Ctrl+C。
+- 同一台 Windows 上，向“已交还给 JS”的命令发送控制台中断事件：二进制等到 JS 自己
+  收尾完成（测试里是 0.8 秒）才退出，退出码与 JS 一致。发送的是 Ctrl+Break，它和
+  Ctrl+C 走同一个处理函数；远程会话无法向隐藏控制台投递 Ctrl+C 本身。
+- 没有测过的：用 pnpm 或 yarn 全局安装。
 
 ### 3.4 考虑过但不采用的做法
 

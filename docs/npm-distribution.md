@@ -231,6 +231,13 @@ npm, and on Linux x64 — upgrading while a command of the package is running:
 - the command starts the new version right away, and is native again after
   its first run
 
+On the same Windows machine, a console control event sent to a command that
+had been handed back to JavaScript: the binary stayed until the JavaScript
+had finished its own shutdown (0.8 s in the test) and then exited with the
+JavaScript's exit code. The event was Ctrl+Break, which takes the same handler
+as Ctrl+C; Ctrl+C itself cannot be delivered to a hidden console from a remote
+session.
+
 The Mac also ran `tests/e2e/run.sh` in full. A machine with bun and no npm is
 supported throughout: the launcher's shebang is bun, and the packer falls back
 to `bun publish` and `bun pm pack`.
@@ -240,8 +247,6 @@ Not verified:
 - `npm publish` against the real registry with a suffixed version, a dist-tag
   and trusted publishing (codex does this in production; rustify has only
   published to the local test registry)
-- Ctrl+C on Windows while a command is handed back to JavaScript (the code
-  compiles for Windows and is reviewed, the key press is not tested)
 - pnpm and yarn global installs on Windows (they keep the launcher)
 
 ## Known limits
