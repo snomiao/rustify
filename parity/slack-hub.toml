@@ -5,14 +5,15 @@
 #               the modules it calls
 #   Rust        rs/src/main.rs and rs/src/slack.rs, in full
 #
-# search, slack-hub#119: `verified` means tests/parity.test.ts shows it. That
-# test runs every case once per implementation in a fresh HOME against a fresh
-# mock (tests/mock.ts) and compares stdout, stderr, the exit code, every
+# search (slack-hub#119) and news (#120): `verified` means
+# tests/parity.test.ts shows it. That test runs every case once per
+# implementation in a fresh HOME against a fresh mock (tests/mock.ts) and
+# compares stdout, stderr, the exit code, every
 # request (with its Authorization and Cookie headers) and every file left
 # behind; it runs in rustify's parity job against the binary just built, and a
 # missing binary fails it. The shared machinery search needed (credentials,
 # dotenv, the cache, errors, the message line) is complete but proven only
-# through search, so those entries stay `partial`.
+# through search and news, so those entries stay `partial`.
 #
 # The first Rust versions of read, thread, news, send and dump were moved to
 # rs/src/legacy.rs, unreachable: the binary hands those commands back, so they
@@ -66,9 +67,11 @@ note = "Only messages after a ts; reads every page and refuses to return a threa
 
 [[feature]]
 name = "news"
-status = "missing"
+status = "verified"
 ts = "ts/cli.ts:541 cmdNews + dispatch ts/cli.ts:6643"
-note = "Handed back to the JavaScript. The first Rust version, which ran only without a package root, is kept in rs/src/legacy.rs but no longer reached; it differed as follows. Same query (search.messages `to:me`, first page of 100, cut to --limit/-l, default 20). Output differs: Rust groups by UTC day, newest first, a `┄` rule, two lines per item (`💬 or 🔔 <#chan or @display name>  HH:MM`, then `name: first line cut to 80 chars`); TS groups by local day, oldest first inside a day, a `-` rule, one full message line per item (`<UTC ISO>  #chan  @handle:  text` plus reactions/files). tests/parity.test.ts checks that `news --limit 5` reaches the JavaScript unchanged."
+rs = "rs/src/news.rs; rs/src/msgfmt.rs; rs/src/cli.rs"
+proof = "tests/parity.test.ts"
+note = "Served natively for `news` with --limit/-l N (a plain decimal), -w/--workspace NAME and --as-user, in slack-hub#120. The local day of each match as dayLabel computes it (Today, Yesterday, else `Weekday, Mon DD` in en-US) is proven in seven zones plus the system's (UTC on CI), among them a half-hour DST and UTC+14. Like cmdNews it sends no session cookie of its own: a desktop token gets resolveCookie()'s, without --workspace. Handed back besides what search hands back: a TZ bun reads as UTC (POSIX rules, unknown names, empty, a leading `:`), TZ set by a dotenv file, dates before 1970 or after 2099, and news' own usage errors."
 
 [[feature]]
 name = "search <query>"
@@ -105,7 +108,7 @@ name = "message line format (timestamps, author, multi-line text)"
 status = "partial"
 ts = "ts/cli.ts:281 formatMsgLine"
 rs = "rs/src/msgfmt.rs Fmt::line"
-note = "formatMsgLine and its two-tier handle lookup are ported and proven by tests/parity.test.ts as search prints them, with a #chan or @dm label. read and thread print the line without a label and are not ported."
+note = "formatMsgLine and its two-tier handle lookup are ported and proven by tests/parity.test.ts as search and news print them, with a #chan or @dm label. read and thread print the line without a label and are not ported."
 
 [[feature]]
 name = "reactions, files and forwarded messages in read output"
@@ -726,7 +729,7 @@ name = "token resolution order"
 status = "partial"
 ts = "ts/profiles.ts:251 resolveToken"
 rs = "rs/src/config.rs resolve_token"
-note = "All of resolveToken is ported and proven through search: -w, SLACK_TOKEN, the legacy variables and their warning, the directory walk, SLACK_WORKSPACE, both lockfiles and every error text. Other commands are handed back."
+note = "All of resolveToken is ported and proven through search (and news): -w, SLACK_TOKEN, the legacy variables and their warning, the directory walk, SLACK_WORKSPACE, both lockfiles and every error text. Other commands are handed back."
 
 [[feature]]
 name = "dotenv files"
@@ -740,7 +743,7 @@ name = "-w / --workspace"
 status = "partial"
 ts = "ts/cli.ts:6152"
 rs = "rs/src/search.rs parse; rs/src/config.rs"
-note = "On search, after the command; before it (`slack -w x search …`) is handed back."
+note = "On search and news, after the command; before it (`slack -w x search …`) is handed back."
 
 [[feature]]
 name = "profiles.json (several workspaces; one cookie shared per identity; mode 0600)"
@@ -871,7 +874,7 @@ name = "error messages and exit codes"
 status = "partial"
 ts = "ts/cli.ts:6142 + ts/cli.ts:1210 friendlySlackError + ts/cli.ts:8916"
 rs = "rs/src/api.rs; rs/src/search.rs fail"
-note = "search's are ported and proven: Slack's error with the query as URLSearchParams spells it, the xoxc and xoxb guidance, the handler's message with exit 1. Usage errors are handed back. Other commands' codes are not ported."
+note = "search's and news' are ported and proven: Slack's error with the query as URLSearchParams spells it, the xoxc and xoxb guidance, the handler's message with exit 1. Usage errors are handed back. Other commands' codes are not ported."
 
 [[feature]]
 name = "--help and usage errors"
@@ -891,7 +894,7 @@ status = "verified"
 ts = "ts/stdout.ts"
 rs = "rs/src/out.rs"
 proof = "tests/parity.test.ts"
-note = "Every case reads both outputs whole through a pipe, and `| head -c 100` makes both exit 141 with nothing on stderr. A Node or bun parent gives the child a socket pair instead, where the writer sees EPIPE or ENOTCONN depending on timing, for both implementations alike; ENOTCONN is reported as the TypeScript reports it. On a terminal stderr is red as bun's console.error prints it, unless NO_COLOR is set (proven through a pty)."
+note = "Every case reads both outputs whole through a pipe, and `| head -c 100` makes both exit 141 with nothing on stderr. A bun parent gives the child a socket pair instead (Node's libuv does the same, not checked here), where the writer sees EPIPE or ENOTCONN depending on timing, for both implementations alike; ENOTCONN is reported as the TypeScript reports it. On a terminal stderr is red as bun's console.error prints it, unless NO_COLOR is set (proven through a pty)."
 
 [[feature]]
 name = "lookup cache (~/.config/slack-cli/cache.json; --no-cache on todo / mytodo)"
