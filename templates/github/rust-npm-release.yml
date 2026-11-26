@@ -57,6 +57,8 @@ jobs:
     with:
       manifest: __MANIFEST__
       bins: __BINS__
+      # If `--version` is answered by yargs, use `--help` with smoke-expect
+      # instead: installed with bun, yargs prints "unknown" for the version.
       smoke: __SMOKE__
       version: ${{ inputs.version }}
       npm-tag: ${{ inputs.npm_tag || 'latest' }}

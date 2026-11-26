@@ -33,6 +33,10 @@ first line of the program:
   with its own syntax (`$VAR` expansion, `export`, quoting), and honours
   `bunfig.toml`, `BUN_OPTIONS` and `NODE_OPTIONS`;
 - on a terminal, `console.error` may colour its output;
+- yargs prints `unknown` for `--version` when the package was installed
+  globally with bun (it looks for the package relative to its own location,
+  which in bun's flat `node_modules` is not the package), and the version
+  when installed with npm;
 - a bundled entry can differ from the source it was built from.
 
 Find out which of these the project's users can observe before deciding what
