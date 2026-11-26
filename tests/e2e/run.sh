@@ -103,7 +103,9 @@ check_install() { # $1 = label, $2 = bin dir, $3 = node_modules dir
   if is_script "$bin"; then die "$label: the command is still a script after the first run"; fi
   pass "$label: after the first run the command is the native binary"
   out="$("$bin" again)"
-  [[ "$out" == *"exe=$(realpath "$bin")"* ]] && pass "$label: second run is native, from the package's own bin directory" \
+  # Linux reports the resolved file; macOS reports the path it was started through.
+  [[ "$out" == *"exe=$(realpath "$bin") "* || "$out" == *"exe=$bin "* ]] \
+    && pass "$label: second run is native, with no launcher in between" \
     || die "$label: second run printed: $out"
   is_script "$2/toy-alias" && die "$label: the second command was not linked" || true
   out="$("$2/toy-alias")"
