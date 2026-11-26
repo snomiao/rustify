@@ -24,7 +24,15 @@ const NPM = path.join(REPO, "templates", "npm");
 const isWindows = process.platform === "win32";
 const exe = isWindows ? ".exe" : "";
 const key = `${process.platform === "android" ? "linux" : process.platform}-${process.arch}`;
-const NAME = "rustify-e2e-toy";
+// Two packages, for the two places a running binary can sit:
+//   command        the command is the native binary, hard-linked into the
+//                  main package (and the same file in the platform package)
+//   binaries-only  the command is JavaScript and starts the binary that
+//                  lives in the platform package only
+const KINDS = [
+  { kind: "command", name: "rustify-e2e-toy", command: "toy" },
+  { kind: "binaries-only", name: "rustify-e2e-toy-extras", command: "toyjs" },
+];
 const [V1, V2] = ["1.0.0", "2.0.0"];
 const work = fs.mkdtempSync(path.join(os.tmpdir(), "rustify-upgrade-"));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -43,15 +51,19 @@ function build(version) {
   );
   const dir = path.join(work, `native-${version}`, key);
   fs.mkdirSync(dir, { recursive: true });
-  fs.copyFileSync(path.join(work, "target", "release", `toy${exe}`), path.join(dir, `toy${exe}`));
-  const out = path.join(work, `dist-${version}`);
-  execFileSync(
-    process.execPath,
-    [path.join(NPM, "pack.mjs"), "pack", "--package", path.join(work, "project", "package.json"),
-      "--artifacts", path.join(work, `native-${version}`), "--version", version, "--out", out, "--allow-missing"],
-    { stdio: ["ignore", "ignore", "inherit"] },
-  );
-  return out;
+  for (const bin of ["toy", "toy-helper"]) {
+    fs.copyFileSync(path.join(work, "target", "release", `${bin}${exe}`), path.join(dir, `${bin}${exe}`));
+  }
+  return KINDS.map(({ kind }) => {
+    const out = path.join(work, `dist-${kind}-${version}`);
+    execFileSync(
+      process.execPath,
+      [path.join(NPM, "pack.mjs"), "pack", "--package", path.join(work, `project-${kind}`, "package.json"),
+        "--artifacts", path.join(work, `native-${version}`), "--version", version, "--out", out, "--allow-missing"],
+      { stdio: ["ignore", "ignore", "inherit"] },
+    );
+    return out;
+  });
 }
 
 function run(bin, args) {
@@ -60,9 +72,9 @@ function run(bin, args) {
 }
 const versionOf = (text) => (text.match(/version=(\S+)/) || [])[1] || `? (${text.slice(0, 80)})`;
 
-async function scenario(installer, registry) {
-  console.log(`\n== ${installer} on ${key}`);
-  const home = path.join(work, installer);
+async function scenario(installer, registry, { kind, name: NAME, command }) {
+  console.log(`\n== ${installer} on ${key}, ${kind} package`);
+  const home = path.join(work, `${installer}-${kind}`);
   const env = { ...process.env, BUN_INSTALL: home, BUN_INSTALL_CACHE_DIR: path.join(work, "bun-cache") };
   const install = (version) =>
     installer === "bun"
@@ -70,8 +82,8 @@ async function scenario(installer, registry) {
       : spawnSync("npm", ["i", "-g", "--prefix", home, `${NAME}@${version}`, "--registry", registry], { encoding: "utf8", env, shell: isWindows });
   const bin =
     installer === "bun"
-      ? path.join(home, "bin", `toy${exe}`)
-      : isWindows ? path.join(home, "toy.cmd") : path.join(home, "bin", "toy");
+      ? path.join(home, "bin", `${command}${exe}`)
+      : isWindows ? path.join(home, `${command}.cmd`) : path.join(home, "bin", command);
 
   const first = install(V1);
   if (first.status !== 0) {
@@ -82,7 +94,7 @@ async function scenario(installer, registry) {
   line("first version, after its first run", versionOf(run(bin, ["check"]).text));
 
   // A long-running command of the installed first version.
-  const beat = path.join(work, `${installer}.beat`);
+  const beat = path.join(work, `${installer}-${kind}.beat`);
   const long = spawn(isWindows ? `"${bin}"` : bin, ["sleep", "90", beat], { stdio: "ignore", shell: isWindows, detached: !isWindows });
   for (let i = 0; i < 50 && !fs.existsSync(beat); i++) await sleep(100);
   line("long-running command started", fs.existsSync(beat) ? `yes (${fs.readFileSync(beat, "utf8")})` : "NO");
@@ -118,11 +130,14 @@ async function scenario(installer, registry) {
   }
 }
 
-fs.mkdirSync(path.join(work, "project"), { recursive: true });
+fs.mkdirSync(path.join(work, "project-command"), { recursive: true });
 fs.writeFileSync(
-  path.join(work, "project", "package.json"),
-  JSON.stringify({ name: NAME, version: "0.0.0", license: "MIT", rustify: { bins: { toy: "toy" } } }),
+  path.join(work, "project-command", "package.json"),
+  JSON.stringify({ name: KINDS[0].name, version: "0.0.0", license: "MIT", rustify: { bins: { toy: "toy" } } }),
 );
+// The binaries-only fixture of the pipeline's own CI, with the lookup it uses.
+fs.cpSync(path.join(HERE, "toy-extras"), path.join(work, "project-binaries-only"), { recursive: true });
+fs.copyFileSync(path.join(NPM, "native-binary.mjs"), path.join(work, "project-binaries-only", "native-binary.mjs"));
 const registryProcess = spawn(process.execPath, [path.join(NPM, "registry.mjs"), path.join(work, "registry")], {
   stdio: ["ignore", "pipe", "inherit"],
   env: { ...process.env, RUSTIFY_UPSTREAM_REGISTRY: "" },
@@ -136,13 +151,17 @@ try {
   fs.writeFileSync(npmrc, `//${registry.replace(/^https?:\/\//, "")}/:_authToken=upgrade\n`);
   process.env.NPM_CONFIG_USERCONFIG = npmrc; // npm
   process.env.NPM_CONFIG_TOKEN = "upgrade"; // bun publish
-  console.log(`building ${NAME} ${V1} and ${V2} for ${key}`);
+  console.log(`building the toy ${V1} and ${V2} for ${key}`);
   for (const version of [V1, V2]) {
-    execFileSync(process.execPath, [path.join(NPM, "pack.mjs"), "publish", "--out", build(version), "--registry", registry], {
-      stdio: ["ignore", "ignore", "inherit"],
-    });
+    for (const dist of build(version)) {
+      execFileSync(process.execPath, [path.join(NPM, "pack.mjs"), "publish", "--out", dist, "--registry", registry], {
+        stdio: ["ignore", "ignore", "inherit"],
+      });
+    }
   }
-  for (const installer of ["bun", "npm"].filter(has)) await scenario(installer, registry);
+  for (const installer of ["bun", "npm"].filter(has)) {
+    for (const kind of KINDS) await scenario(installer, registry, kind);
+  }
 } finally {
   registryProcess.kill();
   await sleep(200);

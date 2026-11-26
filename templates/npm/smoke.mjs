@@ -15,7 +15,9 @@
 //   --installer bun|npm   default: both, when available
 //   --expect <text>       text the output must contain (default: the version);
 //                         write --expect=<text> if the text starts with --
-//   --also "<command> [args] => <text>"
+//   --env NAME=value      set for the commands under test; repeatable
+//   --also "<command> [args] => <text> !> <text it must not print>"
+//                         the part from `!>` on is optional
 //                         one more command of the package that must exit 0
 //                         and print <text>; repeatable. Use it for commands
 //                         that are still JavaScript or are handed back to it.
@@ -33,7 +35,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const isWindows = process.platform === "win32";
 
 function parseArgs(argv) {
-  const out = { also: [] };
+  const out = { also: [], env: [] };
   for (let i = 0; i < argv.length; i++) {
     if (!argv[i].startsWith("--")) continue;
     // `--key=value` is how to pass a value that itself starts with `--`.
@@ -41,6 +43,7 @@ function parseArgs(argv) {
     const key = eq > 0 ? argv[i].slice(2, eq) : argv[i].slice(2);
     const value = eq > 0 ? argv[i].slice(eq + 1) : argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : true;
     if (key === "also") out.also.push(String(value));
+    else if (key === "env") out.env.push(String(value));
     else out[key] = value;
   }
   return out;
@@ -54,6 +57,13 @@ if (!opts.run) {
   );
   process.exit(2);
 }
+// --env NAME=value, for the commands under test only (not for the install).
+const commandEnv = Object.fromEntries(
+  opts.env.map((pair) => {
+    const eq = pair.indexOf("=");
+    return eq > 0 ? [pair.slice(0, eq), pair.slice(eq + 1)] : [pair, ""];
+  }),
+);
 const dist = path.resolve(opts.dist || "npm-dist");
 const plan = JSON.parse(fs.readFileSync(path.join(dist, "publish.json"), "utf8"));
 const hostKey = `${process.platform === "android" ? "linux" : process.platform}-${process.arch}`;
@@ -102,7 +112,7 @@ function binFor(installer, home, name) {
 
 function runOnce(bin, runArgs = args) {
   const started = process.hrtime.bigint();
-  const result = spawnSync(isWindows ? `"${bin}"` : bin, runArgs, { encoding: "utf8", shell: isWindows });
+  const result = spawnSync(isWindows ? `"${bin}"` : bin, runArgs, { encoding: "utf8", shell: isWindows, env: { ...process.env, ...commandEnv } });
   const ms = Number(process.hrtime.bigint() - started) / 1e6;
   return { ms, code: result.status, text: `${result.stdout || ""}${result.stderr || ""}`, error: result.error };
 }
@@ -220,13 +230,16 @@ function check(installer, registry) {
 // The additional commands given with --also.
 function extras(installer, home) {
   for (const extra of opts.also) {
-    const [line, wanted = ""] = extra.split("=>").map((part) => part.trim());
+    const [line, rest = ""] = extra.split("=>").map((part) => part.trim());
+    const [wanted, unwanted = ""] = rest.split("!>").map((part) => part.trim());
     const [name, ...extraArgs] = line.split(/\s+/).filter(Boolean);
     const result = runOnce(binFor(installer, home, name), extraArgs);
-    if (result.code === 0 && result.text.includes(wanted)) {
-      ok(`${installer}: \`${line}\` works — ${result.text.trim().split("\n")[0].slice(0, 120)}`);
-    } else {
+    if (result.code !== 0 || !result.text.includes(wanted)) {
       bad(`${installer}: \`${line}\` exited ${result.code} and should print "${wanted}". Output:\n${result.text}`);
+    } else if (unwanted && result.text.includes(unwanted)) {
+      bad(`${installer}: \`${line}\` must not print "${unwanted}". Output:\n${result.text}`);
+    } else {
+      ok(`${installer}: \`${line}\` works — ${result.text.trim().split("\n")[0].slice(0, 120)}`);
     }
   }
 }
