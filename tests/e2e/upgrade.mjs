@@ -134,7 +134,8 @@ try {
   });
   const npmrc = path.join(work, "npmrc");
   fs.writeFileSync(npmrc, `//${registry.replace(/^https?:\/\//, "")}/:_authToken=upgrade\n`);
-  process.env.NPM_CONFIG_USERCONFIG = npmrc;
+  process.env.NPM_CONFIG_USERCONFIG = npmrc; // npm
+  process.env.NPM_CONFIG_TOKEN = "upgrade"; // bun publish
   console.log(`building ${NAME} ${V1} and ${V2} for ${key}`);
   for (const version of [V1, V2]) {
     execFileSync(process.execPath, [path.join(NPM, "pack.mjs"), "publish", "--out", build(version), "--registry", registry], {

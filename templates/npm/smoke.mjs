@@ -207,7 +207,8 @@ try {
     registry = local.url;
     const npmrc = path.join(work, "npmrc");
     fs.writeFileSync(npmrc, `//${registry.replace(/^https?:\/\//, "")}/:_authToken=smoke\n`);
-    process.env.NPM_CONFIG_USERCONFIG = npmrc;
+    process.env.NPM_CONFIG_USERCONFIG = npmrc; // npm
+    process.env.NPM_CONFIG_TOKEN = "smoke"; // bun publish
     execFileSync(process.execPath, [path.join(HERE, "pack.mjs"), "publish", "--out", dist, "--registry", registry], {
       stdio: ["ignore", "ignore", "inherit"],
     });

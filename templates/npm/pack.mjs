@@ -70,6 +70,24 @@ function copyIfExists(from, to) {
 
 const SHARED_FIELDS = ["description", "license", "author", "homepage", "repository", "bugs", "keywords"];
 
+// The files the package manager would put in the tarball of the package in
+// `dir`, by asking it. npm is what CI has; bun is enough on a bun-only machine.
+function packedFiles(dir) {
+  const shell = process.platform === "win32";
+  const options = { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], shell };
+  try {
+    const listed = JSON.parse(execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], options));
+    return listed[0].files.map((f) => f.path);
+  } catch (npmError) {
+    try {
+      const text = execFileSync("bun", ["pm", "pack", "--dry-run", "--ignore-scripts"], options);
+      const files = [...text.matchAll(/^packed \S+ (.+)$/gm)].map((m) => m[1].trim());
+      if (files.length) return files;
+    } catch {}
+    fail(`cannot list the files of ${dir}: ${npmError.message.split("\n")[0]}`);
+  }
+}
+
 function pack(opts) {
   const pkgPath = path.resolve(opts.package || "package.json");
   const projectDir = path.dirname(pkgPath);
@@ -137,18 +155,10 @@ function pack(opts) {
   if (mode === "hybrid") {
     // Ship what the project ships today and swap the listed commands for
     // native launchers. The project must already be built (its dist exists).
-    const listed = JSON.parse(
-      execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
-        cwd: projectDir,
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "inherit"],
-        shell: process.platform === "win32",
-      }),
-    );
-    for (const f of listed[0].files) {
-      const to = path.join(main, f.path);
+    for (const file of packedFiles(projectDir)) {
+      const to = path.join(main, file);
       fs.mkdirSync(path.dirname(to), { recursive: true });
-      fs.copyFileSync(path.join(projectDir, f.path), to);
+      fs.copyFileSync(path.join(projectDir, file), to);
     }
     manifest = { ...project };
     delete manifest.devDependencies;
@@ -202,6 +212,20 @@ function pack(opts) {
 function publish(opts) {
   const out = path.resolve(opts.out || "npm-dist");
   const plan = JSON.parse(fs.readFileSync(path.join(out, "publish.json"), "utf8"));
+  const shell = process.platform === "win32";
+  const has = (tool) => {
+    try {
+      execFileSync(tool, ["--version"], { stdio: "ignore", shell });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  // npm is what CI uses. A machine that only has bun can still publish, which
+  // is enough for local rehearsals; provenance needs npm.
+  const tool = has("npm") ? "npm" : has("bun") ? "bun" : null;
+  if (!tool) fail("neither npm nor bun is installed");
+  if (tool === "bun" && opts.provenance) fail("--provenance needs npm");
   let failed = false;
   // Platform builds go first and the main package last, so the version users
   // install never points at binaries that are not on the registry yet.
@@ -210,18 +234,16 @@ function publish(opts) {
       console.error(`skipped ${plan.name}@${plan.version}: a platform build failed to publish`);
       break;
     }
-    const args = ["publish", path.join(out, step.dir), "--tag", step.tag, "--access", "public", "--ignore-scripts"];
+    const dir = path.join(out, step.dir);
+    const args = ["publish", "--tag", step.tag, "--access", "public", "--ignore-scripts"];
+    if (tool === "npm") args.splice(1, 0, dir);
     if (opts.registry) args.push("--registry", opts.registry);
     if (opts.provenance) args.push("--provenance");
     if (opts["dry-run"]) args.push("--dry-run");
     let output = "";
     let ok = true;
     try {
-      output = execFileSync("npm", args, {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-        shell: process.platform === "win32",
-      });
+      output = execFileSync(tool, args, { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], shell });
     } catch (err) {
       ok = false;
       output = `${err.stdout || ""}${err.stderr || ""}`;
