@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// rustify npm packer v1 — zero dependencies, runs on node or bun.
+// rustify npm packer v2 — zero dependencies, runs on node or bun.
 //
 // Turns prebuilt native binaries into npm packages that install with
 // `bun i -g <name>` or `npm i -g <name>` on any supported machine:
@@ -174,7 +174,7 @@ function pack(opts) {
     fail(`unknown rustify.mode "${mode}" (use "native" or "hybrid")`);
   }
   manifest.version = version;
-  manifest.rustify = { bins: cfg.bins, launcher: 1 };
+  manifest.rustify = { bins: cfg.bins, launcher: 2 };
   if (cfg.rootEnv) manifest.rustify.rootEnv = cfg.rootEnv;
 
   const launcher = fs

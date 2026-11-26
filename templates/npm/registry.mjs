@@ -5,6 +5,10 @@
 // run on every platform BEFORE anything reaches the real registry. No auth and
 // no durability: never point real users at it.
 //
+// Packages that were not published here are answered from the real registry,
+// so a package under test can still install its ordinary dependencies. Set
+// RUSTIFY_UPSTREAM_REGISTRY to use another upstream, or to "" for none.
+//
 //   registry.mjs <storage-dir> [port]     prints the URL once it is listening
 import fs from "node:fs";
 import http from "node:http";
@@ -15,6 +19,20 @@ import { fileURLToPath } from "node:url";
 export function startRegistry(storageDir, port = 0) {
 const storage = path.resolve(storageDir);
 fs.mkdirSync(storage, { recursive: true });
+
+const upstream = (process.env.RUSTIFY_UPSTREAM_REGISTRY ?? "https://registry.npmjs.org").replace(/\/+$/, "");
+async function fromUpstream(req, res) {
+  if (!upstream) return send(res, 404, { error: "not found" });
+  try {
+    const answer = await fetch(upstream + req.url, {
+      headers: { accept: req.headers.accept || "application/json" },
+    });
+    res.writeHead(answer.status, { "content-type": answer.headers.get("content-type") || "application/json" });
+    res.end(Buffer.from(await answer.arrayBuffer()));
+  } catch (err) {
+    send(res, 502, { error: `upstream registry: ${err.message}` });
+  }
+}
 
 const fileFor = (name) => path.join(storage, encodeURIComponent(name) + ".json");
 const load = (name) => (fs.existsSync(fileFor(name)) ? JSON.parse(fs.readFileSync(fileFor(name), "utf8")) : null);
@@ -29,13 +47,15 @@ const server = http.createServer((req, res) => {
   const tarball = url.match(/^(.+)\/-\/([^/]+\.tgz)$/);
   if (req.method === "GET" && tarball) {
     const file = path.join(storage, path.basename(tarball[2]));
-    if (!fs.existsSync(file)) return send(res, 404, { error: "no such tarball" });
+    // npm asks the configured registry for every tarball, also for packages
+    // that only the upstream has.
+    if (!fs.existsSync(file)) return fromUpstream(req, res);
     res.writeHead(200, { "content-type": "application/octet-stream" });
     return fs.createReadStream(file).pipe(res);
   }
   if (req.method === "GET") {
     const doc = load(url);
-    return doc ? send(res, 200, doc) : send(res, 404, { error: "not found" });
+    return doc ? send(res, 200, doc) : fromUpstream(req, res);
   }
   if (req.method === "PUT") {
     const chunks = [];
