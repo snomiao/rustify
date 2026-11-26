@@ -57,6 +57,9 @@ jobs:
       manifest: tests/e2e/toy/Cargo.toml
       bins: toy
       smoke: toy --version
+      # A release passes its version in; do the same, so stamping it into
+      # Cargo.toml and package.json is exercised on every platform.
+      version: 0.0.0-ci.${{ github.run_number }}
       # The toy package is hybrid: `legacy` is still JavaScript, and `toy js`
       # stands for a command the binary hands back to it.
       smoke-extra: |

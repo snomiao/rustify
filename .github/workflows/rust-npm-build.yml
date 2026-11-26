@@ -211,6 +211,21 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Building $version"
+      # JavaScript that reads its own version at build time must see the same
+      # version the binary was stamped with.
+      - name: Stamp package.json version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          PACKAGE: ${{ inputs.package }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const file = process.env.PACKAGE;
+            const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
+            pkg.version = process.env.VERSION;
+            fs.writeFileSync(file, JSON.stringify(pkg, null, 2) + "\n");
+          '
+          grep -m1 '"version"' "$PACKAGE"
       - uses: oven-sh/setup-bun@v2
         if: inputs.js-build != ''
       - name: Build JavaScript (hybrid mode)
