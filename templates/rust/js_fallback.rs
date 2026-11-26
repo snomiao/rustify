@@ -28,6 +28,10 @@ pub fn package_root() -> Option<PathBuf> {
     // Installed and linked: the binary is <package>/bin/<command>, and the
     // packer puts a package.json marker next to it.
     if let Ok(exe) = std::env::current_exe() {
+        // macOS reports the path the command was started through, and for an
+        // npm install that is a symlink in the package manager's bin directory.
+        #[cfg(unix)]
+        let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
         if let Some(bin) = exe.parent() {
             if bin.join("package.json").is_file() {
                 if let Some(root) = bin.parent() {
