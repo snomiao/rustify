@@ -185,7 +185,14 @@ function pack(opts) {
   if (mode === "hybrid") {
     // Ship what the project ships today and swap the listed commands for
     // native launchers. The project must already be built (its dist exists).
-    for (const file of packedFiles(projectDir)) {
+    // A package without a `files` list ships its whole directory. Leave out
+    // what this pipeline itself put there: its checkout, the binaries, and
+    // the output being written right now.
+    const own = [out, artifacts, ...[".rustify", ".rustify-native", ".rustify-downloaded", ".rustify-bin"].map((d) => path.join(projectDir, d))]
+      .map((dir) => path.relative(projectDir, dir).split(path.sep).join("/"))
+      .filter((rel) => rel && !rel.startsWith(".."));
+    const mine = (file) => own.some((rel) => file === rel || file.startsWith(`${rel}/`));
+    for (const file of packedFiles(projectDir).filter((f) => !mine(f.split(path.sep).join("/")))) {
       const to = path.join(main, file);
       fs.mkdirSync(path.dirname(to), { recursive: true });
       fs.copyFileSync(path.join(projectDir, file), to);
