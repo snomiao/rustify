@@ -13,7 +13,8 @@
 //
 // Options:
 //   --installer bun|npm   default: both, when available
-//   --expect <text>       text the output must contain (default: the version)
+//   --expect <text>       text the output must contain (default: the version);
+//                         write --expect=<text> if the text starts with --
 //   --also "<command> [args] => <text>"
 //                         one more command of the package that must exit 0
 //                         and print <text>; repeatable. Use it for commands
@@ -35,8 +36,10 @@ function parseArgs(argv) {
   const out = { also: [] };
   for (let i = 0; i < argv.length; i++) {
     if (!argv[i].startsWith("--")) continue;
-    const key = argv[i].slice(2);
-    const value = argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : true;
+    // `--key=value` is how to pass a value that itself starts with `--`.
+    const eq = argv[i].indexOf("=");
+    const key = eq > 0 ? argv[i].slice(2, eq) : argv[i].slice(2);
+    const value = eq > 0 ? argv[i].slice(eq + 1) : argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : true;
     if (key === "also") out.also.push(String(value));
     else out[key] = value;
   }

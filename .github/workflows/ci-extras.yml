@@ -28,4 +28,5 @@ jobs:
       js-build: cp .rustify/templates/npm/native-binary.mjs tests/e2e/toy-extras/
       # `toyjs` is JavaScript; it prints what the native binary it found prints.
       smoke: toyjs --version
-      smoke-expect: toy version=
+      # Starts with `--` on purpose: such a text has to survive as well.
+      smoke-expect: --version"]
