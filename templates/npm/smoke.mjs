@@ -14,6 +14,10 @@
 // Options:
 //   --installer bun|npm   default: both, when available
 //   --expect <text>       text the output must contain (default: the version)
+//   --also "<command> [args] => <text>"
+//                         one more command of the package that must exit 0
+//                         and print <text>; repeatable. Use it for commands
+//                         that are still JavaScript or are handed back to it.
 //
 // Installs go to a temp directory. Your real global installs are not touched.
 
@@ -27,16 +31,23 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const isWindows = process.platform === "win32";
 
 function parseArgs(argv) {
-  const out = {};
+  const out = { also: [] };
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i].startsWith("--")) out[argv[i].slice(2)] = argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : true;
+    if (!argv[i].startsWith("--")) continue;
+    const key = argv[i].slice(2);
+    const value = argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : true;
+    if (key === "also") out.also.push(String(value));
+    else out[key] = value;
   }
   return out;
 }
 
 const opts = parseArgs(process.argv.slice(2));
 if (!opts.run) {
-  console.error('usage: smoke.mjs --dist <dir> --run "<command> [args]" [--registry <url>] [--installer bun|npm] [--expect <text>]');
+  console.error(
+    'usage: smoke.mjs --dist <dir> --run "<command> [args]" [--expect <text>] [--also "<command> [args] => <text>"]... ' +
+      "[--registry <url>] [--installer bun|npm]",
+  );
   process.exit(2);
 }
 const dist = path.resolve(opts.dist || "npm-dist");
@@ -64,9 +75,15 @@ function isScript(file) {
   return head.toString() === "#!";
 }
 
-function runOnce(bin) {
+// Where `installer` puts a command of the package.
+function binFor(installer, home, name) {
+  if (installer === "bun") return path.join(home, "bin", name + (isWindows ? ".exe" : ""));
+  return isWindows ? path.join(home, `${name}.cmd`) : path.join(home, "bin", name);
+}
+
+function runOnce(bin, runArgs = args) {
   const started = process.hrtime.bigint();
-  const result = spawnSync(isWindows ? `"${bin}"` : bin, args, { encoding: "utf8", shell: isWindows });
+  const result = spawnSync(isWindows ? `"${bin}"` : bin, runArgs, { encoding: "utf8", shell: isWindows });
   const ms = Number(process.hrtime.bigint() - started) / 1e6;
   return { ms, code: result.status, text: `${result.stdout || ""}${result.stderr || ""}`, error: result.error };
 }
@@ -80,11 +97,11 @@ function check(installer, registry) {
   if (installer === "bun") {
     const env = { BUN_INSTALL: home, BUN_INSTALL_CACHE_DIR: path.join(work, "bun-cache") };
     install = sh("bun", ["i", "-g", spec, "--registry", registry], env);
-    bin = path.join(home, "bin", command + (isWindows ? ".exe" : ""));
+    bin = binFor(installer, home, command);
     packageDir = path.join(home, "install", "global", "node_modules", plan.name);
   } else {
     install = sh("npm", ["i", "-g", "--prefix", home, spec, "--registry", registry]);
-    bin = isWindows ? path.join(home, `${command}.cmd`) : path.join(home, "bin", command);
+    bin = binFor(installer, home, command);
     packageDir = path.join(home, isWindows ? "" : "lib", "node_modules", plan.name);
   }
   if (install.status !== 0) {
@@ -156,6 +173,17 @@ function check(installer, registry) {
       `(first run through the launcher: ${first.ms.toFixed(0)} ms)`,
   );
   timings.push({ installer, first: first.ms, installed, direct });
+
+  for (const extra of opts.also) {
+    const [line, wanted = ""] = extra.split("=>").map((part) => part.trim());
+    const [name, ...extraArgs] = line.split(/\s+/).filter(Boolean);
+    const result = runOnce(binFor(installer, home, name), extraArgs);
+    if (result.code === 0 && result.text.includes(wanted)) {
+      ok(`${installer}: \`${line}\` works — ${result.text.trim().split("\n")[0].slice(0, 120)}`);
+    } else {
+      bad(`${installer}: \`${line}\` exited ${result.code} and should print "${wanted}". Output:\n${result.text}`);
+    }
+  }
 }
 
 // The registry runs as its own process: the checks below block this one.

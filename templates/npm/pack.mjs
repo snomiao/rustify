@@ -78,6 +78,7 @@ function pack(opts) {
   if (!cfg || !cfg.bins || !Object.keys(cfg.bins).length) {
     fail(`${pkgPath} has no "rustify.bins" — map each npm command to a cargo bin name.`);
   }
+  if (project.private) fail(`${pkgPath} is marked "private", so npm would refuse to publish it.`);
   if (!opts.artifacts) fail("--artifacts <dir> is required");
   const artifacts = path.resolve(opts.artifacts);
   const version = opts.version || project.version;

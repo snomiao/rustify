@@ -1,10 +1,13 @@
 {
   "name": "rustify-e2e-toy",
   "version": "0.0.0",
-  "private": true,
-  "description": "Fixture for rustify's own pipeline test. Never published to npm.",
+  "description": "Fixture for rustify's own pipeline test. It is only ever published to a throwaway local registry.",
   "license": "MIT",
+  "type": "module",
+  "bin": { "legacy": "dist/cli.js" },
+  "files": ["dist"],
   "rustify": {
+    "mode": "hybrid",
     "bins": { "toy": "toy", "toy-alias": "toy" }
   }
 }

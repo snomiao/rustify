@@ -21,6 +21,11 @@ on:
         required: false
         default: ""
         type: string
+      smoke-extra:
+        description: "More commands, one per line: `<command> [args] => <text it must print>`"
+        required: false
+        default: ""
+        type: string
       registry:
         required: false
         default: https://registry.npmjs.org
@@ -61,9 +66,13 @@ jobs:
           SMOKE: ${{ inputs.smoke }}
           EXPECT: ${{ inputs.smoke-expect }}
           REGISTRY: ${{ inputs.registry }}
+          EXTRA: ${{ inputs.smoke-extra }}
         run: |
           set -- --dist npm-dist --run "$SMOKE" --registry "$REGISTRY"
           if [ -n "$EXPECT" ]; then set -- "$@" --expect "$EXPECT"; fi
+          while IFS= read -r line; do
+            if [ -n "$line" ]; then set -- "$@" --also "$line"; fi
+          done <<< "$EXTRA"
           # The registry can take a moment to serve a version it just accepted.
           for attempt in 1 2 3 4 5; do
             node .rustify/templates/npm/smoke.mjs "$@" && exit 0

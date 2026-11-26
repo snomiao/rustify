@@ -64,6 +64,11 @@ on:
         required: false
         default: ""
         type: string
+      smoke-extra:
+        description: "More commands to run after installing, one per line: `<command> [args] => <text it must print>`. Use it for commands that are still JavaScript or handed back to it."
+        required: false
+        default: ""
+        type: string
       scripts-ref:
         description: "Ref of snomiao/rustify whose scripts are used. Keep it equal to the ref after @ in `uses:`."
         required: false
@@ -264,7 +269,11 @@ jobs:
         env:
           SMOKE: ${{ inputs.smoke }}
           EXPECT: ${{ inputs.smoke-expect }}
+          EXTRA: ${{ inputs.smoke-extra }}
         run: |
           set -- --dist npm-dist --run "$SMOKE"
           if [ -n "$EXPECT" ]; then set -- "$@" --expect "$EXPECT"; fi
+          while IFS= read -r line; do
+            if [ -n "$line" ]; then set -- "$@" --also "$line"; fi
+          done <<< "$EXTRA"
           node .rustify/templates/npm/smoke.mjs "$@"
