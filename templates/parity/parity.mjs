@@ -888,13 +888,14 @@ function runIn(root, testCase, impl, plan, extraEnv) {
     // On a terminal there is always a TERM, and programs choose their colours by it.
     ...(terminals.length ? { TERM: "xterm-256color" } : {}),
   };
-  // The cases file's variables, then the case's. null takes a variable out
-  // (on Windows in any spelling: Path and PATH are one variable there).
+  // The cases file's variables, then the case's. A value replaces the
+  // variable, and null takes it out, on Windows in any spelling: Path and PATH
+  // are one variable there.
   const named = new Set();
   for (const variables of [spec.env, testCase.env]) {
     for (const [name, value] of Object.entries(variables || {})) {
       named.add(isWindows ? name.toUpperCase() : name);
-      if (value !== null) env[name] = here(value);
+      if (value !== null) setVariable(env, name, here(value));
       else for (const key of Object.keys(env)) if (key === name || (isWindows && key.toUpperCase() === name.toUpperCase())) delete env[key];
     }
   }

@@ -344,6 +344,7 @@ test("null in an env removes the variable: the cases file's, or one the runner s
         { name: "a case removes the runner's", args: ["vars", "XDG_CONFIG_HOME", "TMPDIR"], env: { XDG_CONFIG_HOME: null, TMPDIR: null } },
         { name: "a case sets what the cases file removed", args: ["vars", "XDG_DATA_HOME"], env: { XDG_DATA_HOME: "<HOME>/data" } },
         { name: "a name in other letters", args: ["vars", "TMPDIR"], env: { tmpdir: null } },
+        { name: "a value under a name in other letters", args: ["vars", "TMPDIR", "tmpdir"], env: { tmpdir: "<HOME>" } },
       ],
     }, ["--show"]);
     assert.equal(r.status, 0, r.stdout + r.stderr);
@@ -353,6 +354,8 @@ test("null in an env removes the variable: the cases file's, or one the runner s
     assert.match(shown(r.stdout, "a case sets what the cases file removed"), /XDG_DATA_HOME=<HOME>\/data\n/);
     // One variable on Windows, two different ones elsewhere.
     assert.match(shown(r.stdout, "a name in other letters"), isWindows ? /TMPDIR=undefined\n/ : /TMPDIR=<ROOT>[\\/]tmp\n/);
+    // On Windows it takes the place of the runner's TMPDIR, and node finds it under either name.
+    assert.match(shown(r.stdout, "a value under a name in other letters"), isWindows ? /TMPDIR=<HOME> tmpdir=<HOME>\n/ : /TMPDIR=<ROOT>[\\/]tmp tmpdir=<HOME>\n/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
