@@ -6,7 +6,7 @@
 // leave behind. It is the proof behind a `verified` entry in a parity ledger.
 //
 //   parity.mjs --cases parity.json --ts "bun ts/cli.ts" --rs "rs/target/release/mycli"
-//              [--filter <text>] [--show] [--keep]
+//              [--filter <text>] [--show] [--keep] [--capture files]
 //
 // A binary that hands some invocations back to the JavaScript passes those
 // cases by construction. To prove which cases the binary answers itself:
@@ -16,7 +16,7 @@
 //
 // runs only the binary, with a stand-in package whose JavaScript entry does
 // nothing but say it was reached, and fails unless exactly the cases marked
-// "handback" got there.
+// "handback" got there. --capture applies here as well.
 //
 // Every case runs once per implementation, each time in its own fresh
 // directory with its own empty HOME, so nothing leaks between runs or in from
@@ -38,6 +38,7 @@
 //         "after": ["cat .myclirc", "ls -a"],    // their output is compared too
 //         "normalize": [["pid \\d+", "pid <N>"]], // optional, on top of the global list
 //         "timeout": 30,                         // optional, in seconds (120)
+//         "capture": "files",                    // optional, see "Regular files"
 //         "handback": "usage errors belong to yargs"  // optional: this case is
 //                                  // MEANT to reach the JavaScript, and why
 //       }
@@ -64,6 +65,17 @@
 // out what the cases file's `env` or the runner sets, in the cases file's
 // `env` to take out what the runner sets. Nothing else comes in from the
 // machine: no TERM, NO_COLOR or FORCE_COLOR.
+//
+// Regular files. "capture": "files" (--capture files for every case that does
+// not say; "capture": "pipes" in a case keeps the pipes) gives the program
+// regular files as stdout and stderr and compares what is in them when it
+// exits. For a bun program that prints a lot: bun 1.4.0 loses stdout written
+// to a pipe or socket once the program has read process.stdout.isTTY. On the
+// machine this was written on, 500 such lines arrived whole through a pipe in
+// 20 of 30 runs and 5000 lines in none of 20 (1490 of them at worst); into a
+// file, every one of 80 runs was whole. The program can tell a file from a
+// pipe, and what a process it left behind writes later is not seen, hence
+// not the default.
 //
 // The run's directory is <temp>/rustify-parity-XXXXXX and holds a file IN-USE
 // while the run lasts. If that directory, that file, or the <ROOT> of the case
@@ -95,7 +107,11 @@ const opts = parseArgs(process.argv.slice(2));
 if (!opts.cases || !opts.rs || (!opts.ts && !opts.handback)) {
   console.error(
     'usage: parity.mjs --cases <file.json> --ts "<command>" --rs "<command>" [--filter <text>] [--show] [--keep]\n' +
-      '       parity.mjs --cases <file.json> --rs "<command>" --handback <ROOT_ENV>=<js entry> [--filter <text>]',
+      "                  [--capture files]\n" +
+      '       parity.mjs --cases <file.json> --rs "<command>" --handback <ROOT_ENV>=<js entry> [--filter <text>]\n' +
+      "                  [--capture files]\n" +
+      "  --capture  files: stdout and stderr go to regular files instead of pipes, for every case that has no \"capture\"\n" +
+      "The cases file is described at the top of parity.mjs.",
   );
   process.exit(2);
 }
@@ -123,9 +139,22 @@ const command = (text) =>
 const impls = { ts: opts.ts ? command(opts.ts) : null, rs: command(opts.rs) };
 const MARKER = "__RUSTIFY_HANDED_BACK__";
 
+const everyCase = { capture: opts.capture ?? "pipes" };
+if (!["files", "pipes"].includes(everyCase.capture)) mistake(`--capture takes files or pipes; it has ${opts.capture === true ? "nothing" : opts.capture}`);
+
+// How one case is run: where its output goes. The case's own word comes
+// before the command line's.
+function planOf(testCase) {
+  const where = `case ${JSON.stringify(testCase.name)}`;
+  const capture = testCase.capture ?? everyCase.capture;
+  if (!["files", "pipes"].includes(capture)) mistake(`${where}: "capture" takes "files" or "pipes"; it has ${JSON.stringify(capture)}`);
+  return { files: capture === "files" };
+}
+
 const selected = spec.cases
-  .map((testCase, index) => ({ testCase, index }))
+  .map((testCase, index) => ({ testCase, index, plan: null }))
   .filter(({ testCase }) => typeof opts.filter !== "string" || testCase.name.includes(opts.filter));
+for (const entry of selected) entry.plan = planOf(entry.testCase);
 
 function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -150,12 +179,12 @@ function stillThere(...more) {
   for (const place of [...mine, ...more]) if (!fs.existsSync(place)) throw new Vanished(place);
 }
 
-function runCase(testCase, impl, index, extraEnv = {}) {
+function runCase(testCase, impl, index, plan, extraEnv = {}) {
   const root = path.join(work, `${index}-${impl}`);
   stillThere();
   let run;
   try {
-    run = runIn(root, testCase, impl, extraEnv);
+    run = runIn(root, testCase, impl, plan, extraEnv);
   } catch (error) {
     // A file that could not be written because its directory went away is
     // that, not a fault of the case.
@@ -166,7 +195,7 @@ function runCase(testCase, impl, index, extraEnv = {}) {
   return run;
 }
 
-function runIn(root, testCase, impl, extraEnv) {
+function runIn(root, testCase, impl, plan, extraEnv) {
   const cwd = path.join(root, "cwd");
   const home = path.join(root, "home");
   const tmp = path.join(root, "tmp");
@@ -210,13 +239,21 @@ function runIn(root, testCase, impl, extraEnv) {
     }
   }
   const [program, ...baseArgs] = impls[impl];
-  const result = spawnSync(program, [...baseArgs, ...(testCase.args || []).map(here)], {
-    cwd,
-    env,
-    input: here(testCase.stdin ?? ""),
-    encoding: "utf8",
-    timeout: (testCase.timeout || 120) * 1000,
-  });
+  const args = [...baseArgs, ...(testCase.args || []).map(here)];
+  const seconds = testCase.timeout || 120;
+  const options = { cwd, env, input: here(testCase.stdin ?? ""), encoding: "utf8", timeout: seconds * 1000 };
+  // The runner's own files of this run: what the program wrote, when that
+  // goes to files.
+  const own = path.join(root, "runner");
+  if (plan.files) fs.mkdirSync(own);
+  const sinks = {};
+  if (plan.files) {
+    for (const name of ["stdout", "stderr"]) sinks[name] = fs.openSync(path.join(own, name), "w");
+    options.stdio = ["pipe", sinks.stdout, sinks.stderr];
+  }
+  const result = spawnSync(program, args, options);
+  for (const fd of Object.values(sinks)) fs.closeSync(fd);
+  const written = (name) => (plan.files ? fs.readFileSync(path.join(own, name), "utf8") : result[name]);
   if (result.error && result.status === null) return { broken: `could not run ${program}: ${result.error.message}` };
   const rules = [...(spec.normalize || []), ...(testCase.normalize || [])].map(([pattern, to]) => [new RegExp(pattern, "g"), to]);
   const clean = (text) => {
@@ -228,7 +265,7 @@ function runIn(root, testCase, impl, extraEnv) {
     for (const [pattern, to] of rules) out = out.replace(pattern, to);
     return out;
   };
-  const observed = { "exit code": String(result.status), stdout: clean(result.stdout), stderr: clean(result.stderr) };
+  const observed = { "exit code": String(result.status), stdout: clean(written("stdout")), stderr: clean(written("stderr")) };
   for (const line of testCase.after || []) {
     const probe = shell(line);
     observed[`after: ${line}`] = clean(`${probe.stdout}${probe.stderr}[exit ${probe.status}]`);
@@ -263,9 +300,9 @@ function handbackCheck() {
   mine.push(path.join(standIn, entry));
   let native = 0;
   let back = 0;
-  for (const { testCase, index } of selected) {
+  for (const { testCase, index, plan } of selected) {
     ran++;
-    const run = runCase(testCase, "rs", index, { [rootEnv]: standIn });
+    const run = runCase(testCase, "rs", index, plan, { [rootEnv]: standIn });
     if (run.broken) {
       failed++;
       console.log(`  BROKEN  ${testCase.name}\n      ${run.broken}`);
@@ -286,10 +323,10 @@ function handbackCheck() {
 }
 
 function compareAll() {
-  for (const { testCase, index } of selected) {
+  for (const { testCase, index, plan } of selected) {
     ran++;
-    const ts = runCase(testCase, "ts", index);
-    const rs = runCase(testCase, "rs", index);
+    const ts = runCase(testCase, "ts", index, plan);
+    const rs = runCase(testCase, "rs", index, plan);
     const broken = ts.broken || rs.broken;
     if (broken) {
       failed++;

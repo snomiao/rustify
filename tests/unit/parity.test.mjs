@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 
 const RUNNER = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../templates/parity/parity.mjs");
 const isWindows = process.platform === "win32";
+const noBun = spawnSync("bun", ["--version"], { encoding: "utf8" }).status === 0 ? false : "bun is not installed here";
 
 function setup(rsBody) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rustify-parity-test-"));
@@ -26,6 +27,8 @@ function setup(rsBody) {
     if (cmd === "tmp") console.log("tmp=" + process.env.TMPDIR + " entries=" + fs.readdirSync(process.env.TMPDIR).length);
     if (cmd === "vars") console.log(rest.map((name) => name + "=" + process.env[name]).join(" "));
     if (cmd === "log") { fs.writeFileSync(process.env.LOG, rest.join(" ") + "\\n"); console.log(fs.readFileSync(process.env.LOG, "utf8") + require("path").relative(process.env.TMPDIR, process.env.LOG)); }
+    if (cmd === "kind") console.log("stdout is a " + (fs.fstatSync(1).isFile() ? "file" : "pipe") + ", stderr is a " + (fs.fstatSync(2).isFile() ? "file" : "pipe"));
+    if (cmd === "both") { console.log("to stdout"); console.error("to stderr"); }
     // Stands for something else on the machine cleaning up the temp directory.
     if (cmd === "remove") fs.rmSync(require("path").resolve(process.env.TMPDIR, rest[0]), { recursive: true, force: true });
     // A program that removes a directory of its own on purpose.
@@ -315,6 +318,76 @@ test("--keep leaves the run's directory, names it, and says to remove that one o
   } finally {
     // Its exact path, and only if it is what the runner made.
     if (kept && /rustify-parity-\w{6}$/.test(kept)) fs.rmSync(kept, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a mistake in capture stops the run before any case, with exit code 2", () => {
+  const dir = setup();
+  try {
+    const bad = (cases, extra = []) => {
+      const r = run(dir, { cases }, extra);
+      assert.equal(r.status, 2, r.stdout + r.stderr);
+      assert.equal(r.stdout, "");
+      return r.stderr;
+    };
+    assert.match(bad([{ name: "a", args: ["echo"], capture: "file" }]), /^parity: case "a": "capture" takes "files" or "pipes"; it has "file"\n$/);
+    assert.match(bad([{ name: "a", args: ["echo"] }], ["--capture"]), /^parity: --capture takes files or pipes; it has nothing\n$/);
+    // A case that --filter leaves out is not looked at.
+    const r = run(dir, { cases: [{ name: "good", args: ["echo", "x"] }, { name: "bad", args: ["echo"], capture: "nowhere" }] }, ["--filter", "good"]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("capture: files gives the program regular files instead of pipes, and compares what is in them", () => {
+  const dir = setup(`
+    if (cmd === "both") console.log("one more line");
+  `);
+  try {
+    const cases = {
+      cases: [
+        { name: "pipes", args: ["kind"] },
+        { name: "files", args: ["kind"], capture: "files" },
+        { name: "pipes although the command line says otherwise", args: ["kind"], capture: "pipes" },
+        { name: "a difference", args: ["both"], capture: "files" },
+        { name: "the exit code and stderr", args: ["fail"], capture: "files" },
+      ],
+    };
+    const r = run(dir, cases, ["--show"]);
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(shown(r.stdout, "pipes"), /stdout is a pipe, stderr is a pipe\n/);
+    assert.match(shown(r.stdout, "files"), /stdout is a file, stderr is a file\n/);
+    assert.match(r.stdout, /DIFFER {2}a difference {2}\(stdout\)\n\s+stdout\n\s+TypeScript:\n\s+to stdout\n\s+\n\s+Rust:\n\s+to stdout\n\s+one more line\n/);
+    assert.match(shown(r.stdout, "the exit code and stderr"), /exit code:\n\s+3\n\s+stdout:\n\s+\n\s+stderr:\n\s+nope\n/);
+    assert.match(r.stdout, /1 of 5 case\(s\) differ/);
+
+    const flagged = run(dir, cases, ["--show", "--capture", "files", "--filter", "pipes"]);
+    assert.equal(flagged.status, 0, flagged.stdout + flagged.stderr);
+    assert.match(shown(flagged.stdout, "pipes"), /stdout is a file, stderr is a file\n/);
+    assert.match(shown(flagged.stdout, "pipes although the command line says otherwise"), /stdout is a pipe, stderr is a pipe\n/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("capture: files, a bun program that prints 2000 lines after reading isTTY arrives whole every time", { skip: noBun }, () => {
+  // Through pipes bun 1.4.0 loses lines of this at random (whole in 0 of 20
+  // runs at 5000 lines when this was written), so the same program compared
+  // with itself differs. Into files it must never.
+  const dir = setup();
+  try {
+    fs.writeFileSync(path.join(dir, "lines.js"), `const tty = process.stdout.isTTY;\nfor (let i = 0; i < 2000; i++) console.log("line " + i + " " + "x".repeat(60) + " " + Boolean(tty));\n`);
+    const cases = [];
+    for (let i = 1; i <= 10; i++) cases.push({ name: `run ${i}`, args: [], capture: "files" });
+    fs.writeFileSync(path.join(dir, "parity.json"), JSON.stringify({ cases }));
+    const r = spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--ts", "bun lines.js", "--rs", "bun lines.js", "--show"], { cwd: dir, encoding: "utf8" });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /all 10 case\(s\) behave the same/);
+    // And whole: 2000 lines and the empty one after the last line end.
+    for (let i = 1; i <= 10; i++) assert.match(shown(r.stdout, `run ${i}`), /line 0 x+ false\n[^]*… 1971 more line\(s\)/);
+  } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
