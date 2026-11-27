@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// rustify install smoke test v1 — zero dependencies, runs on node or bun.
+// rustify install smoke test v2 — zero dependencies, runs on node or bun.
 //
 // Installs a packed release the way a user would (`bun i -g` or `npm i -g`),
 // runs a command from it, and fails unless the native binary answered.
@@ -17,13 +17,49 @@
 //                         write --expect=<text> if the text starts with --
 //   --env NAME=value      set for the commands under test; repeatable
 //   --also "<command> [args] => <text> !> <text it must not print>"
-//                         the part from `!>` on is optional; a leading `[2] `
-//                         expects exit code 2 instead of 0
 //                         one more command of the package that must exit 0
-//                         and print <text>; repeatable. Use it for commands
-//                         that are still JavaScript or are handed back to it.
+//                         and print <text>; repeatable. The part from `!>` on
+//                         is optional. Markers may lead the line, in any order:
+//                           [2]          expects exit code 2 instead of 0
+//                           [native]     the binary must answer it itself
+//                           [handback]   the binary must hand it to the JavaScript
+//                           [native:linux,darwin]  demanded on these platforms
+//                                        only (linux, darwin, win32, or a key
+//                                        such as linux-arm64); same for handback
+//                           [real-home]  this command gets your own home directory
+//   --real-home           every command under test gets your own home directory
 //
 // Installs go to a temp directory. Your real global installs are not touched.
+//
+// The commands under test get a home directory of their own, empty at first,
+// one per installer: HOME and USERPROFILE point at it, on Windows HOMEDRIVE,
+// HOMEPATH, APPDATA and LOCALAPPDATA as well, and the XDG_*_HOME variables are
+// removed so that they default to it. A command can then neither use the
+// credentials nor change the files of whoever runs this test. What a command
+// leaves there is seen by the lines after it. --env is applied afterwards, so
+// a variable given there wins. A `bun` or `node` that does not start with that
+// home directory (a version manager's shim) is asked, with the real one, where
+// it is, and that directory goes first in the commands' PATH. The installs
+// themselves run with the real environment. Not covered: variables that hold
+// credentials, or name files and directories that hold them
+// (GOOGLE_APPLICATION_CREDENTIALS, AWS_SHARED_CREDENTIALS_FILE, KUBECONFIG,
+// GNUPGHOME, …), agents the environment points at (SSH_AUTH_SOCK), the
+// directory the test is started in, which stays the commands' working
+// directory (bun reads a `.env` there), the system keychain, and Windows
+// programs that ask the system instead of the environment for their folders.
+//
+// Who answered: a command the binary hands back to the JavaScript passes its
+// line just like one the binary answers itself. For a line marked [native] or
+// [handback] the test sets RUSTIFY_HANDBACK_TRACE, which makes the hand-back
+// helper (templates/rust/js_fallback.rs, v5 and later) write one fixed line to
+// stderr before it starts the JavaScript; the other lines run without that
+// variable, even when it is set where the test runs (--env can still set it).
+// A binary with an older helper, or with none, never writes that line, and its
+// silence must not be read as a native answer. So the test looks for the
+// line's text in the installed binary, and fails a marked line when it is not
+// there. A crate that no longer hands anything back may delete the helper;
+// its smoke lines then go without the markers. The line is taken out of the
+// output before the texts of the line are looked for.
 
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -31,6 +67,7 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { TRACE_ENV, TRACE_LINE, homeVariables, parseLine, withEnv, withPath } from "./smoke-command.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const isWindows = process.platform === "win32";
@@ -54,7 +91,7 @@ const opts = parseArgs(process.argv.slice(2));
 if (!opts.run) {
   console.error(
     'usage: smoke.mjs --dist <dir> --run "<command> [args]" [--expect <text>] [--also "<command> [args] => <text>"]... ' +
-      "[--registry <url>] [--installer bun|npm]",
+      "[--registry <url>] [--installer bun|npm] [--env NAME=value]... [--real-home]",
   );
   process.exit(2);
 }
@@ -65,9 +102,12 @@ const commandEnv = Object.fromEntries(
     return eq > 0 ? [pair.slice(0, eq), pair.slice(eq + 1)] : [pair, ""];
   }),
 );
+// --real-home: no command under test gets a home directory of its own.
+const everyRealHome = opts["real-home"] !== undefined && opts["real-home"] !== "false";
 const dist = path.resolve(opts.dist || "npm-dist");
 const plan = JSON.parse(fs.readFileSync(path.join(dist, "publish.json"), "utf8"));
 const hostKey = `${process.platform === "android" ? "linux" : process.platform}-${process.arch}`;
+const platformKeys = Object.keys(JSON.parse(fs.readFileSync(path.join(HERE, "platforms.json"), "utf8")));
 if ((plan.unsupported || []).includes(hostKey)) {
   // The project said so itself (rustify.platforms); nothing to install here.
   console.log(`== ${plan.name}@${plan.version} on ${hostKey}\n  skip  the project does not ship a build for ${hostKey}`);
@@ -84,6 +124,8 @@ const ownInstallScripts = (() => {
     return [];
   }
 })();
+// Installs and the commands' home directories go here. rustify's own CI
+// recognises a path of this test by the name `rustify-smoke-`.
 const work = fs.mkdtempSync(path.join(os.tmpdir(), "rustify-smoke-"));
 let failures = 0;
 const timings = [];
@@ -111,16 +153,112 @@ function binFor(installer, home, name) {
   return isWindows ? path.join(home, `${name}.cmd`) : path.join(home, "bin", name);
 }
 
-function runOnce(bin, runArgs = args) {
+// A new, empty home directory for the commands under test.
+function makeHome(label) {
+  const dir = path.join(work, `home-${label}`);
+  const { APPDATA, LOCALAPPDATA } = homeVariables(dir);
+  for (const made of [dir, APPDATA, LOCALAPPDATA]) {
+    if (made) fs.mkdirSync(made, { recursive: true });
+  }
+  return dir;
+}
+
+// Directories put first in PATH for the commands under test, see findRuntimes.
+const runtimeDirs = [];
+
+// The environment of a command under test: this process's, with the home
+// directory `userHome` in place of the real one (see the header), then --env,
+// then the switch that makes a hand-back visible. That switch is on for the
+// marked lines only: switched on where the test runs, it would also show the
+// panics a binary hands back without a word.
+function environment(userHome, { realHome = false, trace = false } = {}) {
+  let env = withEnv(process.env, { [TRACE_ENV]: undefined });
+  if (!realHome && !everyRealHome) {
+    env = withEnv(env, homeVariables(userHome));
+    if (runtimeDirs.length) env = withPath(env, runtimeDirs);
+  }
+  env = withEnv(env, commandEnv);
+  if (trace) env = withEnv(env, { [TRACE_ENV]: "1" });
+  return env;
+}
+
+// The launchers, the package managers' shims and the hand-back start `bun`
+// and `node` by name. Where that name is a version manager's shim (asdf, mise,
+// proto; Volta on Windows), the shim looks for its installs under the home
+// directory and fails with the commands' own. Such a runtime is asked, with
+// the real environment, where its executable is, and the commands under test
+// get that directory first in PATH: the runtime the shim would have chosen.
+function findRuntimes() {
+  const probe = environment(makeHome("probe"));
+  const starts = (tool, env) => spawnSync(tool, ["--version"], { stdio: "ignore", shell: isWindows, env }).status === 0;
+  for (const tool of ["bun", "node"]) {
+    if (!starts(tool, process.env) || starts(tool, probe)) continue;
+    const asked = spawnSync(tool, ["-p", "process.execPath"], { encoding: "utf8", shell: isWindows });
+    const executable = asked.status === 0 ? String(asked.stdout).trim() : "";
+    const dir = executable && path.isAbsolute(executable) ? path.dirname(executable) : "";
+    if (dir && starts(tool, withPath(probe, [dir]))) {
+      runtimeDirs.push(dir);
+      console.log(`  note  ${tool} does not start with the home directory the commands under test get; they get ${dir} first in PATH`);
+    } else {
+      console.log(
+        `  note  ${tool} does not start with the home directory the commands under test get. ` +
+          "Give it what it needs with --env, or run with --real-home",
+      );
+    }
+  }
+}
+
+function runOnce(bin, runArgs, env) {
   const started = process.hrtime.bigint();
-  const result = spawnSync(isWindows ? `"${bin}"` : bin, runArgs, { encoding: "utf8", shell: isWindows, env: { ...process.env, ...commandEnv } });
+  const result = spawnSync(isWindows ? `"${bin}"` : bin, runArgs, { encoding: "utf8", shell: isWindows, env });
   const ms = Number(process.hrtime.bigint() - started) / 1e6;
-  return { ms, code: result.status, text: `${result.stdout || ""}${result.stderr || ""}`, error: result.error };
+  const [stdout, stderr] = [result.stdout || "", result.stderr || ""];
+  return { ms, code: result.status, stdout, stderr, text: `${stdout}${stderr}`, error: result.error };
+}
+
+// The binary the platform package holds for the command `name`, or null.
+function binaryOf(packageDir, name) {
+  try {
+    const manifest = path.join(packageDir, "package.json");
+    const cargoBin = JSON.parse(fs.readFileSync(manifest, "utf8")).rustify.bins[name];
+    const dir = path.dirname(createRequire(manifest).resolve(`${plan.name}-${hostKey}/package.json`));
+    const file = path.join(dir, "bin", cargoBin + (isWindows ? ".exe" : ""));
+    return fs.existsSync(file) ? file : null;
+  } catch {
+    return null;
+  }
+}
+
+// Why this test cannot see who answers the command `name`, or "" when it can.
+// Only a binary whose hand-back helper is v5 or later writes TRACE_LINE, and
+// such a binary has the text of the line in its file.
+const cannotTellWhy = new Map();
+function cannotTell(packageDir, name) {
+  const key = `${packageDir}\n${name}`;
+  if (!cannotTellWhy.has(key)) {
+    let why = "";
+    const file = binaryOf(packageDir, name);
+    if (plan.commands && !plan.commands.includes(name)) {
+      why = `\`${name}\` is a JavaScript command of this package, so no binary answers it`;
+    } else if (!file) {
+      why = `the binary behind \`${name}\` was not found in the installed package`;
+    } else if (!fs.readFileSync(file).includes(TRACE_LINE)) {
+      why =
+        `the binary behind \`${name}\` never says when it hands back: its hand-back helper is older than v5, ` +
+        "or it has none. Copy the current templates/rust/js_fallback.rs into the crate; or, if the crate " +
+        "no longer hands anything back and has dropped the helper, take the marker off the line";
+    }
+    cannotTellWhy.set(key, why);
+  }
+  return cannotTellWhy.get(key);
 }
 
 function check(installer, registry) {
   const spec = `${plan.name}@${plan.version}`;
   const home = path.join(work, installer);
+  const userHome = makeHome(installer);
+  const env = environment(userHome);
+  const run = (file) => runOnce(file, args, env);
   let install;
   let bin;
   let packageDir;
@@ -147,7 +285,7 @@ function check(installer, registry) {
   if (!fs.existsSync(bin)) return bad(`${installer}: ${bin} was not created`);
   ok(`${installer}: installed ${spec}`);
 
-  const first = runOnce(bin);
+  const first = run(bin);
   if (first.code !== 0 || !first.text.includes(expect)) {
     return bad(
       `${installer}: "${opts.run}" exited ${first.code}${first.error ? ` (${first.error.message})` : ""} ` +
@@ -156,7 +294,7 @@ function check(installer, registry) {
   }
   ok(`${installer}: first run works — ${first.text.trim().split("\n")[0].slice(0, 160)}`);
 
-  const second = runOnce(bin);
+  const second = run(bin);
   if (second.code !== 0 || !second.text.includes(expect)) {
     return bad(`${installer}: second run exited ${second.code}. Output:\n${second.text}`);
   }
@@ -175,7 +313,7 @@ function check(installer, registry) {
   // A command that stays JavaScript has nothing to turn native.
   if (plan.commands && !plan.commands.includes(command)) {
     ok(`${installer}: \`${command}\` is a JavaScript command of this package (second run: ${second.ms.toFixed(0)} ms)`);
-    return extras(installer, home);
+    return extras(installer, home, packageDir, userHome);
   }
 
   const native = path.join(packageDir, plan.launcherDir || "bin", command + (isWindows ? ".exe" : ""));
@@ -209,7 +347,7 @@ function check(installer, registry) {
   const again = installer === "bun"
     ? sh("bun", ["i", "-g", spec, "--registry", registry], { BUN_INSTALL: home, BUN_INSTALL_CACHE_DIR: path.join(work, "bun-cache") })
     : sh("npm", ["i", "-g", "--prefix", home, spec, "--registry", registry]);
-  const afterReinstall = [runOnce(bin), runOnce(bin)];
+  const afterReinstall = [run(bin), run(bin)];
   if (again.status !== 0 || afterReinstall.some((r) => r.code !== 0 || !r.text.includes(expect))) {
     bad(`${installer}: the command broke after installing the same version again\n${afterReinstall.map((r) => r.text).join("\n")}`);
   } else {
@@ -217,7 +355,7 @@ function check(installer, registry) {
   }
 
   // Start time: the installed command against the binary run directly.
-  const best = (file) => Math.min(...Array.from({ length: 7 }, () => runOnce(file).ms));
+  const best = (file) => Math.min(...Array.from({ length: 7 }, () => run(file).ms));
   const installed = best(bin);
   const direct = best(native);
   ok(
@@ -225,26 +363,43 @@ function check(installer, registry) {
       `(first run through the launcher: ${first.ms.toFixed(0)} ms)`,
   );
   timings.push({ installer, first: first.ms, installed, direct });
-  extras(installer, home);
+  extras(installer, home, packageDir, userHome);
 }
 
 // The additional commands given with --also.
-function extras(installer, home) {
+function extras(installer, home, packageDir, userHome) {
   for (const extra of opts.also) {
-    const [left, rest = ""] = extra.split("=>").map((part) => part.trim());
-    const [wanted, unwanted = ""] = rest.split("!>").map((part) => part.trim());
-    // `[2] mycli bad-arg => usage` expects exit code 2 instead of 0.
-    const exit = left.match(/^\[(\d+)\]\s+/);
-    const line = exit ? left.slice(exit[0].length) : left;
-    const code = exit ? Number(exit[1]) : 0;
-    const [name, ...extraArgs] = line.split(/\s+/).filter(Boolean);
-    const result = runOnce(binFor(installer, home, name), extraArgs);
-    if (result.code !== code || !result.text.includes(wanted)) {
-      bad(`${installer}: \`${line}\` exited ${result.code} and should exit ${code} and print "${wanted}". Output:\n${result.text}`);
-    } else if (unwanted && result.text.includes(unwanted)) {
-      bad(`${installer}: \`${line}\` must not print "${unwanted}". Output:\n${result.text}`);
+    let parsed;
+    try {
+      parsed = parseLine(extra, hostKey, platformKeys);
+    } catch (error) {
+      bad(`${installer}: ${error.message}`);
+      continue;
+    }
+    const { line, name, code, wanted, unwanted, who } = parsed;
+    const result = runOnce(
+      binFor(installer, home, name),
+      parsed.args,
+      environment(userHome, { realHome: parsed.realHome, trace: Boolean(who) }),
+    );
+    // The hand-back line answers this test's question. It is not part of
+    // what the command prints for its users, so it is taken out again.
+    const handedBack = result.stderr.includes(TRACE_LINE);
+    const text = result.stdout + result.stderr.split(`${TRACE_LINE}\n`).join("").split(TRACE_LINE).join("");
+    const unseen = who ? cannotTell(packageDir, name) : "";
+    if (result.code !== code || !text.includes(wanted)) {
+      bad(`${installer}: \`${line}\` exited ${result.code} and should exit ${code} and print "${wanted}". Output:\n${text}`);
+    } else if (unwanted && text.includes(unwanted)) {
+      bad(`${installer}: \`${line}\` must not print "${unwanted}". Output:\n${text}`);
+    } else if (unseen) {
+      bad(`${installer}: \`${line}\` is marked [${who}], but who answered it cannot be seen: ${unseen}.`);
+    } else if (who === "native" && handedBack) {
+      bad(`${installer}: \`${line}\` is marked [native], but the binary handed it back to the JavaScript. Output:\n${text}`);
+    } else if (who === "handback" && !handedBack) {
+      bad(`${installer}: \`${line}\` is marked [handback], but the binary answered it itself. Output:\n${text}`);
     } else {
-      ok(`${installer}: \`${line}\` works — ${result.text.trim().split("\n")[0].slice(0, 120)}`);
+      const by = who === "native" ? ", answered by the binary itself" : who === "handback" ? ", handed back to the JavaScript" : "";
+      ok(`${installer}: \`${line}\` works${by} — ${text.trim().split("\n")[0].slice(0, 120)}`);
     }
   }
 }
@@ -277,6 +432,7 @@ try {
     });
     ok(`published to a local registry (${registry})`);
   }
+  if (!everyRealHome) findRuntimes();
   const wanted = typeof opts.installer === "string" ? [opts.installer] : ["bun", "npm"];
   const usable = wanted.filter(has);
   if (!usable.length) bad(`none of ${wanted.join(", ")} is installed`);

@@ -66,7 +66,7 @@ on:
         default: ""
         type: string
       smoke-extra:
-        description: "More commands to run after installing, one per line: `<command> [args] => <text it must print>`, optionally followed by ` !> <text it must not print>`, and optionally led by `[<exit code>] ` when the command is meant to fail. Use it for commands that are still JavaScript or handed back to it."
+        description: "More commands to run after installing, one per line: `<command> [args] => <text it must print>`, optionally followed by ` !> <text it must not print>`. Markers may lead a line, each followed by a space: `[<exit code>]` when the command is meant to fail; `[native]` when the binary must answer it itself and `[handback]` when it must hand it to the JavaScript, both of which can be limited to platforms (`[native:linux,darwin] [handback:win32]`) and need the hand-back helper v5 in the crate; `[real-home]` when the command needs the runner's own home directory. Use it for commands that are still JavaScript or handed back to it, and to see on every platform who answers a ported one."
         required: false
         default: ""
         type: string
@@ -81,7 +81,7 @@ on:
         default: ""
         type: string
       smoke-env:
-        description: "Environment for the smoke commands, one NAME=value per line. For switching off a fallback the test must not take, such as a download."
+        description: "Environment for the smoke commands, one NAME=value per line. For switching off a fallback the test must not take, such as a download. The smoke commands get a home directory of their own (HOME, USERPROFILE, and on Windows APPDATA and LOCALAPPDATA; the XDG_*_HOME variables are removed); a variable set here wins over that."
         required: false
         default: ""
         type: string
@@ -215,7 +215,29 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      # The proof runs on the bun the project pins. setup-bun reads only
+      # package.json by itself (packageManager, then engines.bun), so a pin in
+      # .bun-version or .tool-versions is handed to it; a project that pins
+      # nothing there gets setup-bun as before. Steps run in the workspace,
+      # which is the project's checkout (rustify's scripts are in .rustify).
+      # (Scripts from an older scripts-ref have no bun-pin.mjs: then setup-bun
+      # decides, as it did there.)
+      - name: Find the bun the project pins
+        id: bun-pin
+        run: |
+          pin=.rustify/templates/parity/bun-pin.mjs
+          if [ -f "$pin" ]; then node "$pin" >> "$GITHUB_OUTPUT"; fi
       - uses: oven-sh/setup-bun@v2
+        if: steps.bun-pin.outputs.file == ''
+      - uses: oven-sh/setup-bun@v2
+        if: steps.bun-pin.outputs.file != ''
+        with:
+          bun-version-file: ${{ steps.bun-pin.outputs.file }}
+      # Prints `bun --version`; a pin to one exact version has to be it.
+      - name: bun version
+        run: |
+          pin=.rustify/templates/parity/bun-pin.mjs
+          if [ -f "$pin" ]; then node "$pin" --check; else bun --version; fi
       - uses: actions/download-artifact@v4
         with:
           name: native-linux-x64
@@ -287,9 +309,12 @@ jobs:
       - name: Build JavaScript (hybrid mode)
         if: inputs.js-build != ''
         run: ${{ inputs.js-build }}
+      # The manifest tells the packer where the crate is: a package without a
+      # `files` list ships its whole directory, and the crate is left out of it.
       - name: Pack
         run: |
           node .rustify/templates/npm/pack.mjs pack --package "${{ inputs.package }}" \
+            --manifest "${{ inputs.manifest }}" \
             --artifacts .rustify-native --version "${{ steps.version.outputs.version }}" \
             --tag "${{ inputs.npm-tag }}" --out npm-dist
       - uses: actions/upload-artifact@v4
@@ -300,7 +325,8 @@ jobs:
           retention-days: 7
 
   # Installs the packed release from a throwaway local registry on every OS and
-  # CPU family, with bun and with npm, and runs it. Nothing is public yet.
+  # CPU family, with bun and with npm, and runs it. Nothing is public yet. The
+  # commands it runs get an empty home directory of their own, not the runner's.
   smoke:
     name: smoke ${{ matrix.os }}
     needs: pack
@@ -327,6 +353,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      # Users run whatever bun they have, so this job takes setup-bun's
+      # default (the latest bun) and not the version the project pins for its
+      # parity tests. Nothing of the project is checked out here.
       - uses: oven-sh/setup-bun@v2
       - uses: actions/download-artifact@v4
         with:

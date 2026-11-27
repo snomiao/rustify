@@ -1,11 +1,10 @@
 {
   "name": "rustify-e2e-toy-extras",
   "version": "0.0.0",
-  "description": "Fixture for rustify's own pipeline test: the command stays JavaScript and finds a native binary shipped in the platform packages. It is only ever published to a throwaway local registry.",
+  "description": "Fixture for rustify's own pipeline test: the command stays JavaScript and finds a native binary shipped in the platform packages. It has no files list, so it ships its whole directory except the crate in rs/. It is only ever published to a throwaway local registry.",
   "license": "MIT",
   "type": "module",
   "bin": { "toyjs": "cli.mjs" },
-  "files": ["cli.mjs", "native-binary.mjs"],
   "rustify": {
     "mode": "hybrid",
     "bins": {},

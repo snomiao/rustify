@@ -1,0 +1,18 @@
+# Fixture: the toy's sources as a crate in a directory of the package, which is
+# where real projects keep theirs (package.json beside rs/Cargo.toml). The
+# package has no `files` list, so the packer has to leave this directory out.
+[package]
+name = "rustify-e2e-toy-extras"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "toy"
+path = "../../toy/src/main.rs"
+
+[[bin]]
+name = "toy-helper"
+path = "../../toy/src/helper.rs"
+
+[workspace]

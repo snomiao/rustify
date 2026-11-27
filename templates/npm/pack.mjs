@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// rustify npm packer v3 — zero dependencies, runs on node or bun.
+// rustify npm packer v4 — zero dependencies, runs on node or bun.
 //
 // Turns prebuilt native binaries into npm packages that install with
 // `bun i -g <name>` or `npm i -g <name>` on any supported machine:
@@ -14,12 +14,20 @@
 // means one npm trusted-publisher setup and no per-platform names to create.
 //
 // Usage:
-//   pack.mjs pack    --artifacts <dir> [--package <package.json>] [--version <v>]
-//                    [--tag <dist-tag>] [--out <dir>] [--allow-missing]
+//   pack.mjs pack    --artifacts <dir> [--package <package.json>] [--manifest <Cargo.toml>]
+//                    [--version <v>] [--tag <dist-tag>] [--out <dir>] [--allow-missing]
 //   pack.mjs publish [--out <dir>] [--registry <url>] [--provenance] [--dry-run]
 //
 // <artifacts> holds one directory per platform key (linux-x64, darwin-arm64,
 // win32-x64, ...) containing the built binaries.
+//
+// --manifest names the Cargo.toml of the crate the binaries were built from.
+// It matters for a "hybrid" package without a `files` list, which ships its
+// whole directory: the crate's directory (sources, parity cases, fixtures) is
+// then left out of the npm package. Nothing is left out when the package has
+// a `files` list, since the project chose what it ships, or when the crate's
+// directory is the package's own. Without the option the crate is shipped, as
+// it was before the option existed.
 //
 // Configuration lives in the project's package.json:
 //   "rustify": {
@@ -105,6 +113,23 @@ function extrasFor(cfg, key) {
   return (cfg.extra || []).filter((bin) => !cfg.extraPlatforms?.[bin] || cfg.extraPlatforms[bin].includes(key));
 }
 
+// `dir` as a path inside `root` with forward slashes, or "" when it is `root`
+// itself or lies outside it. Links are followed, so the two can be named
+// through different ones (macOS hands out temp directories behind a link).
+function inside(root, dir) {
+  const real = (p) => {
+    try {
+      return fs.realpathSync(p);
+    } catch {
+      return path.resolve(p);
+    }
+  };
+  const rel = path.relative(real(root), real(dir));
+  // On Windows a directory on another drive comes back as an absolute path.
+  const outside = rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel);
+  return !rel || outside ? "" : rel.split(path.sep).join("/");
+}
+
 function pack(opts) {
   const pkgPath = path.resolve(opts.package || "package.json");
   const projectDir = path.dirname(pkgPath);
@@ -118,6 +143,7 @@ function pack(opts) {
   }
   if (project.private) fail(`${pkgPath} is marked "private", so npm would refuse to publish it.`);
   if (!opts.artifacts) fail("--artifacts <dir> is required");
+  if (opts.manifest === true) fail("--manifest needs the path of the crate's Cargo.toml");
   const artifacts = path.resolve(opts.artifacts);
   const version = opts.version || project.version;
   if (!/^\d+\.\d+\.\d+/.test(version)) fail(`"${version}" is not a publishable version`);
@@ -182,6 +208,10 @@ function pack(opts) {
 
   const main = path.join(out, "main");
   let manifest;
+  // The crate's directory inside the package, when it is left out, and how
+  // many files that kept out of the package.
+  let crate = "";
+  let crateFiles = 0;
   if (mode === "hybrid") {
     // Ship what the project ships today and swap the listed commands for
     // native launchers. The project must already be built (its dist exists).
@@ -189,10 +219,27 @@ function pack(opts) {
     // what this pipeline itself put there: its checkout, the binaries, and
     // the output being written right now.
     const own = [out, artifacts, ...[".rustify", ".rustify-native", ".rustify-downloaded", ".rustify-bin"].map((d) => path.join(projectDir, d))]
-      .map((dir) => path.relative(projectDir, dir).split(path.sep).join("/"))
-      .filter((rel) => rel && !rel.startsWith(".."));
-    const mine = (file) => own.some((rel) => file === rel || file.startsWith(`${rel}/`));
-    for (const file of packedFiles(projectDir).filter((f) => !mine(f.split(path.sep).join("/")))) {
+      .map((dir) => inside(projectDir, dir))
+      .filter(Boolean);
+    // And the crate. Users get its binaries from the platform packages; its
+    // sources and parity cases are of no use in the npm package. A `files`
+    // list is the project's own word on what it ships, and stays as it is.
+    crate = opts.manifest && !Array.isArray(project.files) ? inside(projectDir, path.dirname(path.resolve(opts.manifest))) : "";
+    const under = (file, rel) => file === rel || file.startsWith(`${rel}/`);
+    // A command's own file there would be left out with it, and a command the
+    // binary hands back would have nothing to hand back to.
+    const ownBins = typeof project.bin === "string" ? [project.bin] : Object.values(project.bin || {});
+    const binsInCrate = ownBins.map((file) => path.posix.normalize(String(file).split("\\").join("/"))).filter((file) => crate && under(file, crate));
+    if (binsInCrate.length) {
+      fail(`"bin" names ${binsInCrate.join(", ")}, inside the crate's directory ${crate}/, which a package without a "files" list leaves out. Give the package a "files" list.`);
+    }
+    for (const listed of packedFiles(projectDir)) {
+      const file = listed.split(path.sep).join("/");
+      if (own.some((rel) => under(file, rel))) continue;
+      if (crate && under(file, crate)) {
+        crateFiles++;
+        continue;
+      }
       const to = path.join(main, file);
       fs.mkdirSync(path.dirname(to), { recursive: true });
       fs.copyFileSync(path.join(projectDir, file), to);
@@ -259,6 +306,7 @@ function pack(opts) {
   console.log(`packed ${project.name}@${version} (${mode}) → ${out}`);
   for (const p of publish) console.log(`  ${p.dir.padEnd(13)} dist-tag ${p.tag}`);
   if (missing.length) console.log(`  not included: ${missing.join(", ")}`);
+  if (crate) console.log(`  left out: ${crate}/ (the crate, ${crateFiles} file${crateFiles === 1 ? "" : "s"})`);
 }
 
 function publish(opts) {

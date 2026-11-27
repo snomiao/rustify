@@ -1,0 +1,2 @@
+# With this file here npm does not read .gitignore, which names
+# native-binary.mjs: that file is copied in before packing and has to ship.

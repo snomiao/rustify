@@ -4,7 +4,9 @@
 #   build a toy Rust binary → pack it → publish to a throwaway local registry
 #   → install it globally with bun and with npm → check that the installed
 #   command is the native binary, that it survives an upgrade, and how fast
-#   it starts.
+#   it starts. Then the same for a package that still ships JavaScript: what
+#   the binary hands back, what it answers itself, and what smoke.mjs makes
+#   of both.
 #
 # Nothing touches the real registry or your real global installs: every
 # install goes to a temp directory that is removed at the end.
@@ -52,6 +54,8 @@ build() { # $1 = version
   TOY_VERSION="$1" cargo build --release --quiet --manifest-path "$HERE/toy/Cargo.toml" --target-dir "$WORK/target"
   mkdir -p "$WORK/artifacts-$1/$KEY" "$WORK/artifacts-$1/$FOREIGN"
   cp "$WORK/target/release/toy$EXT" "$WORK/artifacts-$1/$KEY/toy$EXT"
+  # A second binary, without the hand-back helper.
+  cp "$WORK/target/release/toy-helper$EXT" "$WORK/artifacts-$1/$KEY/toy-helper$EXT"
   # A build for some other platform, to prove it is NOT installed here.
   FEXT=""; case "$FOREIGN" in win32-*) FEXT=".exe" ;; esac
   echo "not for this machine" > "$WORK/artifacts-$1/$FOREIGN/toy$FEXT"
@@ -165,9 +169,17 @@ printf '%s\n' \
   '  "files": ["dist"],' \
   '  "scripts": { "prepublishOnly": "exit 1" },' \
   '  "devDependencies": { "typescript": "^5" },' \
-  "  \"rustify\": { \"mode\": \"hybrid\", \"bins\": { \"toy\": \"toy\" }, \"runtime\": \"$RUNTIME\" }" \
+  "  \"rustify\": { \"mode\": \"hybrid\", \"bins\": { \"toy\": \"toy\", \"plain\": \"toy-helper\" }, \"runtime\": \"$RUNTIME\" }" \
   '}' > "$WORK/hybrid/package.json"
-printf '#!/usr/bin/env %s\nconsole.log("js cli:", process.argv.slice(2).join(" ").replace("which-runtime", typeof Bun === "undefined" ? "node" : "bun"));\n' "$RUNTIME" > "$WORK/hybrid/dist/cli.js"
+# The JavaScript prints its arguments. `which-runtime`, `homedir` and `trace`
+# are answered with the runtime it runs on, the home directory it sees and
+# the value of RUSTIFY_HANDBACK_TRACE.
+printf '%s\n' \
+  "#!/usr/bin/env $RUNTIME" \
+  'import os from "node:os";' \
+  'const answers = { "which-runtime": typeof Bun === "undefined" ? "node" : "bun", homedir: os.homedir(), trace: process.env.RUSTIFY_HANDBACK_TRACE ?? "unset" };' \
+  'console.log("js cli:", process.argv.slice(2).map((arg) => (Object.hasOwn(answers, arg) ? answers[arg] : arg)).join(" "));' \
+  > "$WORK/hybrid/dist/cli.js"
 chmod +x "$WORK/hybrid/dist/cli.js"
 node "$PACK" pack --package "$WORK/hybrid/package.json" --artifacts "$WORK/artifacts-1.2.4" \
   --out "$WORK/npm-dist-hybrid" --allow-missing >/dev/null
@@ -188,9 +200,156 @@ out="$("$BUN_INSTALL/bin/toy" js which-runtime)"
 [ "$out" = "js cli: js $RUNTIME" ] && pass "the JavaScript runs on the runtime its own first line names ($RUNTIME)" \
   || die "the hand-back ran: $out (expected $RUNTIME)"
 
+echo "== hybrid: a ported command that declines, and one that panics"
+TOY="$BUN_INSTALL/bin/toy"
+TRACE="rustify: handed back to the JavaScript"
+[ "$("$TOY" answer 2>&1)" = "toy answers natively" ] && pass "a ported command prints the answer it worked out" \
+  || die "toy answer printed: $("$TOY" answer 2>&1)"
+out="$("$TOY" decline politely 2>&1)"
+[ "$out" = "js cli: decline politely" ] && pass "a command that declines is handed back" || die "toy decline printed: $out"
+out="$("$TOY" panic quietly 2>&1)"
+[ "$out" = "js cli: panic quietly" ] && pass "a panic before anything was printed is handed back, and nothing else shows" \
+  || die "toy panic printed: $out"
+out="$("$TOY" panic-thread 2>&1)"
+[ "$out" = "js cli: panic-thread" ] && pass "so is a panic in a worker thread the command started" \
+  || die "toy panic-thread printed: $out"
+set +e; out="$("$TOY" panic-late 2>&1)"; code=$?; set -e
+[[ "$code" = 101 && "$out" == "toy began to answer"* && "$out" == *"a bug after the first output"* && "$out" != *"js cli"* ]] \
+  && pass "a panic after commit() is reported and ends the command (exit 101); the JavaScript is not started" \
+  || die "toy panic-late exited $code and printed: $out"
+out="$(RUSTIFY_HANDBACK_TRACE=1 "$TOY" js trace 2>&1)"
+[ "$out" = "$TRACE"$'\n'"js cli: js unset" ] \
+  && pass "RUSTIFY_HANDBACK_TRACE=1: the hand-back says so on stderr, before the JavaScript starts, which does not get the variable" \
+  || die "traced hand-back printed: $out"
+out="$(RUSTIFY_HANDBACK_TRACE=1 "$TOY" check 2>&1)"
+[[ "$out" == "toy version="* && "$out" != *"$TRACE"* ]] && pass "and a native answer stays as it is" || die "traced native answer printed: $out"
+out="$(RUSTIFY_HANDBACK_TRACE=1 "$TOY" panic loudly 2>&1)"
+[[ "$out" == *"a bug in a ported command"*"$TRACE"*"js cli: panic loudly" ]] \
+  && pass "with the trace on, a swallowed panic is reported before the hand-back" || die "traced panic printed: $out"
+
+echo "== panic = \"abort\": nothing can be handed back"
+cargo build --release --quiet --manifest-path "$HERE/toy/Cargo.toml" --target-dir "$WORK/target-abort" \
+  --config 'profile.release.panic="abort"'
+ABORT="$WORK/target-abort/release/toy$EXT"
+out="$(RUSTIFY_PACKAGE_ROOT="$WORK/hybrid" "$ABORT" decline politely 2>&1)"
+[ "$out" = "js cli: decline politely" ] && pass "declining still hands back" || die "abort build, decline: $out"
+# No core file, please.
+set +e; out="$( (ulimit -c 0; RUSTIFY_PACKAGE_ROOT="$WORK/hybrid" "$ABORT" panic quietly) 2>&1 )"; code=$?; set -e
+[[ "$code" != 0 && "$out" == *"a bug in a ported command"* && "$out" != *"js cli"* ]] \
+  && pass "a panic ends the process with its message (exit $code); the JavaScript is not started" \
+  || die "abort build, panic: exit $code, printed: $out"
+
+echo "== a package without a files list: the crate stays out of it"
+NOFILES="rustify-e2e-nofiles"
+mkdir -p "$WORK/nofiles/dist" "$WORK/nofiles/rs/src"
+printf '%s\n' \
+  '{' \
+  "  \"name\": \"$NOFILES\"," \
+  '  "version": "3.0.0",' \
+  '  "type": "module",' \
+  '  "license": "MIT",' \
+  '  "bin": { "legacy": "dist/cli.js" },' \
+  "  \"rustify\": { \"mode\": \"hybrid\", \"bins\": { \"toy\": \"toy\" }, \"runtime\": \"$RUNTIME\" }" \
+  '}' > "$WORK/nofiles/package.json"
+cp "$WORK/hybrid/dist/cli.js" "$WORK/nofiles/dist/cli.js"
+# Stands for the crate a real project keeps beside its package.json.
+printf '[package]\nname = "toy"\nversion = "3.0.0"\n' > "$WORK/nofiles/rs/Cargo.toml"
+echo 'fn main() {}' > "$WORK/nofiles/rs/src/main.rs"
+echo '{ "cases": [] }' > "$WORK/nofiles/rs/parity.json"
+node "$PACK" pack --package "$WORK/nofiles/package.json" --artifacts "$WORK/artifacts-1.2.4" \
+  --out "$WORK/npm-dist-nofiles-before" --allow-missing >/dev/null
+[ -f "$WORK/npm-dist-nofiles-before/main/rs/Cargo.toml" ] && pass "without --manifest the crate is shipped, as before" \
+  || die "pack without --manifest left the crate out"
+# The paths are relative, as the workflow passes them.
+(cd "$WORK/nofiles" && node "$PACK" pack --manifest rs/Cargo.toml --artifacts "$WORK/artifacts-1.2.4" \
+  --out "$WORK/npm-dist-nofiles" --allow-missing) | grep -q "left out: rs/ (the crate, 3 files)" \
+  || die "pack --manifest did not report the crate"
+[ ! -e "$WORK/npm-dist-nofiles/main/rs" ] && [ -f "$WORK/npm-dist-nofiles/main/dist/cli.js" ] \
+  && pass "with --manifest the crate's directory is left out and the JavaScript is kept" \
+  || die "pack --manifest: $(cd "$WORK/npm-dist-nofiles/main" && find . -type f | tr '\n' ' ')"
+node "$PACK" publish --out "$WORK/npm-dist-nofiles" --registry "$REGISTRY" >/dev/null
+export BUN_INSTALL="$WORK/bun-nofiles"
+bun i -g "$NOFILES" --registry "$REGISTRY" >/dev/null 2>&1 || die "bun i -g $NOFILES failed"
+[ ! -e "$BUN_INSTALL/install/global/node_modules/$NOFILES/rs" ] \
+  && [ "$("$BUN_INSTALL/bin/legacy" still here)" = "js cli: still here" ] \
+  && [ "$("$BUN_INSTALL/bin/toy" js handed back)" = "js cli: js handed back" ] \
+  && pass "installed, the package has no crate, and its JavaScript and its hand-back work" \
+  || die "the package without a files list is broken after installing"
+
 echo "== smoke.mjs (the check that CI runs on every OS)"
-node "$REPO/templates/npm/smoke.mjs" --dist "$WORK/npm-dist-1.2.4" --run "toy check" --expect "version=1.2.4" \
+SMOKE="$REPO/templates/npm/smoke.mjs"
+# The commands under test get a home directory of their own. XDG_CONFIG_HOME
+# stands for a variable that points into the real one.
+WHERE="toy where rustify-smoke- HOME USERPROFILE XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME"
+XDG_CONFIG_HOME="$WORK/real-config" node "$SMOKE" --dist "$WORK/npm-dist-1.2.4" --run "toy check" --expect "version=1.2.4" \
+  --also "$WHERE => HOME:inside USERPROFILE:inside XDG_CONFIG_HOME:unset XDG_DATA_HOME:unset XDG_STATE_HOME:unset XDG_CACHE_HOME:unset" \
+  --also "[real-home] toy where rustify-smoke- HOME XDG_CONFIG_HOME => HOME:outside XDG_CONFIG_HOME:outside" \
   | sed 's/^/  /' || die "smoke.mjs failed"
+
+echo "== smoke.mjs: who answered, in a package that still ships JavaScript"
+# --env wins over the home directory the test hands out. The trace is on where
+# the test is started: only the marked lines may see it.
+RUSTIFY_HANDBACK_TRACE=1 node "$SMOKE" --dist "$WORK/npm-dist-hybrid" --run "toy check" --expect "version=1.2.4" \
+  --env "XDG_CONFIG_HOME=$WORK/chosen-config" \
+  --also "toy where chosen-config XDG_CONFIG_HOME HOME => XDG_CONFIG_HOME:inside HOME:outside" \
+  --also "[native] toy check => version=1.2.4" \
+  --also "[native] toy answer => toy answers natively" \
+  --also "[handback] toy js handed back => js cli: js handed back" \
+  --also "[handback] toy decline politely => js cli: decline politely" \
+  --also "toy where 1 RUSTIFY_HANDBACK_TRACE => RUSTIFY_HANDBACK_TRACE:unset" \
+  --also "[handback] toy js trace => js cli: js unset" \
+  --also "toy panic quietly => js cli: panic quietly !> panicked" \
+  --also "toy panic-thread => js cli: panic-thread !> panicked" \
+  --also "[handback] toy panic loudly => a bug in a ported command" \
+  --also "[101] toy panic-late => a bug after the first output !> js cli" \
+  --also "[native:$KEY] [handback:$FOREIGN] toy check => version=1.2.4" \
+  --also "[handback:${KEY%%-*}] [native:$FOREIGN] toy js here => js cli: js here" \
+  --also "toy js homedir => rustify-smoke-" \
+  --also "legacy homedir => rustify-smoke-" \
+  | sed 's/^/  /' || die "smoke.mjs failed on the hybrid package"
+
+echo "== smoke.mjs: a runtime behind a version manager's shim"
+# The shim stands for asdf's or mise's: it finds the runtime under the real
+# home directory only, so it fails with the one the commands under test get.
+REAL_RUNTIME="$(command -v "$RUNTIME")"
+mkdir -p "$WORK/shim"
+printf '#!/bin/sh\n[ "$HOME" = "%s" ] || { echo "shim: no %s version is set for this home" >&2; exit 126; }\nexec "%s" "$@"\n' \
+  "$HOME" "$RUNTIME" "$REAL_RUNTIME" > "$WORK/shim/$RUNTIME"
+chmod +x "$WORK/shim/$RUNTIME"
+[ "$(HOME="$WORK" PATH="$WORK/shim:$PATH" "$RUNTIME" --version 2>&1)" = "shim: no $RUNTIME version is set for this home" ] \
+  || die "the stand-in shim does not fail without the real home directory"
+out="$(PATH="$WORK/shim:$PATH" node "$SMOKE" --dist "$WORK/npm-dist-hybrid" --run "toy check" --expect "version=1.2.4" --installer bun \
+  --also "[handback] toy js shimmed => js cli: js shimmed" --also "legacy shimmed => js cli: shimmed" 2>&1)" \
+  || die "smoke.mjs failed with a shim in PATH: $out"
+[[ "$out" == *"note  $RUNTIME does not start with the home directory the commands under test get; they get $(dirname "$REAL_RUNTIME") first in PATH"* ]] \
+  && pass "a $RUNTIME the shim cannot start there is found where it really is, and the launcher, the hand-back and the JavaScript command work" \
+  || die "smoke.mjs did not say where it found $RUNTIME: $out"
+
+echo "== smoke.mjs: what it must refuse"
+set +e
+out="$(node "$SMOKE" --dist "$WORK/npm-dist-hybrid" --run "toy check" --expect "version=1.2.4" --installer bun --real-home \
+  --also "toy where rustify-smoke- HOME => HOME:outside" \
+  --also "[native] toy js handed back => js cli: js handed back" \
+  --also "[handback] toy check => version=1.2.4" \
+  --also "[native] legacy hello => js cli: hello" \
+  --also "[native] plain => toy-helper" \
+  --also "[handback] plain => toy-helper" \
+  --also "[natvie] toy check => version=1.2.4" \
+  --also "[native:windows] toy check => version=1.2.4" 2>&1)"
+code=$?
+set -e
+said() { [[ "$out" == *"$1"* ]] && pass "$2" || die "smoke.mjs did not say \"$1\". It exited $code and printed: $out"; }
+[ "$code" = 1 ] || die "smoke.mjs should have failed. It exited $code and printed: $out"
+said "ok    bun: \`toy where rustify-smoke- HOME\` works" "--real-home leaves the commands their real home directory"
+said "\`toy js handed back\` is marked [native], but the binary handed it back" "[native] fails for a command that was handed back"
+said "\`toy check\` is marked [handback], but the binary answered it itself" "[handback] fails for a command the binary answered"
+said "\`legacy\` is a JavaScript command of this package" "[native] fails for a command that is JavaScript"
+said "\`plain\` is marked [native], but who answered it cannot be seen: the binary behind \`plain\` never says when it hands back" \
+  "[native] fails for a binary without the helper v5: its silence is not taken for a native answer"
+said "\`plain\` is marked [handback], but who answered it cannot be seen" "and so does [handback]"
+said "unknown marker [natvie]" "a misspelt marker is an error"
+said "[native:windows] in" "so is a platform that does not exist"
+said "7 check(s) failed" "seven lines failed, and nothing else"
 
 echo "== startup time (ms per run, 30 runs)"
 printf '  %-46s %s\n' "binary run directly" "$(bench "$WORK/target/release/toy$EXT")"
