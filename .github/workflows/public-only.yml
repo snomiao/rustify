@@ -1,0 +1,44 @@
+# rustify is public, and so are its CI logs. Every repository projects.toml
+# lists has to be public too. When one is not (or cannot be read), the check
+# names the line of projects.toml, never the repository.
+
+name: public-only
+
+on:
+  pull_request:
+    paths: ["projects.toml", ".github/workflows/public-only.yml"]
+  push:
+    branches: [main]
+    paths: ["projects.toml", ".github/workflows/public-only.yml"]
+  schedule:
+    # A repository can become private after it was listed.
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public:
+    name: every listed repository is public
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check each repo line of projects.toml
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          failed=0
+          checked=0
+          while IFS=: read -r line repo; do
+            checked=$((checked + 1))
+            visibility=$(gh api "repos/$repo" --jq .visibility 2>/dev/null || true)
+            if [ "$visibility" != "public" ]; then
+              echo "::error file=projects.toml,line=$line::the repository on this line is not public, or cannot be read"
+              failed=1
+            fi
+          done < <(grep -n '^repo = "' projects.toml | sed -E 's/^([0-9]+):repo = "([^"]+)".*$/\1:\2/')
+          echo "$checked repositories checked"
+          [ "$checked" -gt 0 ] || { echo "::error::no repo line found in projects.toml"; exit 1; }
+          exit $failed

@@ -19,6 +19,9 @@ while working:
 - Committing, pushing, opening PRs and publishing happen only when the user
   asks. Publishing to npm or crates.io is never something to do on your own.
 - Notes go in `docs/` of this repo, not in Claude memory.
+- Public repositories only. Never name a private repository of the owner in
+  this repo, in a commit message, or in any pull request, here or in a
+  project; this repo and its CI logs are public.
 
 Arguments: none = all projects; a project name = only that one; `release` after
 a project name = go straight to step 3 for it.

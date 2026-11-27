@@ -177,13 +177,3 @@ repo = "snomiao/snocommit"
 npm = "snocommit"
 crate = "snocommit"
 ts = ["src"]
-
-[[project]]
-name = "comfy-codesearch-cli"
-repo = "snomiao/comfy-codesearch-cli"
-npm = "comfy-codesearch"
-crate = "comfy-codesearch"
-manifest = "rs/Cargo.toml"
-ts = ["."]
-rust = ["rs/src"]
-ignore = ["rs"]

@@ -20,7 +20,6 @@
 | Comfy-AI | not started | JavaScript | write the parity ledger |
 | bunto | not started | JavaScript | write the parity ledger |
 | snocommit | not started | JavaScript | write the parity ledger |
-| comfy-codesearch-cli | not started | JavaScript | write the parity ledger |
 
 ## agent-yes
 
@@ -934,25 +933,3 @@
 - `info` npm has `snocommit` 0.1.0
 - `warn` the newest release tag in this checkout is `v1.0.2` — it is behind npm; fetch before trusting the code counts
 - `todo` `bun i -g snocommit` installs JavaScript, not the Rust binary (`chore` → `dist/cli-chore.js`, `docs` → `dist/cli-docs.js`, `feat` → `dist/cli-feat.js`, … (7 commands))
-
-## comfy-codesearch-cli
-
-**Checkout**
-
-- `info` `/code/snomiao/comfy-codesearch-cli/tree/main` on `main` at `7ea1fb8`
-
-**Code**
-
-- `info` TypeScript/JS to replace: 141 lines in 1 files; its tests: 0 lines, about 0 cases
-- `info` Rust: 0 lines in 0 files, 0 tests
-
-**Parity ledger**
-
-- `todo` no ledger at `parity/comfy-codesearch-cli.toml`, so progress cannot be measured
-- `todo` no Rust port exists yet
-
-**Delivery**
-
-- `warn` `rs/Cargo.toml` is missing or unreadable
-- `info` npm has `comfy-codesearch` 1.0.0
-- `todo` `bun i -g comfy-codesearch` installs JavaScript, not the Rust binary (`comfy-codesearch` → `cli.ts`)
