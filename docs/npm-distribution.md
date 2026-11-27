@@ -173,13 +173,23 @@ jobs:
 1. **build** (`rust-npm-build.yml`) — six binaries; Linux and macOS are
    cross-compiled on Linux runners with cargo-zigbuild, Windows builds on
    Windows runners.
-2. **pack** — `templates/npm/pack.mjs` turns them into npm packages.
+2. **pack** — `templates/npm/pack.mjs` turns them into npm packages. A
+   hybrid package without a `files` list ships its whole directory, except
+   what the pipeline put there and the crate's directory (the workflow passes
+   its `manifest` input to the packer as `--manifest`). When the crate is the
+   package's own directory, nothing is left out; a package with a `files`
+   list ships what it lists. If `bin` names a file inside the crate's
+   directory, packing stops.
 3. **smoke** — on real Linux, macOS and Windows runners, x64 and arm64: install
    the packed release from a throwaway local registry with bun and with npm,
    run it, check that the command became native, install the same version
-   again, and time it. `smoke-extra` adds more commands to run, for the ones
-   that are still JavaScript or handed back to it. The registry answers
-   ordinary dependencies from the real one.
+   again, and time it. `smoke-extra` adds more commands to run: the ones that
+   are still JavaScript or handed back to it, and ported ones, to see on
+   every platform who answers them. The registry answers ordinary
+   dependencies from the real one. The commands run with an empty home
+   directory of their own, not the runner's, and a line can demand that the
+   binary answered it itself (`[native]`) or handed it back (`[handback]`);
+   see [porting.md](porting.md), step 6.
 4. **publish** (`actions/publish`) — a job in the project's own workflow, so
    the npm credential is requested by the project. Platform builds first, the
    main package last. npm checks the *calling* workflow's filename when a
@@ -187,7 +197,10 @@ jobs:
 5. **verify** (`rust-npm-verify.yml`) — the smoke test again, against the real
    registry.
 
-A pull request runs steps 1–3 only.
+A pull request runs steps 1–3 only. Beside them, a project's `parity:`
+command runs against the freshly built binaries, on Linux x64 or on each
+platform that `parity-platforms` names, and has to pass before anything can
+be published; see [porting.md](porting.md), step 6.
 
 A project whose build needs its own runners or steps (large C++ dependencies,
 system libraries) keeps its build: its own jobs upload one artifact per
@@ -218,6 +231,23 @@ with bun and with npm:
 - a second command name for the same binary works
 - `hybrid` mode: a command that is still JavaScript keeps working, and a
   command the binary hands back to JavaScript works
+- the smoke commands see a home directory of their own (HOME and
+  USERPROFILE, on Windows also APPDATA and LOCALAPPDATA), and so does the
+  JavaScript they hand back to (on Windows x64 and arm64, bun's
+  `os.homedir()` follows USERPROFILE)
+- the hand-back helper's trace line comes through every package manager's
+  shim, so `[native]` and `[handback]` lines hold on every platform, and the
+  JavaScript starts without the trace variable
+- a ported command that panics before printing, also in a worker thread, is
+  handed back without a word
+- a package without a `files` list ships without its crate (ci-extras)
+
+The hand-back helper's own unit tests (`attempt` and the panic hook) also run
+on macOS and Windows, in ci.yml's `unit` job. The parity job runs on all six
+platforms as well (`parity-platforms`), each with its own binaries and the
+parity runner, in bash (Git Bash on Windows). ci.yml's `bun-pin` job runs the
+parity job's choice of bun on Linux x64, with a `.bun-version`, with a
+`.tool-versions` and with no pin.
 
 Verified additionally on Linux x64 by `tests/e2e/run.sh`:
 
@@ -226,6 +256,19 @@ Verified additionally on Linux x64 by `tests/e2e/run.sh`:
 - an upgrade runs the new binary, not a stale link
 - publishing the same release twice is harmless
 - the hand-back also works while the launcher is still in the path
+- a ported command run through `js_fallback::attempt` that declines, or
+  panics before printing (also in a worker thread it started), is handed back
+  without a word; a panic after `commit()` ends it with exit code 101; built
+  with `panic = "abort"`, a panic ends it and nothing is handed back
+- with `RUSTIFY_HANDBACK_TRACE` set, a hand-back shows on stderr and the
+  JavaScript starts without the variable; the smoke test refuses a
+  `[native]` line that was handed back, a `[handback]` line that was not,
+  and either one for a binary without helper v5; a trace variable set where
+  the smoke test runs does not reach its unmarked lines
+- a package without a `files` list ships without its crate, installs, and
+  hands back
+- a bun or node behind a version manager's shim that needs the real home
+  directory still starts under the smoke test's home directory
 
 Two bugs the six-platform run caught that Linux alone could not:
 
@@ -274,3 +317,8 @@ Not verified:
   use on every run. Nothing breaks.
 - `RUSTIFY_NO_LINK=1` turns all rewiring off.
 - `npm view <package> versions` lists seven entries per release.
+- The smoke test's home directory cannot hide the system keychain, agents
+  the environment points at (SSH_AUTH_SOCK), variables that name credential
+  files elsewhere (GOOGLE_APPLICATION_CREDENTIALS, KUBECONFIG, GNUPGHOME, …),
+  or the folders a Windows program asks the system for; the working
+  directory stays the caller's.

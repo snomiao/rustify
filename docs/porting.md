@@ -70,8 +70,9 @@ found by a port or by the verification of one, and each was visible to a user.
 - can lose output: once the program has read `process.stdout.isTTY`, lines
   written with `console.log` to a pipe that is read slowly are dropped (bun
   1.4.0; 1,896 of 6,014 lines arrived in one measurement). The TypeScript is
-  then not deterministic for large output, no case can compare it, and
-  whether the binary should copy the loss is the owner's decision.
+  then not deterministic for large output through a pipe (step 2 says how a
+  case compares it all the same), and whether the binary should copy the
+  loss is the owner's decision.
 
 **JavaScript itself**
 
@@ -139,9 +140,12 @@ with `ts = ["."]` and `rust = ["src"]`, `src/index.ts` is TypeScript to
 replace and `src/main.rs` is Rust. For such a crate the scaffold adds
 `/target` to the project's own `.gitignore` and keeps everything else in it.
 
-If `package.json` has no `files` list, the package ships its whole directory,
-the crate included: add `rs/.npmignore` containing `*`, and check with `npm
-pack --dry-run`.
+If `package.json` has no `files` list, npm and bun pack the whole directory,
+the crate included. For a crate in a directory of its own the scaffold writes
+`rs/.npmignore` containing `*`, and the pipeline's packer leaves the crate's
+directory out as well; check with `npm pack --dry-run`. A command whose file
+lies inside the crate's directory would be left out with it, so the packer
+stops with an error instead: give such a package a `files` list.
 
 Use `build:`, `test:` or `ci:` commit types for all of this, and for every
 port commit after it: the project's users get nothing new until the owner
@@ -159,7 +163,9 @@ that runs on node, shares one file between several commands and tells them
 apart by `argv[1]` needs its own answer, such as one small file per command.
 
 `templates/rust/js_fallback.rs` carries a version in its first line. When the
-template moves on, copy the new file over the crate's.
+template moves on, copy the new file over the crate's, and put the project's
+own name back into `ROOT_ENV` (the scaffold wrote `<PROJECT>_PACKAGE_ROOT`
+there). Version 5 needs Rust 1.81 or later.
 
 ## 2. Write the cases before the code
 
@@ -178,6 +184,15 @@ rule. Every rule is a hole in the proof, so keep them few. `--show` prints
 what each case compared; use it to catch a case whose probes fail the same way
 on both sides and so prove nothing.
 
+A bun program that has read `process.stdout.isTTY` loses stdout written to a
+pipe once it prints a few hundred lines. With bun 1.4.0, the same 500-line
+program compared with itself differed in 22 of 30 cases, and in 15 of 15 on
+a busier machine. If TypeScript against TypeScript fails this way, give the
+case `"capture": "files"`, or pass `--capture files`. The program then writes
+into regular files, nothing is lost, and every byte is compared. That settles
+the case, not the question of whether the Rust should lose lines the same way
+when users pipe the command (see "What the TypeScript means").
+
 Cover, for the command:
 
 - its plain use, and each flag that changes what it does;
@@ -189,38 +204,97 @@ Cover, for the command:
   wins.
 
 The runner starts each case in an empty directory with an empty `HOME`, its
-own temp directory and no terminal. `<CWD>` and `<HOME>` in a case stand for
-those directories and `<REPO>` for the directory the runner was started in,
-so the cases file can be committed as it is. A command that talks to a service needs both implementations
-pointed at the same stand-in: a mock server the project's tests already have,
-a fake of the external program it calls, or recorded responses. Compare what
-each implementation *asked* the stand-in for, not only what it printed. A
-project that has such a harness can keep its own test instead of
-`parity.mjs`; what matters is that one test runs both implementations and
-compares everything they print and do.
+own temp directory, and pipes for stdin, stdout and stderr. In a case,
+`<CWD>` and `<HOME>` stand for those directories. `<ROOT>` stands for the
+directory that holds them: the place for the test's own files of one run,
+such as a request log or a copy of the package, outside what the program
+looks at. `<REPO>` stands for the directory the runner was started in. So
+the cases file can be committed as it is. A `null` in `env` removes a
+variable, whether the cases file's global `env` or the runner set it, so one
+case can go without the `TZ` that the global `env` gives every other case.
+
+The runner compares the exit code (for a program that a signal ended, which
+signal: `signal SIGTERM`), stdout, stderr, and what each `after` line prints.
+Through pipes, stdout and stderr are read as UTF-8 text, so bytes that are
+not UTF-8 all turn into U+FFFD there and are not told apart. On a terminal
+and with `"capture": "files"` (both below) every byte is compared, and the
+runner shows a byte that is not UTF-8 as `\xNN`.
 
 What the runner cannot express needs its own small test beside it: one
 implementation reading what the other wrote, a chosen working directory.
 
-Patterns the ports needed, all built from a wrapper command put in front of
-both implementations (`--ts "sh rs/parity/run.sh bun cli.ts" --rs "sh
-rs/parity/run.sh rs/target/release/mycli"`):
+A terminal is a field of the case. `"tty": true` gives the program a
+pseudo-terminal as stdin, stdout and stderr; `"tty": "stdout"` (or
+`"stdin,stderr"`, …) gives it only those; `--tty` does the same for every
+case that does not say. The runner then compares every byte the terminal
+received, in order, as `terminal`, beside the streams that stayed pipes.
+Colours, links, CR LF and the echo of what was typed are all part of it.
+This needs Linux or macOS with python3. On Windows, or without python3, such
+cases are BROKEN, never passed.
+
+For a command whose output changes on a terminal, run the whole cases file a
+second time with `--tty stdout,stderr`. Colours depend on those two streams:
+bun colours `console.error` whenever stdout or stderr is a terminal. stdin
+stays a pipe, so the cases that pipe input in still reach its end. `--tty`
+alone would make stdin the terminal as well. Every case's `stdin` would then
+be typed, and a program that reads stdin to the end would wait until the
+case's timeout, because a terminal's input never ends.
+
+Give each question its own case, with `"tty": true` and the answer written as
+`"stdin": [["[y/N] ", "y\n"]]`. The answer is then typed 50 ms after the
+question has appeared, as a person would type it. Plain `stdin` text is typed
+before the program starts, so its echo comes first whatever the program does
+afterwards: a port that shows a password the TypeScript hides passes that
+way. Use the list form for every question whose echo matters. The list form
+holds for a program that turns echo off in its own process. A program that
+starts another program for it (`stty -echo`) may still have echo on 50 ms
+later, and its answer is then echoed; look at such a case with `--show`.
+
+Run the `--handback` check on the file as it is, without `--tty`. A command
+that the binary hands back only on a terminal (dotenvdotenc's `enc`
+question) needs a case of its own with `"tty"` and `"handback"`. A case's
+`handback` holds for every run of the file, so a whole-file `--tty
+--handback` run cannot express such a command.
+
+A command that talks to a service needs both implementations pointed at the
+same stand-in: a mock server the project's tests already have, a fake of the
+external program it calls, or recorded responses. Compare what each
+implementation *asked* the stand-in for, not only what it printed. A project
+that has such a harness can keep its own test instead of `parity.mjs`; what
+matters is that one test runs both implementations and compares everything
+they print and do.
+
+The runner has no stand-in of its own. The patterns the ports needed are all
+built from a wrapper command put in front of both implementations (`--ts "sh
+rs/parity/run.sh bun cli.ts" --rs "sh rs/parity/run.sh
+rs/target/release/mycli"`). The wrapper runs the command with inherited
+stdio and exits with the command's code. What it keeps of the run goes into
+a file under `<ROOT>` or `$TMPDIR`, and an `after` line prints that file, so
+it is compared.
 
 - **The service's address is a constant in the code.** The wrapper starts a
-  stand-in on a free port for this one run and tells the program where it is
-  through the environment. `--ts "bun --preload …"` is not enough: it does not
-  reach the JavaScript the binary hands back to, and those cases would talk
-  to the real service. For the handed-back JavaScript the wrapper puts a
-  `bun` shim first on `PATH`. The binary needs to be pointed at the stand-in
-  too; a variable that accepts only `http://127.0.0.1:<port>` is the smallest
-  way, and it is Rust-only behaviour that the owner has to bless or have
-  removed.
-- **A case that is handed back after a request** shows every request twice in
-  the stand-in's log. Compare the distinct requests, and let the stand-in
-  answer by what was asked, not by turn.
+  stand-in on 127.0.0.1, on a free port, for this one run, tells the program
+  where it is through the environment, and writes down what the stand-in
+  received. qqdocs's `rs/parity/with-mock.mjs` is a worked example. `--ts
+  "bun --preload …"` is not enough: the JavaScript the binary hands back to
+  is started by the binary, with the runtime its first line names, and never
+  sees that flag, so those cases would talk to the real service. Whatever
+  points the JavaScript at the stand-in has to come through the environment,
+  or through a `bun` shim the wrapper puts first on `PATH`, which covers the
+  TypeScript side and the hand-back alike (qqdocs's `rs/parity/bin/bun`
+  starts the real bun with the preload). The binary needs to be pointed at
+  the stand-in too; a variable that accepts only `http://127.0.0.1:<port>` is
+  the smallest way, and it is Rust-only behaviour that the owner has to bless
+  or have removed.
+- **A case that is handed back after a request** reaches the stand-in twice:
+  the binary makes the request once, then the JavaScript starts over and
+  makes it again. In those cases compare which requests were made, not how
+  many (qqdocs uses `cut -f3- "$TMPDIR/mcp.log" | sort -u`), and let the
+  stand-in answer by what was asked, not by turn. Keep the exact log for the
+  cases the binary answers.
 - **What the program asks another program** (git): the wrapper puts a shim of
   that program first on `PATH`, which logs its arguments and calls the real
-  one; an `after` probe prints the log.
+  one (dotenvdotenc's `rs/parity/bin/git`); an `after` probe prints the log.
 - **The program keeps state in its own install directory** (onenote-cli's
   search index): give each case its own copy of the package. Never point
   `<PROJECT>_PACKAGE_ROOT` at a checkout that can hold a developer's real
@@ -228,10 +302,20 @@ rs/parity/run.sh rs/target/release/mycli"`):
 - **A value that must not be in the cases file** (dotenvdotenc refuses to
   commit a file holding a private key): the wrapper computes it.
 
-On a machine other runs share, give the run a temp directory of its own
-(`TMPDIR=$(mktemp -d)`), and never delete `rustify-parity-*` by pattern: the
-directories of runs in progress are among them, and a run that loses its
-directory reports differences that look like bugs in the port.
+The runner runs one case at a time. To use more cores, start several runners
+at once, each with its own `--filter` (give each group of cases a common name
+prefix). You can also run the plain, `--tty stdout,stderr` and `--handback`
+checks as separate processes, as onenote-cli's `rs/parity/proof.sh` does.
+Each run has its own directory, so the runs do not disturb each other.
+
+Each run works in `<temp>/rustify-parity-XXXXXX`, which holds an `IN-USE`
+file naming the process. If that directory or a case's directory disappears
+during the run, the runner stops with one line and exit code 3: what it
+printed for the last cases is not a result of the port. On a machine other
+runs share, give the run a temp directory of its own (`TMPDIR=$(mktemp -d)`),
+never clean up with `rm -rf /tmp/rustify-parity-*` (the directories of runs
+in progress are among them), and remove a directory kept with `--keep` by
+the exact path it prints.
 
 Never run the project's command by hand, outside the runner, unless `HOME`
 points at a throwaway directory: on a signed-in machine a harmless-looking
@@ -262,6 +346,11 @@ both for every platform it targets. A development machine usually cannot:
 what needs them behind a cargo feature, or compile it only for the platforms
 it is ported for, so that the rest of the crate can still be type-checked
 for every target, and take the first run of the pipeline as the test.
+
+On Windows, read the home directory and `APPDATA` from the environment, as
+node's `os.homedir()` reads `USERPROFILE`. The `dirs` crate asks the system
+for its folders instead. That is not what the TypeScript reads, and the
+smoke test's home directory (step 6) does not redirect it.
 
 ### What to hand back
 
@@ -315,6 +404,31 @@ correct only while nothing of the first attempt can be seen.
   TypeScript means"); the project first needs an error handler of its own,
   which is a change to the TypeScript for its owner to make.
 
+The hand-back helper carries the guard for the first three, from v5 on. Run
+the command through `js_fallback::attempt`, as the commented arm in the
+scaffold's `main.rs` shows. The command works out its whole answer before it
+prints or changes anything, and returns it. For an invocation or a state of
+the machine it does not implement, it returns `Err(js_fallback::HandBack)`,
+and the arm falls through to the hand-back. A panic before anything was
+printed is handed back too, without a word, so a bug in a ported command
+costs the user nothing but speed; with `RUSTIFY_HANDBACK_TRACE=1` the panic
+is reported, which is how to find it. A command that has to print or write
+while it works calls `js_fallback::commit()` first. After that, a panic ends
+it as any panic does (exit code 101), and handing back is a bug. All this
+needs unwinding, Rust's default, which the scaffold's Cargo.toml keeps: with
+`panic = "abort"`, a panic ends the process with its message and the
+JavaScript never runs. Print the answer with `write_all` and ignore its
+error, as bun ignores a reader that has gone away (`| head`); `print!`
+panics there. qqdocs, onenote-cli and dotenvdotenc each wrote this guard by
+hand before it existed.
+
+While an attempt runs, the binary keeps panics on every thread quiet, so a
+worker thread the command started says nothing either. In the crate's own
+tests only the threads that run an attempt are quiet, so a test that fails
+beside them keeps its message. Attempts may run on several threads at once
+and inside one another. A test that installs a panic hook of its own should
+not run beside tests that call `attempt`.
+
 ## 4. Switch the command over
 
 Add one arm for it in `main.rs`, guarded by `native()` so that
@@ -363,19 +477,76 @@ that can lead to a release:
         --rs "$RUSTIFY_BIN_DIR/mycli" --handback MYCLI_PACKAGE_ROOT=dist/cli.js
 ```
 
-It runs on Linux against the freshly built binary and has to pass before
-anything can be published. The job installs nothing by itself, hence the
-`bun install`. The workflow's `paths:` must list the TypeScript as well as the
-Rust, or a change to the TypeScript alone never reruns the comparison.
-`rustify vendor` writes those lines from `projects.toml`: one pattern per
-script extension for TypeScript at the root, `Cargo.toml`, `Cargo.lock`,
-`build.rs` and the `rust` directories for a crate at the root.
+It runs against the freshly built binary, on Linux x64 unless
+`parity-platforms` says otherwise (below), and has to pass before anything
+can be published. The job installs nothing of the project by itself, hence
+the `bun install`. It sets up node 24 and the bun the project pins in
+`.bun-version`, or in a `bun <version>` line of `.tool-versions`; without
+such a pin, setup-bun chooses by itself (`packageManager`, then `engines.bun`
+in `package.json`, otherwise the latest bun). A pin to one exact version
+fails the job when that is not the bun that got installed. The smoke test
+always takes the latest bun, as users run whatever bun they have. The
+workflow's `paths:` must list the TypeScript as well as the Rust, or a change
+to the TypeScript alone never reruns the comparison. `rustify vendor` writes
+those lines from `projects.toml`: one pattern per script extension for
+TypeScript at the root, `Cargo.toml`, `Cargo.lock`, `build.rs` and the `rust`
+directories for a crate at the root.
+
+A project whose output changes on a terminal adds a third command to
+`parity:`: the comparison again with `--tty stdout,stderr`. python3 is on
+GitHub's Linux and macOS runners. An option the runner does not know stops
+it with exit code 2, so a misspelt flag fails the job instead of passing on
+pipes. A value may also be written after an equals sign
+(`--tty=stdout,stderr`).
+
+`parity-platforms` runs the parity command on more platforms than Linux x64.
+It is a JSON list of platform keys (`linux-x64`, `linux-arm64`,
+`darwin-arm64`, `darwin-x64`, `win32-x64`, `win32-arm64`), for example
+`parity-platforms: '["linux-x64", "darwin-arm64", "win32-x64"]'`. Each
+platform runs the command on a runner of its own, in bash (Git Bash on
+Windows), with that platform's binaries in `$RUSTIFY_BIN_DIR` and its key in
+`$RUSTIFY_PLATFORM`. The default is `["linux-x64"]`, whose check keeps the
+name it always had, `parity (Rust against TypeScript)`, so a project that
+does not ask sees no change.
+
+A binary that answers natively on macOS or Windows should be proven there,
+or hand that platform back. Running existing ports' cases on a Mac found
+differences that Linux could not show: gchat-cli's binary runs a program file
+without a `#!` line through the shell, where bun fails with ENOEXEC, and in
+qqdocs a closed connection was taken as success. On Windows, about a third of
+genvx's cases differed; that is being investigated. Cases written for Linux
+may need work first. The GNU-only `stat -c` and `touch -d` fail on macOS. A
+terminal case is BROKEN on Windows, so run the `--tty` command only where
+`$RUSTIFY_PLATFORM` does not start with `win32`. Setup lines on Windows need
+a POSIX shell, and a case handed back on some platforms only needs a mark per
+platform; the runner's support for this is coming.
 
 Add a line to `smoke-extra` for the command too, so that every platform runs
 it once after installing: `<command> [args] => <text>`, with a leading `[2] `
 when it is meant to exit 2, a trailing ` !> <text>` for something it must not
-print, and `smoke-env` for variables it needs. The parity job runs on Linux
-only; the smoke lines are all that Windows and macOS get.
+print, and `smoke-env` for variables it needs. A platform that
+`parity-platforms` does not name gets only the smoke lines, and a command the
+binary hands back passes its line just as well. So mark the line with who has
+to answer it: `[native]` fails unless the binary answered itself,
+`[handback]` fails unless it handed the command to the JavaScript, and
+`[native:linux,darwin] [handback:win32]` says it per system, for a command
+that is native on some systems only. For a marked line the smoke test sets
+`RUSTIFY_HANDBACK_TRACE`, which makes `js_fallback::run` write `rustify:
+handed back to the JavaScript` to stderr; the other lines run without that
+variable. Only helper v5 and later can write that line, and the smoke test
+looks for its text in the installed binary: with an older helper, or none, a
+marked line fails rather than pass on a guess. So when a crate stops handing
+anything back and deletes `js_fallback.rs`, take the markers off its smoke
+lines in the same change.
+
+The smoke commands run with an empty home directory of their own, one per
+installer: HOME and USERPROFILE point there, on Windows HOMEDRIVE, HOMEPATH,
+APPDATA and LOCALAPPDATA too, and the XDG_*_HOME variables are removed. So a
+line cannot use the credentials of the machine it runs on, and what one line
+writes there the next line sees. `smoke-env` wins over it, and a line that
+needs the real home starts with `[real-home]`. The working directory is not
+changed. Pass the same `smoke-env` to rust-npm-verify, so that the lines run
+the same way after publishing.
 
 ## 7. Record it
 
