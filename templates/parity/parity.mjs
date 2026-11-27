@@ -22,7 +22,8 @@
 //
 // runs only the binary, with a stand-in package whose JavaScript entry does
 // nothing but say it was reached, and fails unless exactly the cases marked
-// "handback" got there. --tty and --capture apply here as well.
+// "handback" for this operating system got there (see "Platforms"). --tty
+// and --capture apply here as well.
 //
 // Every case runs once per implementation, each time in its own fresh
 // directory with its own empty HOME, so nothing leaks between runs or in from
@@ -46,8 +47,11 @@
 //         "timeout": 30,                         // optional, in seconds (120)
 //         "tty": true,                           // optional, see "A terminal"
 //         "capture": "files",                    // optional, see "Regular files"
-//         "handback": "usage errors belong to yargs"  // optional: this case is
-//                                  // MEANT to reach the JavaScript, and why
+//         "handback": "usage errors belong to yargs", // optional: this case is
+//                                  // MEANT to reach the JavaScript, and why;
+//                                  // also per system, see "Platforms"
+//         "skip": { "win32": "needs a POSIX file mode" } // optional: not run
+//                                  // on these systems, and why ("Platforms")
 //       }
 //     ]
 //   }
@@ -160,6 +164,33 @@
 // pipe, and what a process it left behind writes later is not seen, hence
 // not the default.
 //
+// Platforms. The same cases run on Linux, macOS and Windows, and a port may
+// answer a command itself on some of them and hand it back on others. A
+// "handback" given as text holds on every system, as it always has. Given as
+// an object, it holds on the systems it names, each with its reason, and the
+// case is meant to be answered by the binary everywhere else:
+//
+//     "handback": { "win32": "node's path rules are not ported" }
+//
+// "skip" names the systems where a case is not run at all, because it cannot
+// mean the same thing there (a file mode, a signal, a GNU tool):
+//
+//     "skip": { "win32": "needs a POSIX file mode", "darwin": "GNU stat" }
+//
+// Systems are named as node's process.platform names them: linux, darwin,
+// win32 (and the others node knows, such as freebsd). There is no name for an
+// architecture (darwin-arm64, as the pipeline's platform keys are written):
+// a port's code differs by operating system, not by processor, and the node
+// that runs the runner can be of another architecture than the binary (x64
+// under emulation on an ARM machine), so such a mark could hold for the wrong
+// one. A name the runner does not know is a mistake, so a misspelt one
+// (windows, macos) cannot hold nowhere without anyone noticing.
+//
+// A skipped case shows as "skip" where it would have been compared, and at
+// the end of every run, in both modes, the runner says how many cases were
+// skipped on this system and why. A run in which every case was skipped ran
+// nothing: "no case ran", exit code 2.
+//
 // The run's directory is <temp>/rustify-parity-XXXXXX and holds a file IN-USE
 // while the run lasts. If that directory, that file, or the <ROOT> of the case
 // that is running is removed under the runner (a clean-up of the temp
@@ -246,6 +277,27 @@ const command = (text) =>
 const impls = { ts: opts.ts ? command(opts.ts) : null, rs: command(opts.rs) };
 const MARKER = "__RUSTIFY_HANDED_BACK__";
 
+// The operating systems a "handback" or "skip" can name: process.platform's
+// names. Architectures are not told apart (see the header).
+const SYSTEMS = ["linux", "darwin", "win32", "freebsd", "openbsd", "netbsd", "sunos", "aix", "android", "cygwin"];
+
+// A mark keyed by operating system, { "win32": "why" }: the reason it gives
+// for this one, or null. A mistake in it stops the run.
+function forThisSystem(marks, key, where) {
+  const shape = `"${key}" takes an object keyed by operating system, as node names it, with the reason as text: { "win32": "why" }`;
+  if (marks === null || typeof marks !== "object" || Array.isArray(marks)) mistake(`${where}: ${shape}; it has ${JSON.stringify(marks)}`);
+  for (const [system, reason] of Object.entries(marks)) {
+    if (!SYSTEMS.includes(system) && system !== process.platform) {
+      // darwin-arm64, as the pipeline's platform keys are written.
+      const [name] = system.split("-");
+      if (SYSTEMS.includes(name)) mistake(`${where}: "${key}" names ${JSON.stringify(system)}: the runner tells operating systems apart, not architectures; say ${JSON.stringify(name)}`);
+      mistake(`${where}: "${key}" names ${JSON.stringify(system)}, which is not an operating system as process.platform names it (linux, darwin, win32, …)`);
+    }
+    if (typeof reason !== "string" || !reason.trim()) mistake(`${where}: "${key}" needs a reason for ${system}, as text`);
+  }
+  return Object.hasOwn(marks, process.platform) ? marks[process.platform] : null;
+}
+
 const STREAMS = ["stdin", "stdout", "stderr"];
 const TERMINAL_PY = path.join(path.dirname(fileURLToPath(import.meta.url)), "terminal.py");
 const WINDOW = { columns: 80, rows: 24 };
@@ -284,7 +336,15 @@ function planOf(testCase) {
   } else if (terminals.includes("stdin") && String(stdin) !== "") {
     typed = [["", String(stdin)]];
   }
-  return { terminals, files: capture === "files", typed, piped: terminals.includes("stdin") || Array.isArray(stdin) ? "" : stdin };
+  // "handback" as text (or anything else that is true) holds everywhere, as it
+  // always has; as an object, on the systems it names. "skip" is always an
+  // object. Each comes down to this system's reason, or null.
+  const marked = testCase.handback !== null && typeof testCase.handback === "object";
+  const handback = marked ? forThisSystem(testCase.handback, "handback", where) : testCase.handback ? String(testCase.handback) : null;
+  const skip = testCase.skip == null ? null : forThisSystem(testCase.skip, "skip", where);
+  // For a case handed back elsewhere only: where, to say so when it is handed back here.
+  const handbackElsewhere = marked && handback === null ? Object.keys(testCase.handback) : [];
+  return { terminals, files: capture === "files", typed, piped: terminals.includes("stdin") || Array.isArray(stdin) ? "" : stdin, handback, handbackElsewhere, skip };
 }
 
 const selected = spec.cases
@@ -568,6 +628,23 @@ function show(label, text, spell) {
 let failed = 0;
 let ran = 0;
 
+// The cases a "skip" keeps from running on this system, by reason.
+const skipped = new Map();
+function skips(testCase, plan) {
+  if (plan.skip === null) return false;
+  if (!skipped.has(plan.skip)) skipped.set(plan.skip, []);
+  skipped.get(plan.skip).push(testCase.name);
+  return true;
+}
+
+// How many cases did not run here, and why: at the end of every run.
+function skipReport() {
+  if (!skipped.size) return;
+  const count = [...skipped.values()].reduce((sum, names) => sum + names.length, 0);
+  console.log(`${count} case(s) skipped on ${process.platform}, as the cases say:`);
+  for (const [reason, names] of skipped) console.log(`  ${String(names.length).padStart(4)}  ${reason}`);
+}
+
 // --handback ROOT_ENV=entry: which cases does the binary answer itself?
 function handbackCheck() {
   const { rootEnv, entry } = handback;
@@ -580,6 +657,7 @@ function handbackCheck() {
   let native = 0;
   let back = 0;
   for (const { testCase, index, plan } of selected) {
+    if (skips(testCase, plan)) continue;
     ran++;
     const run = runCase(testCase, "rs", index, plan, { [rootEnv]: standIn });
     if (run.broken) {
@@ -591,19 +669,24 @@ function handbackCheck() {
     const reached = `${run.observed.stdout ?? ""}${run.observed.terminal ?? ""}`.includes(MARKER);
     if (reached) back++;
     else native++;
-    if (reached === Boolean(testCase.handback)) continue;
+    if (reached === (plan.handback !== null)) continue;
     failed++;
-    console.log(
-      reached
-        ? `  WRONG   ${testCase.name}\n      reached the JavaScript, but the case does not say "handback"`
-        : `  WRONG   ${testCase.name}\n      was answered by the binary, but the case says it is handed back (${testCase.handback})`,
-    );
+    const system = typeof testCase.handback === "object" ? `on ${process.platform}: ` : "";
+    let why;
+    if (!reached) why = `was answered by the binary, but the case says it is handed back (${system}${plan.handback})`;
+    else if (plan.handbackElsewhere.length) why = `reached the JavaScript on ${process.platform}, but the case says "handback" only on ${plan.handbackElsewhere.join(", ")}`;
+    else why = 'reached the JavaScript, but the case does not say "handback"';
+    console.log(`  WRONG   ${testCase.name}\n      ${why}`);
   }
   if (ran && !failed) console.log(`${native} case(s) answered by the binary, ${back} handed back to the JavaScript, as the cases say`);
 }
 
 function compareAll() {
   for (const { testCase, index, plan } of selected) {
+    if (skips(testCase, plan)) {
+      console.log(`  skip    ${testCase.name}`);
+      continue;
+    }
     ran++;
     const ts = runCase(testCase, "ts", index, plan);
     const rs = runCase(testCase, "rs", index, plan);
@@ -654,6 +737,7 @@ try {
   } else fs.rmSync(work, { recursive: true, force: true, maxRetries: 3 });
 }
 if (gone) process.exit(3);
+skipReport();
 if (!ran) {
   console.log("no case ran");
   process.exit(2);

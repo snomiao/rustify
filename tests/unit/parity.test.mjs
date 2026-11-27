@@ -856,3 +856,113 @@ test("capture: files with a terminal: the streams that are not the terminal go t
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// An operating system other than this one, for marks that must not hold here.
+const OTHER = process.platform === "linux" ? "darwin" : "linux";
+
+// --handback with the binary of setup(): `back …` goes to the entry under
+// $DEMO_ROOT, everything else is answered.
+const HANDS_BACK = `
+  if (cmd === "back") {
+    const { spawnSync } = require("child_process");
+    const r = spawnSync(process.execPath, [require("path").join(process.env.DEMO_ROOT, "dist/cli.js"), ...rest], { stdio: "inherit" });
+    process.exit(r.status);
+  }
+`;
+function handbackRun(dir, cases, extra = []) {
+  fs.writeFileSync(path.join(dir, "parity.json"), JSON.stringify({ cases }));
+  return spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--rs", `${process.execPath} rs.cjs`, "--handback", "DEMO_ROOT=dist/cli.js", ...extra], { cwd: dir, encoding: "utf8" });
+}
+
+test('"handback" keyed by operating system holds on the systems it names, and only there', () => {
+  const dir = setup(HANDS_BACK);
+  try {
+    const good = handbackRun(dir, [
+      { name: "answered here, handed back elsewhere", args: ["echo", "x"], handback: { [OTHER]: "not ported there" } },
+      { name: "handed back here", args: ["back", "y"], handback: { [process.platform]: "not ported here", [OTHER]: "nor there" } },
+      { name: "handed back everywhere", args: ["back", "z"], handback: "not ported" },
+    ]);
+    assert.equal(good.status, 0, good.stdout + good.stderr);
+    assert.equal(good.stdout, "1 case(s) answered by the binary, 2 handed back to the JavaScript, as the cases say\n");
+
+    const wrong = handbackRun(dir, [
+      { name: "handed back where it should not be", args: ["back", "x"], handback: { [OTHER]: "not ported there" } },
+      { name: "answered where it should be handed back", args: ["echo", "y"], handback: { [process.platform]: "not ported here" } },
+      { name: "an empty mark is no mark", args: ["back", "x"], handback: {} },
+    ]);
+    assert.equal(wrong.status, 1);
+    assert.equal(
+      wrong.stdout,
+      `  WRONG   handed back where it should not be\n      reached the JavaScript on ${process.platform}, but the case says "handback" only on ${OTHER}\n` +
+        `  WRONG   answered where it should be handed back\n      was answered by the binary, but the case says it is handed back (on ${process.platform}: not ported here)\n` +
+        `  WRONG   an empty mark is no mark\n      reached the JavaScript, but the case does not say "handback"\n` +
+        "3 of 3 case(s) went the wrong way\n",
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('"skip" keeps a case from running on the systems it names, and the end of the run says how many and why', () => {
+  // A skipped case would differ, or be broken, if it ran.
+  const dir = setup(`
+    if (cmd === "differs") console.log("only in Rust");
+  ` + HANDS_BACK);
+  try {
+    const cases = [
+      { name: "runs", args: ["echo", "x"] },
+      { name: "skipped here", args: ["differs"], skip: { [process.platform]: "means something else here" } },
+      { name: "skipped here too", args: ["back", "x"], setup: ["exit 7"], skip: { [process.platform]: "means something else here" } },
+      { name: "skipped for another reason", args: ["differs"], skip: { [process.platform]: "needs a POSIX file mode", [OTHER]: "not there either" } },
+      { name: "skipped elsewhere only, so it runs", args: ["echo", "y"], skip: { [OTHER]: "not there" } },
+    ];
+    const report = `3 case(s) skipped on ${process.platform}, as the cases say:\n     2  means something else here\n     1  needs a POSIX file mode\n`;
+    const r = run(dir, { cases });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.equal(
+      r.stdout,
+      "  same    runs\n  skip    skipped here\n  skip    skipped here too\n  skip    skipped for another reason\n  same    skipped elsewhere only, so it runs\n" +
+        report +
+        "all 2 case(s) behave the same\n",
+    );
+    // --handback: a skipped case is not checked either, and the end says so too.
+    const checked = handbackRun(dir, cases);
+    assert.equal(checked.status, 0, checked.stdout + checked.stderr);
+    assert.equal(checked.stdout, `2 case(s) answered by the binary, 0 handed back to the JavaScript, as the cases say\n${report}`);
+    // A run in which every case was skipped ran nothing.
+    const none = `2 case(s) skipped on ${process.platform}, as the cases say:\n     2  means something else here\nno case ran\n`;
+    const all = run(dir, { cases }, ["--filter", "skipped here"]);
+    assert.equal(all.status, 2, all.stdout + all.stderr);
+    assert.equal(all.stdout, `  skip    skipped here\n  skip    skipped here too\n${none}`);
+    const allChecked = handbackRun(dir, cases, ["--filter", "skipped here"]);
+    assert.equal(allChecked.status, 2, allChecked.stdout + allChecked.stderr);
+    assert.equal(allChecked.stdout, none);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a mistake in "handback" or "skip" stops the run before any case, with exit code 2', () => {
+  const dir = setup();
+  try {
+    const bad = (testCase) => {
+      const r = run(dir, { cases: [{ name: "a", args: ["echo"], ...testCase }] });
+      assert.equal(r.status, 2, r.stdout + r.stderr);
+      assert.equal(r.stdout, "");
+      return r.stderr;
+    };
+    const shape = '"skip" takes an object keyed by operating system, as node names it, with the reason as text: { "win32": "why" }';
+    assert.equal(bad({ skip: "everywhere" }), `parity: case "a": ${shape}; it has "everywhere"\n`);
+    assert.equal(bad({ skip: ["win32"] }), `parity: case "a": ${shape}; it has ["win32"]\n`);
+    assert.match(bad({ handback: ["win32"] }), /^parity: case "a": "handback" takes an object keyed by operating system/);
+    assert.match(bad({ skip: { windows: "no POSIX file mode" } }), /^parity: case "a": "skip" names "windows", which is not an operating system as process\.platform names it \(linux, darwin, win32, …\)\n$/);
+    assert.match(bad({ handback: { "darwin-arm64": "x" } }), /^parity: case "a": "handback" names "darwin-arm64": the runner tells operating systems apart, not architectures; say "darwin"\n$/);
+    assert.equal(bad({ skip: { [process.platform]: "" } }), `parity: case "a": "skip" needs a reason for ${process.platform}, as text\n`);
+    assert.equal(bad({ handback: { [OTHER]: true } }), `parity: case "a": "handback" needs a reason for ${OTHER}, as text\n`);
+    // A case that --filter leaves out is not looked at.
+    const r = run(dir, { cases: [{ name: "good", args: ["echo", "x"] }, { name: "bad", args: ["echo"], skip: "nowhere" }] }, ["--filter", "good"]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
