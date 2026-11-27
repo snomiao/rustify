@@ -282,7 +282,8 @@ test("a file of a case that this system cannot make is that case BROKEN, and the
       ],
     });
     assert.equal(r.status, 1, r.stdout + r.stderr);
-    assert.match(r.stdout, /BROKEN {2}unmakeable\n {6}the case's file "sub\/n+" could not be made here: ENAMETOOLONG\n/);
+    // Windows says ENOENT for a name that is too long.
+    assert.match(r.stdout, /BROKEN {2}unmakeable\n {6}the case's file "sub\/n+" could not be made here: (ENAMETOOLONG|ENOENT)\n/);
     assert.match(r.stdout, /same {4}plain\n/);
     assert.equal(r.stderr, "");
   } finally {
