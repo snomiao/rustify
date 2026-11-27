@@ -4,7 +4,7 @@
 |---|---|---|---|
 | agent-yes | 1 verified, 8 ported, 125 partial, 201 missing of 335 | JavaScript | port the missing features |
 | slack-hub | 6 verified, 0 ported, 14 partial, 132 missing of 152 | JavaScript | port the missing features |
-| rechrome | not started | JavaScript | write the parity ledger |
+| rechrome | 0 verified, 0 ported, 0 partial, 328 missing of 328 | JavaScript | reconcile the parity ledger |
 | otoji | started, not measured | JavaScript | write the parity ledger |
 | codehost | not started | JavaScript | write the parity ledger |
 | fbi-proxy | started, not measured | JavaScript | write the parity ledger |
@@ -163,7 +163,229 @@
 
 **Parity ledger**
 
-- `todo` no ledger at `parity/rechrome.toml`, so progress cannot be measured
+- `info` 328 features: 0 verified, 0 ported but unproven, 0 partial, 328 missing, 0 dropped
+- `warn` `rech fill-secret | read-secret | read-storage | read-cookie | read-headers | upload | audio --help / -h (fixed usage texts)`: ts path `audio-bridge.ts` does not exist
+- `warn` `rech audio: usage text, one JSON result line, or one fixed failure line with exit 1`: ts path `audio-bridge.ts` does not exist
+- `warn` `rech audio: usage text, one JSON result line, or one fixed failure line with exit 1`: ts path `audio-bridge-client.ts` does not exist
+- `warn` `rech audio: usage text, one JSON result line, or one fixed failure line with exit 1`: ts path `audio-bridge-client.ts` does not exist
+- `warn` `audio argument grammar and the path-free wire form`: ts path `audio-bridge.ts` does not exist
+- `warn` `audio argument grammar and the path-free wire form`: ts path `audio-bridge.ts` does not exist
+- `warn` `audio argument grammar and the path-free wire form`: ts path `audio-bridge.ts` does not exist
+- `warn` `audio argument grammar and the path-free wire form`: ts path `audio-bridge.ts` does not exist
+- `warn` `audio argument grammar and the path-free wire form`: ts path `audio-bridge.ts` does not exist
+- `warn` `audio argument grammar and the path-free wire form`: ts path `audio-bridge.ts` does not exist
+- `warn` `audio argument grammar and the path-free wire form`: ts path `audio-bridge-client.ts` does not exist
+- `warn` `audio argument grammar and the path-free wire form`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `rech audio install <url> [--capture] [--max-seconds 1..60]`: ts path `audio-bridge.ts` does not exist
+- `warn` `rech audio install <url> [--capture] [--max-seconds 1..60]`: ts path `audio-bridge.ts` does not exist
+- `warn` `rech audio install <url> [--capture] [--max-seconds 1..60]`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `rech audio install <url> [--capture] [--max-seconds 1..60]`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `audio install URL rule: https, or http on exact loopback`: ts path `audio-bridge.ts` does not exist
+- `warn` `audio install URL rule: https, or http on exact loopback`: ts path `audio-bridge.ts` does not exist
+- `warn` `audio install URL rule: https, or http on exact loopback`: ts path `audio-bridge.ts` does not exist
+- `warn` `audio install URL rule: https, or http on exact loopback`: ts path `audio-bridge.ts` does not exist
+- `warn` `rech audio status`: ts path `audio-bridge.ts` does not exist
+- `warn` `rech audio status`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `rech audio status`: ts path `audio-bridge.ts` does not exist
+- `warn` `rech audio status`: ts path `audio-bridge-client.ts` does not exist
+- `warn` `rech audio status`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `audio status fields and the 14 `unsupported` codes`: ts path `audio-bridge.ts` does not exist
+- `warn` `audio status fields and the 14 `unsupported` codes`: ts path `audio-bridge.ts` does not exist
+- `warn` `audio status fields and the 14 `unsupported` codes`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `audio status fields and the 14 `unsupported` codes`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `audio status fields and the 14 `unsupported` codes`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `rech audio feed <wav-file>`: ts path `audio-bridge.ts` does not exist
+- `warn` `rech audio feed <wav-file>`: ts path `audio-bridge-client.ts` does not exist
+- `warn` `rech audio feed <wav-file>`: ts path `audio-bridge-client.ts` does not exist
+- `warn` `rech audio feed <wav-file>`: ts path `audio-bridge.ts` does not exist
+- `warn` `rech audio feed <wav-file>`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `rech audio feed <wav-file>`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `PCM WAV admission (client and daemon)`: ts path `audio-bridge.ts` does not exist
+- `warn` `PCM WAV admission (client and daemon)`: ts path `audio-bridge.ts` does not exist
+- `warn` `PCM WAV admission (client and daemon)`: ts path `audio-bridge.ts` does not exist
+- `warn` `PCM WAV admission (client and daemon)`: ts path `audio-bridge-client.ts` does not exist
+- `warn` `PCM WAV admission (client and daemon)`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `PCM WAV admission (client and daemon)`: ts path `audio-bridge.ts` does not exist
+- `warn` `rech audio capture start`: ts path `audio-bridge.ts` does not exist
+- `warn` `rech audio capture start`: ts path `audio-bridge.ts` does not exist
+- `warn` `rech audio capture start`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `rech audio capture start`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `rech audio drain --dir <client-dir>`: ts path `audio-bridge.ts` does not exist
+- `warn` `rech audio drain --dir <client-dir>`: ts path `audio-bridge-client.ts` does not exist
+- `warn` `rech audio drain --dir <client-dir>`: ts path `audio-bridge-client.ts` does not exist
+- `warn` `rech audio drain --dir <client-dir>`: ts path `audio-bridge-client.ts` does not exist
+- `warn` `rech audio drain --dir <client-dir>`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `rech audio drain --dir <client-dir>`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `rech audio drain --dir <client-dir>`: ts path `audio-bridge-files.ts` does not exist
+- `warn` `rech audio stop [--dir <client-dir>]`: ts path `audio-bridge.ts` does not exist
+- `warn` `rech audio stop [--dir <client-dir>]`: ts path `audio-bridge-client.ts` does not exist
+- `warn` `rech audio stop [--dir <client-dir>]`: ts path `audio-bridge-client.ts` does not exist
+- `warn` `rech audio stop [--dir <client-dir>]`: ts path `audio-bridge-client.ts` does not exist
+- `warn` `rech audio stop [--dir <client-dir>]`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `rech audio stop [--dir <client-dir>]`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `rech audio stop [--dir <client-dir>]`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `captured audio files: <dir>/<bridge id>/s-<n>.webm, manifest.json, .write-lock`: ts path `audio-bridge-files.ts` does not exist
+- `warn` `captured audio files: <dir>/<bridge id>/s-<n>.webm, manifest.json, .write-lock`: ts path `audio-bridge-files.ts` does not exist
+- `warn` `captured audio files: <dir>/<bridge id>/s-<n>.webm, manifest.json, .write-lock`: ts path `audio-bridge-files.ts` does not exist
+- `warn` `captured audio files: <dir>/<bridge id>/s-<n>.webm, manifest.json, .write-lock`: ts path `audio-bridge-files.ts` does not exist
+- `warn` `captured audio files: <dir>/<bridge id>/s-<n>.webm, manifest.json, .write-lock`: ts path `audio-bridge-files.ts` does not exist
+- `warn` `captured audio files: <dir>/<bridge id>/s-<n>.webm, manifest.json, .write-lock`: ts path `audio-bridge-files.ts` does not exist
+- `warn` `saving captured audio is retryable: receipt digest, sequence check, partial-write recovery, single writer`: ts path `audio-bridge-files.ts` does not exist
+- `warn` `saving captured audio is retryable: receipt digest, sequence check, partial-write recovery, single writer`: ts path `audio-bridge-files.ts` does not exist
+- `warn` `saving captured audio is retryable: receipt digest, sequence check, partial-write recovery, single writer`: ts path `audio-bridge-files.ts` does not exist
+- `warn` `saving captured audio is retryable: receipt digest, sequence check, partial-write recovery, single writer`: ts path `audio-bridge-files.ts` does not exist
+- `warn` `saving captured audio is retryable: receipt digest, sequence check, partial-write recovery, single writer`: ts path `audio-bridge-files.ts` does not exist
+- `warn` `saving captured audio is retryable: receipt digest, sequence check, partial-write recovery, single writer`: ts path `audio-bridge-files.ts` does not exist
+- `warn` `saving captured audio is retryable: receipt digest, sequence check, partial-write recovery, single writer`: ts path `audio-bridge-files.ts` does not exist
+- `warn` `audio privacy rule: no path, URL, audio byte or page text in arguments, logs, stdout or error messages`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `audio privacy rule: no path, URL, audio byte or page text in arguments, logs, stdout or error messages`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `audio privacy rule: no path, URL, audio byte or page text in arguments, logs, stdout or error messages`: ts path `audio-bridge-client.ts` does not exist
+- `warn` `audio privacy rule: no path, URL, audio byte or page text in arguments, logs, stdout or error messages`: ts path `audio-bridge-client.ts` does not exist
+- `warn` `audio privacy rule: no path, URL, audio byte or page text in arguments, logs, stdout or error messages`: ts path `audio-bridge.ts` does not exist
+- `warn` `audio privacy rule: no path, URL, audio byte or page text in arguments, logs, stdout or error messages`: ts path `audio-bridge.ts` does not exist
+- `warn` `audio on the wire: `upload` in the /run body, `audioOut` in the reply, and the wire-only `audio ack <receipt>``: ts path `audio-bridge-server.ts` does not exist
+- `warn` `audio on the wire: `upload` in the /run body, `audioOut` in the reply, and the wire-only `audio ack <receipt>``: ts path `audio-bridge-server.ts` does not exist
+- `warn` `audio on the wire: `upload` in the /run body, `audioOut` in the reply, and the wire-only `audio ack <receipt>``: ts path `audio-bridge-server.ts` does not exist
+- `warn` `audio on the wire: `upload` in the /run body, `audioOut` in the reply, and the wire-only `audio ack <receipt>``: ts path `audio-bridge-server.ts` does not exist
+- `warn` `audio on the wire: `upload` in the /run body, `audioOut` in the reply, and the wire-only `audio ack <receipt>``: ts path `audio-bridge-server.ts` does not exist
+- `warn` `audio on the wire: `upload` in the /run body, `audioOut` in the reply, and the wire-only `audio ack <receipt>``: ts path `audio-bridge-client.ts` does not exist
+- `warn` `audio on the wire: `upload` in the /run body, `audioOut` in the reply, and the wire-only `audio ack <receipt>``: ts path `audio-bridge-client.ts` does not exist
+- `warn` `audio on the wire: `upload` in the /run body, `audioOut` in the reply, and the wire-only `audio ack <receipt>``: ts path `audio-bridge-client.ts` does not exist
+- `warn` `audio on the daemon: one bridge per session, generation and origin fencing, retirement, 8 sessions, serialized requests`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `audio on the daemon: one bridge per session, generation and origin fencing, retirement, 8 sessions, serialized requests`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `audio on the daemon: one bridge per session, generation and origin fencing, retirement, 8 sessions, serialized requests`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `audio on the daemon: one bridge per session, generation and origin fencing, retirement, 8 sessions, serialized requests`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `audio on the daemon: one bridge per session, generation and origin fencing, retirement, 8 sessions, serialized requests`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `audio on the daemon: one bridge per session, generation and origin fencing, retirement, 8 sessions, serialized requests`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `audio on the daemon: one bridge per session, generation and origin fencing, retirement, 8 sessions, serialized requests`: ts path `docs/audio-duplex.md` does not exist
+- `warn` `drained audio is kept on the daemon until the client acknowledges its receipt`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `drained audio is kept on the daemon until the client acknowledges its receipt`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `drained audio is kept on the daemon until the client acknowledges its receipt`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `bounded browser results: how the daemon reads what the page returned`: ts path `audio-bridge.ts` does not exist
+- `warn` `bounded browser results: how the daemon reads what the page returned`: ts path `audio-bridge.ts` does not exist
+- `warn` `bounded browser results: how the daemon reads what the page returned`: ts path `audio-bridge.ts` does not exist
+- `warn` `bounded browser results: how the daemon reads what the page returned`: ts path `audio-bridge.ts` does not exist
+- `warn` `bounded browser results: how the daemon reads what the page returned`: ts path `audio-bridge.ts` does not exist
+- `warn` `bounded browser results: how the daemon reads what the page returned`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `bounded browser results: how the daemon reads what the page returned`: ts path `audio-bridge-files.ts` does not exist
+- `warn` `the two fixed run-code programs the daemon sends to the browser for audio (install, action)`: ts path `audio-bridge.ts` does not exist
+- `warn` `the two fixed run-code programs the daemon sends to the browser for audio (install, action)`: ts path `audio-bridge.ts` does not exist
+- `warn` `the two fixed run-code programs the daemon sends to the browser for audio (install, action)`: ts path `audio-bridge.ts` does not exist
+- `warn` `the two fixed run-code programs the daemon sends to the browser for audio (install, action)`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `the two fixed run-code programs the daemon sends to the browser for audio (install, action)`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `rech audio stream --source <id> --destination <id> [--rate 16000|48000] [--channels 1|2] [--max-seconds 1..300]`: ts path `audio-stream-client.ts` does not exist
+- `warn` `rech audio stream --source <id> --destination <id> [--rate 16000|48000] [--channels 1|2] [--max-seconds 1..300]`: ts path `audio-stream-client.ts` does not exist
+- `warn` `rech audio stream --source <id> --destination <id> [--rate 16000|48000] [--channels 1|2] [--max-seconds 1..300]`: ts path `audio-stream.ts` does not exist
+- `warn` `rech audio stream --source <id> --destination <id> [--rate 16000|48000] [--channels 1|2] [--max-seconds 1..300]`: ts path `audio-bridge.ts` does not exist
+- `warn` `audio stream stdin/stdout contract (raw s16le frames, one stderr line, exit codes)`: ts path `audio-stream-client.ts` does not exist
+- `warn` `audio stream stdin/stdout contract (raw s16le frames, one stderr line, exit codes)`: ts path `audio-stream-client.ts` does not exist
+- `warn` `audio stream stdin/stdout contract (raw s16le frames, one stderr line, exit codes)`: ts path `audio-stream-client.ts` does not exist
+- `warn` `audio stream stdin/stdout contract (raw s16le frames, one stderr line, exit codes)`: ts path `audio-stream-client.ts` does not exist
+- `warn` `audio stream stdin/stdout contract (raw s16le frames, one stderr line, exit codes)`: ts path `audio-stream-client.ts` does not exist
+- `warn` `audio stream stdin/stdout contract (raw s16le frames, one stderr line, exit codes)`: ts path `docs/audio-duplex.md` does not exist
+- `warn` `rech audio stream ticket --source <id> --destination <id> [--client-origin <origin>] --ticket-file <path>`: ts path `audio-stream-client.ts` does not exist
+- `warn` `rech audio stream ticket --source <id> --destination <id> [--client-origin <origin>] --ticket-file <path>`: ts path `audio-stream-client.ts` does not exist
+- `warn` `rech audio stream ticket --source <id> --destination <id> [--client-origin <origin>] --ticket-file <path>`: ts path `audio-stream-client.ts` does not exist
+- `warn` `rech audio stream ticket --source <id> --destination <id> [--client-origin <origin>] --ticket-file <path>`: ts path `audio-stream-client.ts` does not exist
+- `warn` `rech audio stream ticket --source <id> --destination <id> [--client-origin <origin>] --ticket-file <path>`: ts path `audio-stream.ts` does not exist
+- `warn` `rech audio stream ticket --source <id> --destination <id> [--client-origin <origin>] --ticket-file <path>`: ts path `audio-bridge.ts` does not exist
+- `warn` `rech audio stream ticket --source <id> --destination <id> [--client-origin <origin>] --ticket-file <path>`: ts path `docs/audio-duplex.md` does not exist
+- `warn` `rech audio stream stop`: ts path `audio-stream-client.ts` does not exist
+- `warn` `rech audio stream stop`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `rech audio stream stop`: ts path `audio-bridge.ts` does not exist
+- `warn` `audio stream options and the `audio stream open` wire command (checked on the client and again on the daemon)`: ts path `audio-stream.ts` does not exist
+- `warn` `audio stream options and the `audio stream open` wire command (checked on the client and again on the daemon)`: ts path `audio-stream.ts` does not exist
+- `warn` `audio stream options and the `audio stream open` wire command (checked on the client and again on the daemon)`: ts path `audio-stream.ts` does not exist
+- `warn` `audio stream options and the `audio stream open` wire command (checked on the client and again on the daemon)`: ts path `audio-stream-client.ts` does not exist
+- `warn` `audio stream options and the `audio stream open` wire command (checked on the client and again on the daemon)`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `audio stream ticket JSON (version 1) and the `audioStream` field of the /run reply`: ts path `audio-stream.ts` does not exist
+- `warn` `audio stream ticket JSON (version 1) and the `audioStream` field of the /run reply`: ts path `audio-stream-server.ts` does not exist
+- `warn` `audio stream ticket JSON (version 1) and the `audioStream` field of the /run reply`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `audio stream ticket JSON (version 1) and the `audioStream` field of the /run reply`: ts path `audio-stream-client.ts` does not exist
+- `warn` `audio stream ticket JSON (version 1) and the `audioStream` field of the /run reply`: ts path `docs/audio-duplex.md` does not exist
+- `warn` `audio stream client on the socket (connectPcmStream): hello, credit, ordered output acknowledgement, end reasons`: ts path `audio-stream-client.ts` does not exist
+- `warn` `audio stream client on the socket (connectPcmStream): hello, credit, ordered output acknowledgement, end reasons`: ts path `audio-stream-client.ts` does not exist
+- `warn` `audio stream client on the socket (connectPcmStream): hello, credit, ordered output acknowledgement, end reasons`: ts path `audio-stream-client.ts` does not exist
+- `warn` `audio stream client on the socket (connectPcmStream): hello, credit, ordered output acknowledgement, end reasons`: ts path `audio-stream-client.ts` does not exist
+- `warn` `audio stream client on the socket (connectPcmStream): hello, credit, ordered output acknowledgement, end reasons`: ts path `audio-stream-client.ts` does not exist
+- `warn` `audio stream client on the socket (connectPcmStream): hello, credit, ordered output acknowledgement, end reasons`: ts path `audio-stream-client.ts` does not exist
+- `warn` `audio stream on the daemon: `audio stream open` and `audio stream stop` on /run, admitted against the bridge's state`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `audio stream on the daemon: `audio stream open` and `audio stream stop` on /run, admitted against the bridge's state`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `audio stream on the daemon: `audio stream open` and `audio stream stop` on /run, admitted against the bridge's state`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `audio stream on the daemon: `audio stream open` and `audio stream stop` on /run, admitted against the bridge's state`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `audio stream on the daemon: `audio stream open` and `audio stream stop` on /run, admitted against the bridge's state`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `audio stream on the daemon: `audio stream open` and `audio stream stop` on /run, admitted against the bridge's state`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `audio stream on the daemon: `audio stream open` and `audio stream stop` on /run, admitted against the bridge's state`: ts path `audio-stream.ts` does not exist
+- `warn` `audio stream gateway (a loopback server per stream: one-use capability, time limits, stop reasons)`: ts path `audio-stream-server.ts` does not exist
+- `warn` `audio stream gateway (a loopback server per stream: one-use capability, time limits, stop reasons)`: ts path `audio-stream-server.ts` does not exist
+- `warn` `audio stream gateway (a loopback server per stream: one-use capability, time limits, stop reasons)`: ts path `audio-stream-server.ts` does not exist
+- `warn` `audio stream gateway (a loopback server per stream: one-use capability, time limits, stop reasons)`: ts path `audio-stream-server.ts` does not exist
+- `warn` `audio stream gateway (a loopback server per stream: one-use capability, time limits, stop reasons)`: ts path `audio-stream-server.ts` does not exist
+- `warn` `audio stream WebSocket endpoint ws://127.0.0.1:<port>/stream (PCM duplex v1, what a client program speaks)`: ts path `audio-stream-server.ts` does not exist
+- `warn` `audio stream WebSocket endpoint ws://127.0.0.1:<port>/stream (PCM duplex v1, what a client program speaks)`: ts path `audio-stream-server.ts` does not exist
+- `warn` `audio stream WebSocket endpoint ws://127.0.0.1:<port>/stream (PCM duplex v1, what a client program speaks)`: ts path `audio-stream-server.ts` does not exist
+- `warn` `audio stream WebSocket endpoint ws://127.0.0.1:<port>/stream (PCM duplex v1, what a client program speaks)`: ts path `audio-stream-server.ts` does not exist
+- `warn` `audio stream WebSocket endpoint ws://127.0.0.1:<port>/stream (PCM duplex v1, what a client program speaks)`: ts path `audio-stream-server.ts` does not exist
+- `warn` `audio stream WebSocket endpoint ws://127.0.0.1:<port>/stream (PCM duplex v1, what a client program speaks)`: ts path `audio-stream-server.ts` does not exist
+- `warn` `audio stream WebSocket endpoint ws://127.0.0.1:<port>/stream (PCM duplex v1, what a client program speaks)`: ts path `audio-stream-server.ts` does not exist
+- `warn` `audio stream WebSocket endpoint ws://127.0.0.1:<port>/stream (PCM duplex v1, what a client program speaks)`: ts path `audio-stream-server.ts` does not exist
+- `warn` `audio stream WebSocket endpoint ws://127.0.0.1:<port>/stream (PCM duplex v1, what a client program speaks)`: ts path `docs/audio-duplex.md` does not exist
+- `warn` `audio stream relay routes on the gateway (/start, /input, /ack, /ended, /output, /close, with the relay key)`: ts path `audio-stream-server.ts` does not exist
+- `warn` `audio stream relay routes on the gateway (/start, /input, /ack, /ended, /output, /close, with the relay key)`: ts path `audio-stream-server.ts` does not exist
+- `warn` `audio stream relay routes on the gateway (/start, /input, /ack, /ended, /output, /close, with the relay key)`: ts path `audio-stream-server.ts` does not exist
+- `warn` `audio stream relay routes on the gateway (/start, /input, /ack, /ended, /output, /close, with the relay key)`: ts path `audio-stream-server.ts` does not exist
+- `warn` `audio stream relay routes on the gateway (/start, /input, /ack, /ended, /output, /close, with the relay key)`: ts path `audio-stream-server.ts` does not exist
+- `warn` `audio stream relay routes on the gateway (/start, /input, /ack, /ended, /output, /close, with the relay key)`: ts path `audio-stream-server.ts` does not exist
+- `warn` `audio stream relay routes on the gateway (/start, /input, /ack, /ended, /output, /close, with the relay key)`: ts path `audio-stream-server.ts` does not exist
+- `warn` `page relay for audio stream (generated JavaScript, run in the session through run-code)`: ts path `audio-stream-server.ts` does not exist
+- `warn` `page relay for audio stream (generated JavaScript, run in the session through run-code)`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `stop confirmation after a stream decides whether the bridge may be installed again`: ts path `audio-stream-server.ts` does not exist
+- `warn` `stop confirmation after a stream decides whether the bridge may be installed again`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `stop confirmation after a stream decides whether the bridge may be installed again`: ts path `audio-bridge-server.ts` does not exist
+- `warn` `in-page audio bridge: `window.__rechAudioBridge`, generation id, origin pin, limits`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `in-page audio bridge: `window.__rechAudioBridge`, generation id, origin pin, limits`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `in-page audio bridge: `window.__rechAudioBridge`, generation id, origin pin, limits`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `in-page audio bridge: `window.__rechAudioBridge`, generation id, origin pin, limits`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `in-page audio bridge: `window.__rechAudioBridge`, generation id, origin pin, limits`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `in-page audio bridge: `window.__rechAudioBridge`, generation id, origin pin, limits`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `in-page audio bridge: `window.__rechAudioBridge`, generation id, origin pin, limits`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `in-page audio bridge: `window.__rechAudioBridge`, generation id, origin pin, limits`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `in-page audio bridge: `window.__rechAudioBridge`, generation id, origin pin, limits`: ts path `audio-bridge.ts` does not exist
+- `warn` `virtual microphone: getUserMedia answered with the bridge's own audio track, never the physical microphone`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `virtual microphone: getUserMedia answered with the bridge's own audio track, never the physical microphone`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `virtual microphone: getUserMedia answered with the bridge's own audio track, never the physical microphone`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `virtual microphone: getUserMedia answered with the bridge's own audio track, never the physical microphone`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `silent output: Web Audio connections to the speakers are redirected to a capture sink`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `silent output: Web Audio connections to the speakers are redirected to a capture sink`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `silent output: Web Audio connections to the speakers are redirected to a capture sink`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `silent output: audio and video elements are held muted and play() is routed through the capture graph; DRM media refused`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `silent output: audio and video elements are held muted and play() is routed through the capture graph; DRM media refused`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `silent output: audio and video elements are held muted and play() is routed through the capture graph; DRM media refused`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `silent output: audio and video elements are held muted and play() is routed through the capture graph; DRM media refused`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `silent output: audio and video elements are held muted and play() is routed through the capture graph; DRM media refused`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `silent output: audio and video elements are held muted and play() is routed through the capture graph; DRM media refused`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `silent output: audio and video elements are held muted and play() is routed through the capture graph; DRM media refused`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `capture inside the page: WebM/Opus recorders, 250 ms fragments, a 2 MiB budget, ordered drains, automatic stop`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `capture inside the page: WebM/Opus recorders, 250 ms fragments, a 2 MiB budget, ordered drains, automatic stop`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `capture inside the page: WebM/Opus recorders, 250 ms fragments, a 2 MiB budget, ordered drains, automatic stop`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `capture inside the page: WebM/Opus recorders, 250 ms fragments, a 2 MiB budget, ordered drains, automatic stop`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `input inside the page: WAV decode and gapless queue into the virtual microphone`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `input inside the page: WAV decode and gapless queue into the virtual microphone`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `input inside the page: WAV decode and gapless queue into the virtual microphone`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `stop and failure inside the page: fail closed, final data kept, guards stay`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `stop and failure inside the page: fail closed, final data kept, guards stay`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `stop and failure inside the page: fail closed, final data kept, guards stay`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `PCM hooks of the in-page bridge (used by `rech audio stream`): startPcm, feedPcm, endPcmInput, readPcm`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `PCM hooks of the in-page bridge (used by `rech audio stream`): startPcm, feedPcm, endPcmInput, readPcm`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `PCM hooks of the in-page bridge (used by `rech audio stream`): startPcm, feedPcm, endPcmInput, readPcm`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `PCM hooks of the in-page bridge (used by `rech audio stream`): startPcm, feedPcm, endPcmInput, readPcm`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `PCM hooks of the in-page bridge (used by `rech audio stream`): startPcm, feedPcm, endPcmInput, readPcm`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `PCM hooks of the in-page bridge (used by `rech audio stream`): startPcm, feedPcm, endPcmInput, readPcm`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `PCM hooks of the in-page bridge (used by `rech audio stream`): startPcm, feedPcm, endPcmInput, readPcm`: ts path `audio-bridge-browser.ts` does not exist
+- `warn` `PCM hooks of the in-page bridge (used by `rech audio stream`): startPcm, feedPcm, endPcmInput, readPcm`: ts path `audio-stream-server.ts` does not exist
+- `warn` `Windows: warning when serve runs outside the user's active desktop session`: ts path `docs/windows-sessions.md` does not exist
+- `todo` 21 TypeScript file(s) changed since the ledger was reconciled at `c4ef27e`: `.github/workflows/rust-npm-release.yml`, `.gitignore`, `README.md`, `audio-bridge-browser.ts`, `audio-bridge-client.ts`, `audio-bridge-files.ts`, `audio-bridge-server.ts`, `audio-bridge.ts`, `audio-stream-client.ts`, `audio-stream-server.ts`
+- `todo` 328 feature(s) not fully ported
 - `todo` no Rust port exists yet
 
 **Delivery**
