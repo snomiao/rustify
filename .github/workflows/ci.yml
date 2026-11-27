@@ -102,6 +102,46 @@ jobs:
         "$RUSTIFY_BIN_DIR/toy" --version | grep -q "version=0.0.0-ci."
         node "$RUSTIFY_PARITY" --cases tests/e2e/toy/parity.json --ts "$RUSTIFY_BIN_DIR/toy" --rs "$RUSTIFY_BIN_DIR/toy"
 
+  # The parity job of rust-npm-build.yml hands the bun a project pins to
+  # setup-bun. This repository pins none, so the pipelines take the unpinned
+  # way; here the parity job's own steps run with a pin, to a bun older than
+  # the latest, in the checkout's root as a project has it (fixtures in
+  # tests/e2e/bun-pin). `none` is the unpinned way on its own.
+  bun-pin:
+    name: parity job's bun (${{ matrix.pin }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { pin: .bun-version, bun: 1.4.2 }
+          - { pin: .tool-versions, bun: 1.4.0 }
+          - { pin: none, bun: "" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Pin bun as a project does
+        if: matrix.pin != 'none'
+        run: cp "tests/e2e/bun-pin/${{ matrix.pin }}" .
+      # From here on the parity job's steps, with the script at its path here.
+      - name: Find the bun the project pins
+        id: bun-pin
+        run: node templates/parity/bun-pin.mjs >> "$GITHUB_OUTPUT"
+      - uses: oven-sh/setup-bun@v2
+        if: steps.bun-pin.outputs.file == ''
+      - uses: oven-sh/setup-bun@v2
+        if: steps.bun-pin.outputs.file != ''
+        with:
+          bun-version-file: ${{ steps.bun-pin.outputs.file }}
+      - name: bun version
+        run: node templates/parity/bun-pin.mjs --check
+      - name: The pinned bun is the one in PATH
+        if: matrix.bun != ''
+        run: test "$(bun --version)" = "${{ matrix.bun }}"
+
   # The publish action, run for real against a throwaway registry on this
   # runner: publish what the pipeline packed, publish it again, then install
   # from that registry the way rust-npm-verify does. What it cannot cover is
