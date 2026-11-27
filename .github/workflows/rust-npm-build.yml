@@ -66,7 +66,7 @@ on:
         default: ""
         type: string
       smoke-extra:
-        description: "More commands to run after installing, one per line: `<command> [args] => <text it must print>`, optionally followed by ` !> <text it must not print>`, and optionally led by `[<exit code>] ` when the command is meant to fail. Use it for commands that are still JavaScript or handed back to it."
+        description: "More commands to run after installing, one per line: `<command> [args] => <text it must print>`, optionally followed by ` !> <text it must not print>`. Markers may lead a line, each followed by a space: `[<exit code>]` when the command is meant to fail; `[native]` when the binary must answer it itself and `[handback]` when it must hand it to the JavaScript, both of which can be limited to platforms (`[native:linux,darwin] [handback:win32]`) and need the hand-back helper v5 in the crate; `[real-home]` when the command needs the runner's own home directory. Use it for commands that are still JavaScript or handed back to it, and to see on every platform who answers a ported one."
         required: false
         default: ""
         type: string
@@ -81,7 +81,7 @@ on:
         default: ""
         type: string
       smoke-env:
-        description: "Environment for the smoke commands, one NAME=value per line. For switching off a fallback the test must not take, such as a download."
+        description: "Environment for the smoke commands, one NAME=value per line. For switching off a fallback the test must not take, such as a download. The smoke commands get a home directory of their own (HOME, USERPROFILE, and on Windows APPDATA and LOCALAPPDATA; the XDG_*_HOME variables are removed); a variable set here wins over that."
         required: false
         default: ""
         type: string
@@ -303,7 +303,8 @@ jobs:
           retention-days: 7
 
   # Installs the packed release from a throwaway local registry on every OS and
-  # CPU family, with bun and with npm, and runs it. Nothing is public yet.
+  # CPU family, with bun and with npm, and runs it. Nothing is public yet. The
+  # commands it runs get an empty home directory of their own, not the runner's.
   smoke:
     name: smoke ${{ matrix.os }}
     needs: pack

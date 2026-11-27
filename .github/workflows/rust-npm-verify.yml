@@ -22,7 +22,12 @@ on:
         default: ""
         type: string
       smoke-extra:
-        description: "More commands, one per line: `<command> [args] => <text it must print>`"
+        description: "More commands, one per line, as for rust-npm-build: `<command> [args] => <text it must print>`, with the same markers (`[<exit code>]`, `[native]`, `[handback]`, `[real-home]`)"
+        required: false
+        default: ""
+        type: string
+      smoke-env:
+        description: "Environment for the smoke commands, one NAME=value per line, as for rust-npm-build. Pass the same here, so that a line marked `[native]` is answered the way it was before publishing."
         required: false
         default: ""
         type: string
@@ -67,12 +72,16 @@ jobs:
           EXPECT: ${{ inputs.smoke-expect }}
           REGISTRY: ${{ inputs.registry }}
           EXTRA: ${{ inputs.smoke-extra }}
+          SMOKE_ENV: ${{ inputs.smoke-env }}
         run: |
           set -- --dist npm-dist --run "$SMOKE" --registry "$REGISTRY"
           if [ -n "$EXPECT" ]; then set -- "$@" "--expect=$EXPECT"; fi
           while IFS= read -r line; do
             if [ -n "$line" ]; then set -- "$@" --also "$line"; fi
           done <<< "$EXTRA"
+          while IFS= read -r line; do
+            if [ -n "$line" ]; then set -- "$@" --env "$line"; fi
+          done <<< "$SMOKE_ENV"
           # The registry can take a moment to serve a version it just accepted.
           for attempt in 1 2 3 4 5; do
             node .rustify/templates/npm/smoke.mjs "$@" && exit 0
