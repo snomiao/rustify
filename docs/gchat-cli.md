@@ -26,9 +26,17 @@ from `gws` of an unexpected shape.
 
 ## Not proven
 
-Windows (type-checked only; a `gws` that is a `.cmd` or `.bat` is handed back)
-and macOS (same code as Linux, never run). The cases need GNU tools, so the
-comparison runs on Linux only.
+Windows (type-checked only; a `gws` that is a `.cmd` or `.bat` is handed back,
+everything else is answered natively without a single case run there).
+
+macOS was tried once by hand on 2026-11-27 (arm64, bun 1.4.4): 601 of 602
+cases behave the same. The one that differs is real: given a `gws` that is a
+text file without a `#!` line, bun fails with `ENOEXEC`, while the binary runs
+it through the shell and prints the scope report. The committed
+`rs/parity.json` also carries the paths of the machine that generated it
+(`/code/snomiao/…`, `/root/.bun/bin`); CI regenerates it first, so CI is
+unaffected, but the file should use `<REPO>`. Both are to be fixed before the
+project turns on `parity-platforms`.
 
 ## For the owner
 
