@@ -13,19 +13,29 @@
 #
 # Where the binary answers at all. Only on a machine it can vouch for, and
 # that is a small part of the machines today. All of these have to hold:
+# - the machine is Linux or macOS, not Windows;
 # - neither standard output nor standard error is a terminal;
-# - the machine's zone is UTC by name (TZ is UTC, Etc/UTC or Etc/GMT±N, or
-#   TZ is not set and /etc/localtime links to UTC), and it is not Windows;
+# - the machine's zone is UTC by name: TZ is UTC, Etc/UTC or Etc/GMT±N, or,
+#   on Linux only, TZ is not set and /etc/localtime links to UTC (on macOS
+#   the binary takes the zone from TZ alone);
 # - there is no package.json, tsconfig.json or jsconfig.json in the current
 #   directory or in any directory above it;
 # - no proxy, NODE_* or BUN_* variable, no bunfig.toml, and any .env file and
 #   config.yaml in the plain forms.
 # So: CI jobs, containers and servers that run in UTC, outside a JavaScript
-# project. A person's own computer, set to the zone they live in, gets the
-# JavaScript for every command, as does any command run from inside a
-# JavaScript or TypeScript project. Each of these has its own entry below
-# with the reason; the second and third were added after an independent
-# verification showed the binary answering differently there.
+# project, on Linux or macOS. A person's own computer, set to the zone they
+# live in, gets the JavaScript for every command, as does any command run
+# from inside a JavaScript or TypeScript project, and every command on
+# Windows. Each of these has its own entry below with the reason; the second
+# and third were added after an independent verification showed the binary
+# answering differently there.
+#
+# Per system. Linux x64 and macOS arm64: native as above, and proven there by
+# the parity job, which runs the cases on linux-x64, darwin-arm64 and
+# win32-x64. A `verified` below holds for those two. Linux arm64 and macOS
+# x64 run the same code and are native too, but only the install test runs
+# there. Windows x64 and arm64: every invocation is handed back; the parity
+# job on win32-x64 shows that it is (see "the ported commands on Windows").
 #
 # What stays in the JavaScript, and why. Every command that creates, changes
 # or deletes something. The TypeScript reports a failed call through yargs:
@@ -36,55 +46,86 @@
 # back is safe: nothing has been printed, counted or stored, and the
 # JavaScript asks the service again (see "errors" for what that costs).
 #
-# Proofs. All were run and seen passing on Linux x64 (glibc build) with
-# bun 1.4.0 and node 20 on 2026-11-27, against the release binary built from
-# build/rust-port at 8c1c6f5:
-# - rs/parity.json (written by rs/parity.gen.mjs): 910 cases through
-#   rustify's parity runner, TypeScript against TypeScript first (all the
-#   same), then TypeScript against the binary. 304 of them, named `x …`, were
+# Proofs. The parity job runs them on linux-x64, darwin-arm64 and win32-x64
+# (parity-platforms), through rs/parity/proof.mjs, against the binary built
+# for each. Seen passing by hand on 2026-11-27, at build/rust-port 83c419c,
+# with the runner of rustify's releases/v1:
+# - Linux x64 (glibc build), bun 1.4.0, node 20: everything below.
+# - macOS arm64, bun 1.4.4. node is bun on that Mac, so there the runner and
+#   the stand-in ran under bun, where CI runs them under node 24.
+# - Windows x64, node 24.8, bun 1.4.2, Git for Windows' bash for the lines.
+# What they are:
+# - rs/parity.json (written by rs/parity.gen.mjs; `--check` in the job): 910
+#   cases through rustify's parity runner, TypeScript against TypeScript
+#   first, then TypeScript against the binary. 304 of them, named `x …`, were
 #   written by the verification. No case reaches the service:
 #   rs/parity/with-mock.mjs runs each side against a stand-in on 127.0.0.1
 #   that answers from the case's own script and records every request. The
 #   TypeScript, whose endpoint is a constant, is pointed there by a bun
 #   preload (rs/parity/seam.ts) that also ends the process on any other
-#   address; the binary by QQDOCS_PARITY_MCP_URL. Compared: stdout, stderr,
-#   the exit code, every request (the body byte for byte, Content-Type, the
-#   token, which calls went out at the same time) and everything under the
-#   home directory (names, modes, contents). Normalised: the two timestamps
-#   the program writes itself (`cachedAt`, `syncedAt`). Six cases leave the
-#   home directory out: in five the TypeScript's own count there depends on
-#   timing (see "the call counter"), in one HOME is empty.
+#   address (on Windows through BUN_OPTIONS; `with-mock.mjs --check` fails
+#   the job unless bun loads it); the binary by QQDOCS_PARITY_MCP_URL.
+#   Compared: stdout, stderr, the exit code, every request (the body byte for
+#   byte, Content-Type, the token, which calls went out at the same time) and
+#   everything under the home directory (names, modes, contents; listed by
+#   rs/parity/home.mjs). Normalised: the two timestamps the program writes
+#   itself (`cachedAt`, `syncedAt`). Six cases leave the home directory out:
+#   in five the TypeScript's own count there depends on timing (see "the call
+#   counter"), in one HOME is empty.
+#   Linux: 910 of 910 the same, both ways. macOS: 910 of 910, both ways.
+#   Windows: 905 of 905 the same, both ways (at 0986ece, the cases as now but
+#   for the probe that ages three lock files); the five cases that make a
+#   symbolic link are skipped there. At 83c419c the job's command on Windows
+#   gave 902 of 905 the same: in three cases Git Bash wrote "could not find
+#   /tmp" into an `after` line of one side, as other people's Git Bash
+#   processes on that machine share its mount table; run again, all three
+#   were the same.
 # - the same cases with `--handback QQDOCS_PACKAGE_ROOT=bin/qqdocs.ts`, which
-#   shows who answered: 567 cases were answered by the binary and 343 were
-#   handed back, each as its case says. Of the 343, 255 go back at once (a
-#   command that is not ported, a spelling that is yargs's, a state of the
-#   machine) and 88 after the stand-in answered with something the binary
-#   leaves to the TypeScript; those compare which requests were made, not
-#   how many. A `verified` below rests only on cases the binary answered.
-#   One case (`usage: the system's zone when TZ is not set`) is answered by
-#   the binary only where the machine's own zone is UTC, as here and, it is
-#   assumed, on the machines of CI.
-# - `cargo test` in rs/: 27 unit tests and rs/tests/handback.rs (13 tests
-#   with the binary alone and a stand-in bun) for what the cases cannot set
-#   up.
-# - run once by hand, not part of CI: number_to_string against bun's own
-#   spelling of 3.2 million doubles (ties, powers of two and their
+#   shows who answered, each case as its mark says for the system it runs on.
+#   Linux: 567 answered by the binary, 343 handed back. macOS: 566 and 344
+#   (`usage: the system's zone when TZ is not set` goes back there, see "the
+#   zone of a Mac without TZ"). Windows: 0 and 905, 5 skipped. Of the 343
+#   handed back everywhere, 255 go back at once (a command that is not
+#   ported, a spelling that is yargs's, a state of the machine) and 88 after
+#   the stand-in answered with something the binary leaves to the
+#   TypeScript; those compare which requests were made, not how many. A
+#   `verified` below rests only on cases the binary answered. On Linux the
+#   TZ case is answered only where the machine's own zone is UTC, as on this
+#   machine and on the Linux runners of CI.
+# - `cargo test` in rs/: 28 unit tests (one of them the hand-back helper's
+#   own) and rs/tests/handback.rs (13 tests with the binary alone and a
+#   stand-in bun, Unix only) for what the cases cannot set up. All pass on
+#   Linux and macOS; on Windows the 28.
+# - run once by hand, on Linux, not part of CI: number_to_string against
+#   bun's own spelling of 3.2 million doubles (ties, powers of two and their
 #   neighbours, subnormals; no difference); the argument gate against the
 #   project's own yargs chain on 120,000 generated command lines (the
 #   verification's harness; 26,424 taken by the binary, no difference);
 #   `usage calibrate` under every zone name the binary answers for at 24
 #   shifted hours of the day (672 runs, the same file each time; see "the
 #   call counter").
+# Found on the Mac, and repaired in the cases, not in the binary: GNU `stat
+# -c` and `touch -d` do not exist there (three cases were BROKEN, and the
+# modes compared nothing); and the stand-in, under bun, answered a closed
+# connection of a held request with "200 OK" (bun's res.destroy()), so one
+# case differed and one was answered by the binary. with-mock.mjs now closes
+# the socket itself, the same under node and bun.
 #
 # Not covered by any proof: the real service (never contacted), a terminal,
-# macOS and Windows (the parity job runs on Linux), the musl build the
-# pipeline ships (built in CI only; this machine has no C compiler for it),
-# bun versions other than 1.4.0.
+# Linux arm64, macOS x64 and Windows arm64 (only the install test runs
+# there), the musl build the pipeline ships (built in CI only; this machine
+# has no C compiler for it; the parity job runs whatever the pipeline built
+# for linux-x64), bun versions other than 1.4.0, 1.4.4 and 1.4.2, and the
+# runner under node on a Mac (CI does that).
 #
 # Rust-only behaviour, with no TypeScript counterpart, for the owner to bless
 # or remove:
 # - QQDOCS_NO_NATIVE=1 hands every invocation back (the template's way out).
 # - QQDOCS_PACKAGE_ROOT tells the binary where the package is.
+# - RUSTIFY_HANDBACK_TRACE set to anything not empty makes the binary write
+#   `rustify: handed back to the JavaScript` to stderr when it hands back
+#   (hand-back helper v5; the install test's [native] and [handback] marks
+#   read it). The JavaScript is started without the variable.
 # - QQDOCS_PARITY_MCP_URL replaces the endpoint, for the parity cases. It is
 #   compiled into the release binary, because the cases run against the
 #   binary that ships. Only `http://127.0.0.1:<port>/…` is accepted; with any
@@ -93,7 +134,8 @@
 #   the binary send that user's token, in clear text, to a port on the same
 #   machine. And it is the binary's alone: when a command is handed back
 #   while it is set, the JavaScript knows nothing of it and asks the real
-#   service (the cases prevent that with a bun of their own on PATH).
+#   service (the cases prevent that with a bun of their own on PATH, and on
+#   Windows with BUN_OPTIONS).
 # - A binary without the npm package beside it answers what it would hand
 #   back with one line and exit code 1.
 # - A panic before anything was printed or written hands the invocation back.
@@ -403,7 +445,7 @@ name = "the call counter: ~/.qqdocs/usage.json, its lock, the inferred tier"
 status = "verified"
 ts = "src/index.ts:1685 loadUsage; src/index.ts:1694 localDateStr; src/index.ts:1722 withUsageLock; src/index.ts:1748 incrementUsage"
 rs = "rs/src/usage.rs; rs/src/clock.rs; rs/src/env.rs fixed_zone"
-proof = "rs/parity.json: the home directory compared in every case; the `ls:` cases on counting, pruning, the tiers and the lock; the `zone:` and `x machine: TZ=` cases the binary answers (34: UTC, Etc/UTC and every Etc/GMT±N), and `usage: the system's zone when TZ is not set`"
+proof = "rs/parity.json: the home directory compared in every case; the `ls:` cases on counting, pruning, the tiers and the lock; the `zone:` and `x machine: TZ=` cases the binary answers (34: UTC, Etc/UTC and every Etc/GMT±N), and, on Linux, `usage: the system's zone when TZ is not set`"
 note = "Rust counts when the command has succeeded, the TypeScript after each call; the file is the same in the end. The count is kept per local day, which Rust works out by arithmetic for the zones that are a fixed number of hours from UTC (see the next entry for all others). For those, `usage calibrate` under bun and under the binary wrote the same file under all 28 of those zone names at 24 hours of the day, with the clock shifted by a preloaded library (672 runs by hand, over three calendar days, the binary answering every one). A counter file of another shape than the program writes goes back. Rust-only: on the first call ever the TypeScript waits two seconds for a lock file it cannot create (no ~/.qqdocs yet); Rust does not wait. Where the TypeScript's own count depends on timing, the cases do not compare it: two calls at once on that first run overwrite each other's count (`read`, `sync`: handed back), and when one of two calls at once fails the process ends while the other's count is still being written (lost, or a lock file left behind). The verification measured a third: with about a thousand calls at once (`ls -n 1000 --dates`) the TypeScript's lock gives up after two seconds and loses counts (946 of 1001), where Rust counts all."
 
 [[feature]]
@@ -411,7 +453,7 @@ name = "the local day in a zone that is not UTC: every zone named after a place"
 status = "missing"
 ts = "src/index.ts:1694 localDateStr"
 rs = "rs/src/env.rs fixed_zone"
-note = "Found by the verification. JavaScript takes the local day from the zone data inside its runtime (ICU, in bun), not from /usr/share/zoneinfo; the two are of different releases and disagree wherever a zone's rules changed in between. For America/Vancouver, bun 1.4.0 and tzdata 2026b are an hour apart, and between 07:00 and 08:00 UTC the binary (which then read the system's files) counted calls on another day than the TypeScript. The binary cannot know which release a user's bun carries, so it now answers only where the zone is a fixed number of hours from UTC by its very name: TZ set to UTC, Etc/UTC, Etc/GMT+1…+12 or Etc/GMT-1…-14, or TZ not set and /etc/localtime a link to UTC or Etc/UTC (with /etc/timezone, if there is one, saying the same). Everything else goes back before anything is looked at, for every ported command, since each of them reads or writes the counter (43 cases): Asia/Shanghai, Europe/London, any other place; TZ in another notation; no link at /etc/localtime; and Windows altogether. This is the common case for a person's own computer: there the binary answers nothing yet. For the owner to decide: accept the system's zone files as the source of the day (one hour off, for part of the day, wherever the two data sets differ), or count by UTC day on both sides."
+note = "Found by the verification. JavaScript takes the local day from the zone data inside its runtime (ICU, in bun), not from /usr/share/zoneinfo; the two are of different releases and disagree wherever a zone's rules changed in between. For America/Vancouver, bun 1.4.0 and tzdata 2026b are an hour apart, and between 07:00 and 08:00 UTC the binary (which then read the system's files) counted calls on another day than the TypeScript. The binary cannot know which release a user's bun carries, so it now answers only where the zone is a fixed number of hours from UTC by its very name: TZ set to UTC, Etc/UTC, Etc/GMT+1…+12 or Etc/GMT-1…-14, or, on Linux, TZ not set and /etc/localtime a link to UTC or Etc/UTC (with /etc/timezone, if there is one, saying the same; on macOS TZ has to be set, see \"the zone of a Mac without TZ\"). Everything else goes back before anything is looked at, for every ported command, since each of them reads or writes the counter (43 cases): Asia/Shanghai, Europe/London, any other place; TZ in another notation; no link at /etc/localtime; and Windows altogether. This is the common case for a person's own computer: there the binary answers nothing yet. For the owner to decide: accept the system's zone files as the source of the day (one hour off, for part of the day, wherever the two data sets differ), or count by UTC day on both sides."
 
 [[feature]]
 name = "the quota warning after a command"
@@ -448,21 +490,21 @@ name = "the second command name: qqdoc"
 status = "ported"
 ts = "bin/qqdocs.ts:8 resolveScriptName"
 rs = "rs/src/main.rs"
-note = "package.json installs bin/qqdocs.ts under both names. The TypeScript uses the name only for yargs's help text, which stays in the JavaScript, and under bun it sees its real path whichever name was typed. The binary does not look at its own name. No parity case runs it as `qqdoc`; rs/tests/handback.rs shows that the binary under both names answers the same and hands the same script back, and the install rehearsal runs `qqdoc --help` and `qqdoc usage`."
+note = "package.json installs bin/qqdocs.ts under both names. The TypeScript uses the name only for yargs's help text, which stays in the JavaScript, and under bun it sees its real path whichever name was typed. The binary does not look at its own name. No parity case runs it as `qqdoc`; rs/tests/handback.rs shows that the binary under both names answers the same and hands the same script back, and the install test runs `qqdoc --help` (marked as handed back everywhere) and `qqdoc usage` (marked as the binary's on Linux and macOS, handed back on Windows; smoke-env sets TZ=UTC)."
 
 [[feature]]
-name = "macOS"
-status = "ported"
-ts = "src/index.ts:1519; src/index.ts:1606"
-rs = "rs/src/env.rs home_dir, fixed_zone"
-note = "Never run there. The crate without its HTTPS client type-checks for aarch64-apple-darwin (cargo check --no-default-features); with it, ring needs a C compiler for the target, which only the pipeline has. The zone is read from the name /etc/localtime links to, as on Linux, so a Mac set to a place's zone gets the JavaScript. The pipeline's install test runs `usage` and `usage calibrate` on every platform; it cannot tell whether the binary or the JavaScript answered."
+name = "the zone of a Mac without TZ"
+status = "missing"
+ts = "src/index.ts:1694 localDateStr"
+rs = "rs/src/env.rs fixed_zone"
+note = "On macOS the binary takes the zone from TZ only: with TZ not set, every ported command goes back there. Reading the zone /etc/localtime links to, as on Linux, has not been compared with bun on a Mac set to UTC (the Mac the port was tried on is in Asia/Tokyo, and there the one case with TZ unset went back while it said the binary answers). `usage: the system's zone when TZ is not set` says \"handback\" for darwin, and the parity job on darwin-arm64 shows it. TZ=UTC, Etc/UTC and Etc/GMT±N are answered on a Mac as on Linux (the `zone:` and `x machine: TZ=` cases there). Few Macs are set to UTC, so this costs little: a Mac in a place's zone goes back in any case (see \"the local day in a zone that is not UTC\")."
 
 [[feature]]
-name = "Windows"
+name = "the ported commands on Windows"
 status = "missing"
 ts = "src/index.ts:1519; src/index.ts:1606"
 rs = "rs/src/env.rs fixed_zone, home_dir"
-note = "Every ported command goes back on Windows: the binary has no way there to tell that the zone is UTC, and how bun maps Windows' zones is its own. The crate without its HTTPS client type-checks for x86_64-pc-windows-msvc. Never run there."
+note = "Every invocation goes back on Windows, before anything is read: the binary has no way there to tell that the zone is UTC, and how bun maps Windows' zones is its own. Every case says \"handback\" for win32. The parity job on win32-x64 runs 905 of the 910 cases there (5 make a symbolic link, which Git Bash's ln -s cannot, and are skipped on Windows): all reach the JavaScript, and through the hand-back they behave as the TypeScript does (output, exit code, requests, the home directory). Windows arm64 runs the same code and only the install test. Common for anyone on Windows: no speed-up there yet."
 
 [[feature]]
 name = "the library: `import … from \"qqdocs\"`"
