@@ -226,6 +226,13 @@ function pack(opts) {
     // list is the project's own word on what it ships, and stays as it is.
     crate = opts.manifest && !Array.isArray(project.files) ? inside(projectDir, path.dirname(path.resolve(opts.manifest))) : "";
     const under = (file, rel) => file === rel || file.startsWith(`${rel}/`);
+    // A command's own file there would be left out with it, and a command the
+    // binary hands back would have nothing to hand back to.
+    const ownBins = typeof project.bin === "string" ? [project.bin] : Object.values(project.bin || {});
+    const binsInCrate = ownBins.map((file) => path.posix.normalize(String(file).split("\\").join("/"))).filter((file) => crate && under(file, crate));
+    if (binsInCrate.length) {
+      fail(`"bin" names ${binsInCrate.join(", ")}, inside the crate's directory ${crate}/, which a package without a "files" list leaves out. Give the package a "files" list.`);
+    }
     for (const listed of packedFiles(projectDir)) {
       const file = listed.split(path.sep).join("/");
       if (own.some((rel) => under(file, rel))) continue;

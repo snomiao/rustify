@@ -100,3 +100,13 @@ test("a crate outside the package's directory leaves nothing out", () => {
   assert.deepEqual(list, [...CRATE, ...REST].sort());
   assert.doesNotMatch(log, /left out/);
 });
+
+test("a command whose file is inside the crate's directory stops the pack", () => {
+  assert.throws(
+    () => packed({ fields: { bin: { legacy: "./rs/cli.js" } }, args: ["--manifest", "rs/Cargo.toml"], extraFiles: { "rs/cli.js": "#!/usr/bin/env node\n" } }),
+    (error) => /"bin" names rs\/cli\.js, inside the crate's directory rs\/.*Give the package a "files" list/.test(String(error.stderr)),
+  );
+  // With a files list nothing is left out, so nothing is in the way.
+  const { list } = packed({ fields: { bin: { legacy: "rs/cli.js" }, files: ["rs"] }, args: ["--manifest", "rs/Cargo.toml"], extraFiles: { "rs/cli.js": "#!/usr/bin/env node\n" } });
+  assert.ok(list.includes("rs/cli.js"));
+});
