@@ -967,6 +967,16 @@ fn entry_code(entries: &[(String, String)]) -> (String, String) {
     (code, "js_entry(&command())".to_string())
 }
 
+/// A crate's `.gitignore`: what the file already says, and `/target`. A crate
+/// at the repository root shares that file with the rest of the project.
+fn ignoring_target(existing: &str) -> String {
+    if existing.lines().any(|line| matches!(line.trim(), "target" | "/target" | "target/" | "/target/")) {
+        return existing.to_string();
+    }
+    let gap = if existing.is_empty() || existing.ends_with('\n') { "" } else { "\n" };
+    format!("{existing}{gap}/target\n")
+}
+
 fn scaffold(args: &[String]) -> i32 {
     let dry = args.iter().any(|a| a == "--dry-run");
     let names = positional(args);
@@ -1029,11 +1039,13 @@ fn scaffold(args: &[String]) -> i32 {
     let fallback = fs::read_to_string(templates.join("js_fallback.rs"))
         .expect("templates/rust/js_fallback.rs")
         .replace("\"RUSTIFY_PACKAGE_ROOT\"", &format!("\"{root_env}\""));
+    let gitignore = crate_dir.join(".gitignore");
+    let ignored = ignoring_target(&fs::read_to_string(&gitignore).unwrap_or_default());
     let files = [
         (crate_dir.join("Cargo.toml"), cargo_toml),
         (crate_dir.join("src/main.rs"), main_rs),
         (crate_dir.join("src/js_fallback.rs"), fallback),
-        (crate_dir.join(".gitignore"), "/target\n".to_string()),
+        (gitignore, ignored),
     ];
     for (file, content) in &files {
         if !dry {
@@ -1213,6 +1225,13 @@ mod tests {
         assert!(definition.contains("\"fix\" => \"dist/fix.js\","));
         assert!(definition.contains("_ => \"dist/feat.js\", // feat"));
         assert_eq!(expression, "js_entry(&command())");
+    }
+
+    #[test]
+    fn scaffolding_adds_to_a_gitignore_that_is_already_there() {
+        assert_eq!(ignoring_target(""), "/target\n");
+        assert_eq!(ignoring_target("node_modules\n.env"), "node_modules\n.env\n/target\n");
+        assert_eq!(ignoring_target("node_modules\n/target/\n.env\n"), "node_modules\n/target/\n.env\n");
     }
 
     #[test]
