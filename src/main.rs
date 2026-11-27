@@ -894,15 +894,35 @@ fn audit_delivery(s: &mut Section, project: &Project, dir: &Path, offline: bool)
 // ───────────────────────────────── vendor ──────────────────────────────────
 
 /// Workflow `paths:` lines for the directories that hold a project's
-/// TypeScript: `src` is `"src/**"`, the repository root is every `.ts` file.
+/// TypeScript: `src` is `"src/**"`, the repository root is every file with
+/// one of the extensions the audit counts there.
 fn ts_paths(dirs: &[String]) -> String {
-    let lines: Vec<String> = dirs
-        .iter()
-        .map(|dir| match dir.trim_end_matches('/') {
-            "." | "" => "      - \"**.ts\"".to_string(),
+    let mut lines = Vec::new();
+    for dir in dirs {
+        match tidy(dir) {
+            "." | "" => lines.extend(SCRIPT_EXTENSIONS.iter().map(|e| format!("      - \"**.{e}\""))),
+            dir => lines.push(format!("      - \"{dir}/**\"")),
+        }
+    }
+    lines.join("\n")
+}
+
+/// Workflow `paths:` lines for the crate: all of its directory, or, for a
+/// crate at the repository root, its manifest, lock file and build script and
+/// the directories `rust` names (`src` when it names none).
+fn rust_paths(manifest: &str, rust_dirs: &[String]) -> String {
+    if let Some((crate_dir, _)) = tidy(manifest).rsplit_once('/') {
+        return format!("      - \"{crate_dir}/**\"");
+    }
+    let mut lines: Vec<String> =
+        ["Cargo.toml", "Cargo.lock", "build.rs"].iter().map(|file| format!("      - \"{file}\"")).collect();
+    let default = ["src".to_string()];
+    for dir in if rust_dirs.is_empty() { &default[..] } else { rust_dirs } {
+        lines.push(match tidy(dir) {
+            "." | "" => "      - \"**.rs\"".to_string(),
             dir => format!("      - \"{dir}/**\""),
-        })
-        .collect();
+        });
+    }
     lines.join("\n")
 }
 
@@ -1083,13 +1103,12 @@ fn vendor(args: &[String]) -> i32 {
         bins.push(project.name.clone());
     }
     let command = mapped.and_then(|map| map.keys().next().cloned()).unwrap_or_else(|| bins[0].clone());
-    let rust_dir = Path::new(manifest).parent().map(|p| p.display().to_string()).unwrap_or_default();
     let template = fs::read_to_string(home.join("templates/github").join(WORKFLOW)).expect("workflow template");
     let text = template
         .replace("__MANIFEST__", manifest)
         .replace("__BINS__", &bins.join(" "))
         .replace("__SMOKE__", &format!("{command} --version"))
-        .replace("\"__RUST_DIR__/**\"", &format!("\"{}\"", if rust_dir.is_empty() { "src/**".to_string() } else { format!("{rust_dir}/**") }))
+        .replace("      - \"__RUST_DIR__/**\"", &rust_paths(manifest, &project.rust))
         .replace("__TS_PATHS__", &ts_paths(&project.ts));
     if !dry {
         fs::create_dir_all(workflow.parent().unwrap()).expect("create workflows directory");
@@ -1156,7 +1175,31 @@ mod tests {
     #[test]
     fn typescript_directories_become_workflow_paths() {
         assert_eq!(ts_paths(&["src".to_string(), "bin/".to_string()]), "      - \"src/**\"\n      - \"bin/**\"");
-        assert_eq!(ts_paths(&[".".to_string()]), "      - \"**.ts\"");
+        // At the root, every extension the audit counts: `**.ts` alone would
+        // miss a project written in .tsx or .mjs.
+        let root = ts_paths(&["./".to_string()]);
+        assert_eq!(root.lines().count(), SCRIPT_EXTENSIONS.len());
+        assert!(root.starts_with("      - \"**.ts\"\n      - \"**.tsx\"\n"), "{root}");
+        assert!(root.ends_with("      - \"**.cjs\""), "{root}");
+    }
+
+    #[test]
+    fn the_crate_becomes_workflow_paths() {
+        let dirs = |list: &[&str]| list.iter().map(|d| d.to_string()).collect::<Vec<_>>();
+        assert_eq!(rust_paths("rs/Cargo.toml", &dirs(&["rs/src"])), "      - \"rs/**\"");
+        assert_eq!(rust_paths("tools/cli/Cargo.toml", &[]), "      - \"tools/cli/**\"");
+        // A crate at the repository root has no directory of its own to name.
+        let root = "      - \"Cargo.toml\"\n      - \"Cargo.lock\"\n      - \"build.rs\"\n";
+        assert_eq!(rust_paths("Cargo.toml", &dirs(&["src"])), format!("{root}      - \"src/**\""));
+        assert_eq!(rust_paths("./Cargo.toml", &[]), format!("{root}      - \"src/**\""));
+        assert_eq!(
+            rust_paths("Cargo.toml", &dirs(&["rs", "crates/"])),
+            format!("{root}      - \"rs/**\"\n      - \"crates/**\"")
+        );
+        assert_eq!(rust_paths("Cargo.toml", &dirs(&["."])), format!("{root}      - \"**.rs\""));
+        // The line of the template these replace.
+        let template = include_str!("../templates/github/rust-npm-release.yml");
+        assert!(template.contains("\n      - \"__RUST_DIR__/**\"\n__TS_PATHS__\n"));
     }
 
     #[test]
