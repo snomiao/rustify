@@ -1,0 +1,384 @@
+# Parity ledger for dotenvdotenc (the `dede` command). Format and rules:
+# parity/README.md.
+#
+# Written with the port, on the project's branch build/rust-port (the crate is
+# rs/ there; nothing of it is on main yet, so read this ledger with
+# `rustify audit dotenvdotenc --at <that worktree>`). TypeScript read in full
+# at 18f80ca and left untouched: dede.ts (1,084 lines) and, of
+# @dotenvx/primitives 3.0.3, the seven functions it calls.
+#
+# How the two fit together. The Rust binary is meant to be the installed
+# `dede`. On Linux and macOS it answers every command of dede.ts itself and
+# hands an invocation back to dede.ts only where it does not imitate the
+# situation exactly (the `missing` and `partial` entries below say which);
+# on Windows it hands everything back. It goes back before anything has been
+# printed or changed: commands that only read collect their output and print
+# it at the end, and enc, dec and setup first read everything they are going
+# to read and foresee what they will make of it (the pre-read: rs/src/cli.rs
+# precheck, Dede::foresee, setup.rs foresee_setup, rs/src/repo.rs). Status
+# here is what the binary does on its own, so what goes back is `missing`.
+#
+# What "the TypeScript" turned out to mean. The published bin is dede.ts with
+# `#!/usr/bin/env bun`, so before its first line bun loads .env, .env.local,
+# .env.development and .env.development.local of the current directory into
+# the environment (the project's own tests run with --no-env-file and do not
+# see this). bun prints console.error in red when standard error is a
+# terminal, or when FORCE_COLOR says so; when standard output is a terminal
+# and standard error is not, it decides by TERM, COLORTERM, CI, TMUX and more.
+# And bun's regular expressions give up on very large values where an
+# ECMAScript engine in Rust does not. Each has its entry below.
+#
+# What the binary writes is meant to stay readable by a JavaScript-side dede
+# (Windows, where everything is handed back, or DOTENVDOTENC_NO_NATIVE=1):
+# it hands back before writing an .enc, a plaintext or a keys file that would
+# come within a third of where bun's scanner gives up or half of where
+# bun's upsert does (entry "values beyond bun's regular expressions").
+#
+# Proofs. All were run and seen passing on 2026-11-27 on Linux x64 with bun
+# 1.4.0, git 2.47.3 and node 20.19.2, against the branch at 0e8b3f9, once with
+# the glibc release binary and once with the static musl binary the pipeline
+# ships. bun 1.4.0 is what this machine has: the repository's .bun-version
+# pins 1.4.2, and the pipeline's parity job installs bun with
+# oven-sh/setup-bun@v2 without a version. Everything read off bun here (its
+# .env syntax, the colour rule, hex and base64 leniency, YAML and globs, the
+# limits of its regular expressions, how it writes into a pipe) is proven for
+# 1.4.0 only.
+# - rs/parity.json (written by rs/parity.gen.mjs, with rs/parity.more.mjs, the
+#   285 cases of a first independent verifier, and rs/parity.recheck.mjs, the
+#   63 of a second check): 1,176 cases through rustify's parity runner,
+#   TypeScript against the binary. Compared: stdout, stderr, the exit code,
+#   the `after` probes (files and modes, the .enc read back with
+#   @dotenvx/primitives, the sync record checked against the files, commits)
+#   and, in every case the binary answers, the list of git calls it made, in
+#   order, noted by a git placed in front of git. No normalisation rule is
+#   used.
+# - the same cases with `--handback`: 995 answered by the binary, 181
+#   handed back, each as its case says. A `verified` below rests only on
+#   cases the binary answered.
+# - rs/cross-compat.sh: the two implementations taking turns on the same
+#   files (14 checks), dotenvx 2.31.1 reading what the binary encrypted and
+#   the binary reading what dotenvx encrypted.
+# - rs/tty-compat.py: 53 scenes on a pseudo-terminal, under several TERM,
+#   COLORTERM, CI, NO_COLOR and FORCE_COLOR values; a run with a stand-in
+#   package checks that each is handed back, or answered, as it says.
+# - rs/pipe-compat.py: 18 scenes of `dede get` into a pipe or a socket that
+#   is read only once the command has exited (empty, partly filled, full,
+#   larger, left non-blocking, shared with standard error), with the same
+#   stand-in check.
+# - rs/perm-compat.sh: 24 scenes where the file system refuses something
+#   (run as nobody, or in CI as the runner's user with sudo making what
+#   belongs to root), with the same stand-in check.
+# - `cargo test` in rs/: scan, upsert and remove on 340 dotenv sources, keys
+#   and ciphertexts, node:path, UTF-8, hex and base64 decoding, globs, dates,
+#   all against values recorded from bun and @dotenvx/primitives
+#   (rs/vectors.gen.mjs writes rs/src/testdata/), the measured limits of
+#   bun's regular expressions, and the hooks directory as git names it,
+#   asked of git itself on 25 layouts of links, worktrees and .git files.
+#
+# Not covered by any of it, by construction: Windows and macOS (the parity
+# job runs on Linux; see their entries), a disk that fails between two
+# writes, output into a closed pipe, and anything about timing. For a pipe
+# whose reader is slow the outcome under bun depends on what the pipe takes
+# at the moment of each write: `dede get` is handed back unless the room is
+# certain (entry "get … into a pipe or a socket"); console.log and
+# console.error wait for the reader under bun, as every write of the binary
+# does, except in a pipe that another program (bun among them) has left
+# non-blocking, where both lose the messages there is no room for (seen the
+# same in the scenes tried; the reader's timing beyond that is not covered).
+#
+# Rust-only behaviour (no TypeScript counterpart; to be blessed or removed):
+# DOTENVDOTENC_NO_NATIVE=1 hands every invocation back, and
+# DOTENVDOTENC_PACKAGE_ROOT tells the binary where the package is (both from
+# rustify's template). A binary without the npm package beside it answers
+# what it would hand back with one line and exit 1. And one line for what the
+# pre-read cannot foresee: if something the port does not imitate shows only
+# after enc, dec or setup has started to write, it prints `dede: stopped at
+# something this build does not handle; run it again with
+# DOTENVDOTENC_NO_NATIVE=1` and exits 1 instead of handing back. At 24d24a9
+# an independent verifier reached it in five setup scenes and one enc scene;
+# at 2c2a075 a second check reached it in nine setup cases and three scenes
+# where a symbolic link decides whether the hooks path ends in /.husky/_ (git
+# names the hooks directory with its links resolved, and the pre-read had
+# worked the path out as configured). The pre-read now finds all of these:
+# it names the hooks directory the way git resolves it (rs/src/repo.rs
+# real_path_forgiving, held against git by a cargo test), and hands back
+# where git would fail (cases `setup: …` and `recheck2: setup: …` marked
+# handback, rs/perm-compat.sh, case `enc: a damaged sync record that git
+# finds …`). What can still reach it: a write that fails after another
+# succeeded for a reason the pre-read does not look at (a full disk, a file
+# made immutable, another process changing the files meanwhile), and a
+# core.hooksPath set in a system-wide git configuration kept somewhere other
+# than /etc, beside the git on PATH, or Apple's places, that names a hooks
+# directory that cannot be written. The TypeScript ends in bun's report of an
+# uncaught error there; the binary says it stopped. None of the cases or
+# scenes of the proofs reaches it now.
+
+reconciled = "18f80ca"
+
+# ───────────────────────────── Commands ─────────────────────────────
+
+[[feature]]
+name = "get NAME [file…]"
+status = "verified"
+ts = "dede.ts:613 get; dede.ts:1044 dispatch"
+rs = "rs/src/dede.rs get; rs/src/cli.rs"
+proof = "rs/parity.json cases `get: …` (166 answered by the binary); rs/cross-compat.sh; rs/tty-compat.py (the newline after the value on a terminal); rs/pipe-compat.py (into pipes and sockets: 9 of 18 scenes answered by the binary)"
+note = "Raw value from the .enc, last assignment wins, several files, every refusal with its exit code. About 9 ms against 180 ms under bun on the machine it was measured on. A NAME that every JavaScript object has (constructor, toString, …) goes back: the TypeScript ends in an uncaught TypeError there. Printing into a pipe or a socket is native only where the whole value certainly fits; the next entry is the rest."
+
+[[feature]]
+name = "get of a value into a pipe or a socket without certain room for it"
+status = "missing"
+ts = "dede.ts:637 process.stdout.write; dede.ts:1084 process.exit"
+rs = "rs/src/out.rs stdout_takes; rs/src/dede.rs get"
+note = "The TypeScript prints the value with process.stdout.write and then calls process.exit(). Under bun that write does not wait for a pipe or a socket: what there is no room for at that moment is lost (measured on bun 1.4.0: `dede get BIG | slow-reader` gets 65,536 bytes of a value of 70,000; into a pipe already holding 1,000 bytes, 61,808; into a full one, nothing; `bun dede.ts get BIG | wc -c` gave 65,536 in one run and 98,198 in another). This is a TypeScript defect, copied rather than fixed. At 2c2a075 the binary printed the whole value. Now it answers into a file, a terminal or /dev/null, and on Linux into a pipe with room for the value after what is waiting in it and what this run prints there first (F_GETPIPE_SZ and FIONREAD, counted in whole pages, one more for a page partly read and one per earlier write), or into a Unix stream socket with nothing waiting and at most 32 KiB to take (half its send buffer less 4 KiB, if that is less). Everything else is handed back before anything is printed: a larger value, a socket of another kind, a socket standard error shares after a warning, and on macOS any pipe or socket. In practice values up to 64 KiB into `| cmd` or `$(dede get …)`, and up to 32 KiB into a pipe node or bun gives a child (a socket), stay native. rs/pipe-compat.py: 18 scenes, 9 handed back."
+
+[[feature]]
+name = "status [--quiet] [file…]"
+status = "verified"
+ts = "dede.ts:593 status; dede.ts:668 unmanagedEnvFiles; dede.ts:1030 dispatch"
+rs = "rs/src/dede.rs status; rs/src/dede.rs unmanaged_env_files; rs/src/cli.rs"
+proof = "rs/parity.json cases `status: …` (82 answered by the binary); rs/cross-compat.sh; rs/tty-compat.py"
+note = "Every state of a pair, several files, the list of unmanaged plaintext files, from a subdirectory, in a linked worktree."
+
+[[feature]]
+name = "diff [file…]"
+status = "verified"
+ts = "dede.ts:640 diff; dede.ts:329 describeDiff"
+rs = "rs/src/dede.rs diff; rs/src/dede.rs describe_diff"
+proof = "rs/parity.json cases `diff: …` (27 answered by the binary); rs/cross-compat.sh"
+
+[[feature]]
+name = "keys [file…]"
+status = "verified"
+ts = "dede.ts:847 keysStatus"
+rs = "rs/src/dede.rs keys_status"
+proof = "rs/parity.json cases `keys: …` (31 answered by the binary); rs/cross-compat.sh"
+note = "Includes what the TypeScript does with a DOTENV_PUBLIC_KEY* variable in the environment and no private key for it: the .enc is listed as held, source `keys` (case `keys: a public key named in the environment counts as held`)."
+
+[[feature]]
+name = "keys link <path>"
+status = "verified"
+ts = "dede.ts:860 keysLink"
+rs = "rs/src/dede.rs keys_link"
+proof = "rs/parity.json cases `keys link: …` (19, all answered by the binary)"
+note = "The symlink is made before anything is printed, so a link that cannot be made goes back with nothing changed (the TypeScript prints its warning first and then ends in an uncaught error)."
+
+[[feature]]
+name = "dec [--force] [file…]"
+status = "verified"
+ts = "dede.ts:564 dec; dede.ts:451 view"
+rs = "rs/src/dede.rs dec; rs/src/dede.rs view; rs/src/dede.rs foresee; rs/src/cli.rs precheck"
+proof = "rs/parity.json cases `dec: …` and `dec --force: …` (108 answered by the binary); rs/cross-compat.sh; rs/perm-compat.sh (a directory that cannot be written, a file of another user in a sticky directory)"
+note = "Before its first write it reads both files, the keys and the key tree, every sync record git could take, and what it will write, and hands back what it does not imitate; see `values beyond bun's regular expressions` and `a sync record that is not of the shape dede writes`."
+
+[[feature]]
+name = "enc [--force] [file…], when nothing is asked (-y, or no terminal on stdin)"
+status = "verified"
+ts = "dede.ts:492 enc; dede.ts:465 buildEnc; dede.ts:178 obtainKey"
+rs = "rs/src/dede.rs enc; rs/src/dede.rs build_enc; rs/src/dede.rs obtain_key; rs/src/dede.rs foresee; rs/src/cli.rs precheck"
+proof = "rs/parity.json cases `enc: …`, `enc --force: …`, `enc --key: …` and `recheck2: enc: …` (179 answered by the binary); rs/cross-compat.sh; rs/perm-compat.sh (a directory, a record, a file of another user in a sticky directory)"
+note = "First encryption with a new key, an existing key from .env.keys, the environment or the key tree, --key NAME, unchanged values keeping their ciphertext, the merge that writes both files. Ciphertext and new keys are random; what was written is read back with @dotenvx/primitives in every case (rs/parity/probe.mjs). Before its first write it reads everything it will read and foresees the .enc it will write (each new ciphertext's length is known before it is made), and hands back what it does not imitate."
+
+[[feature]]
+name = "enc -y / --yes: commit the written .enc files"
+status = "verified"
+ts = "dede.ts:551 commitWritten"
+rs = "rs/src/dede.rs commit_written"
+proof = "rs/parity.json cases `enc -y: …` and `enc --yes: …` (11, all answered by the binary); rs/tty-compat.py scene `enc -y does not ask`"
+note = "Only the written files, other staged changes left staged; what git and its hooks print passes through in place; a commit that fails."
+
+[[feature]]
+name = "the question after enc on a terminal (commit …? [y/N])"
+status = "missing"
+ts = "dede.ts:536 confirm"
+note = "With a terminal on standard input and without -y, `enc` goes back to the JavaScript before it starts, so the plain interactive `dede enc` is not faster yet. rs/tty-compat.py holds that line: five scenes type an answer at the prompt and compare output and commits. Reading the answer is one read of up to 64 bytes from the terminal; it was left out because a wrong byte here commits."
+
+[[feature]]
+name = "guard [--all]"
+status = "verified"
+ts = "dede.ts:706 guard; dede.ts:653 guardList; dede.ts:682 unencryptedEdits"
+rs = "rs/src/dede.rs guard; rs/src/dede.rs guard_list; rs/src/dede.rs unencrypted_edits"
+proof = "rs/parity.json cases `guard: …` (59 answered by the binary); rs/tty-compat.py"
+
+[[feature]]
+name = "health [--all] [file…], rules written the way the README shows"
+status = "verified"
+ts = "dede.ts:805 health; dede.ts:762 loadRules; dede.ts:791 lineDates"
+rs = "rs/src/health.rs"
+proof = "rs/parity.json cases `health: …` (61 answered by the binary); rs/src/health.rs tests (the YAML subset, globs and dates against bun)"
+note = "Commits in the cases are dated relative to the moment a case is set up, so day counts do not depend on when it runs."
+
+[[feature]]
+name = "health with a .dede.yaml beyond that shape, or globs beyond * and ?"
+status = "missing"
+ts = "dede.ts:767 Bun.YAML.parse; dede.ts:820 Bun.Glob"
+note = "Bun.YAML and Bun.Glob are not ported. Read here: `rotate:` with a block list of rules, each field a quoted string without escapes, a plain word, a date, a whole number, or a one-line [list] of those; comments. Goes back: any other top-level key, {…} mappings, values over several lines, escapes, numbers that are not whole, true/false/null, an empty value, tabs, a file bun rejects (its message is bun's), an `expires` that is not YYYY-MM-DD, a duration of more than six digits, and globs with [ ] { } ! \\ or **. 19 cases `health: …` marked handback hold the line. An .enc that assigns `__proto__` goes back too. A user whose file uses any of these sees no change and no speed-up."
+
+[[feature]]
+name = "setup: .gitignore rules and hooks"
+status = "verified"
+ts = "dede.ts:880 setup; dede.ts:913 installHook; dede.ts:929 setupHusky"
+rs = "rs/src/setup.rs"
+proof = "rs/parity.json cases `setup: …` and `recheck2: setup: …` (73 answered by the binary); rs/src/setup.rs tests (package.json before and after, recorded under bun); rs/src/repo.rs tests (the hooks directory against git itself on 25 layouts); rs/perm-compat.sh; rs/tty-compat.py"
+note = "Plain git hooks (new, existing, core.hooksPath in the repository's, the user's or the XDG configuration, husky's .husky/_), husky through package.json, the lefthook snippet, linked worktrees, and dede's own refusals on the way. Before its first write it looks at every file and directory the run will read, make or replace, in the hooks directory git will name. That it works out from git's configuration files without asking git, and resolves the way git prints it: a real path, through the git directory a .git file names and a linked worktree's common directory, every symbolic link followed step by step as git's strbuf_realpath_forgiving follows it, parts that do not exist kept as written (rs/src/repo.rs). So where a link decides whether the path ends in /.husky/_, the pre-read strips it where the TypeScript strips it from git's answer; at 2c2a075 it worked on the path as configured, and nine cases of a second check reached `dede: stopped at …` that way. See the next two entries for what goes back. Not covered: the refusal `.gitignore still does not ignore .env*` (no case produces a .gitignore the appended block does not fix)."
+
+[[feature]]
+name = "setup where the TypeScript would end in an uncaught error after its first write, or whose git configuration the pre-read does not read"
+status = "missing"
+ts = "dede.ts:880 setup; dede.ts:913 installHook; dede.ts:406 writeAtomic"
+rs = "rs/src/setup.rs foresee_setup; rs/src/repo.rs hooks"
+note = "dede.ts updates .gitignore (or a hook, or package.json) first and then meets what makes it end in bun's report of an uncaught error: core.hooksPath naming a file, a link to nowhere or a path through a file; a hook that is a directory or cannot be read; a hooks directory, or the directory it would be made in, that cannot be written; .husky a file or a link to nowhere; a file of another user in a sticky directory. Each of these also where a symbolic link leads there (a .husky, a .husky/_ or a hooks directory that is a link, an absolute or `~/` core.hooksPath through one, a linked worktree's .husky). The binary sees each of these before its first write and hands back (cases `setup: …` and `recheck2: setup: …` marked handback, rs/perm-compat.sh). So does a hooks path git itself would fail on (a part that is a file with more after it, more than 32 links), and a first write that fails anyway; the binary then removes its own temp file, so that what is left is the one the JavaScript leaves. Also handed back, since the hooks directory cannot be worked out with certainty: a git configuration with include or includeIf, a continued line, or core.hooksPath in quotes, with a comment, `..`, `~user` or `%(prefix)`; core.hooksPath in a system-wide configuration; core.worktree or extensions.worktreeConfig; GIT_DIR, GIT_COMMON_DIR, GIT_WORK_TREE or GIT_CONFIG* in the environment (or in a .env file bun loads); a GIT_CONFIG_NOSYSTEM that is no boolean. A system-wide configuration kept somewhere other than /etc, beside the git on PATH or Apple's places is not looked at; if it sets core.hooksPath to a directory that cannot be written, the binary says `dede: stopped at …` after updating .gitignore, where the TypeScript prints bun's report. Rare: setup runs once per clone."
+
+[[feature]]
+name = "setup with a package.json that is not plain JSON data"
+status = "missing"
+ts = "dede.ts:931 JSON.parse; dede.ts:938 JSON.stringify"
+note = "The TypeScript rewrites package.json through JSON.parse and JSON.stringify. Rust does the same for objects, lists, strings, true/false/null and whole numbers (key order as JavaScript orders it). A number with a fraction or exponent (JavaScript would write it back in its own form), a lone surrogate escape, a package.json that is not an object, `scripts` or `devDependencies` that are not objects, or a file that is not JSON (the TypeScript ends in an uncaught SyntaxError after it has already updated .gitignore) go back before anything is written, and so do a byte order mark, a prepare script that is a list, a negative zero and nesting three hundred deep. Eight cases `setup: a package.json …` marked handback hold the line."
+
+[[feature]]
+name = "usage text, help, unknown commands; -fk, --env-keys-file, --key"
+status = "verified"
+ts = "dede.ts:12 USAGE; dede.ts:987 main"
+rs = "rs/src/cli.rs main; rs/src/dede.rs USAGE"
+proof = "rs/parity.json cases `usage: …` (24 answered by the binary); rs/tty-compat.py"
+note = "dede has no argument parser of its own kind to imitate: a loop over the arguments and a switch. `--version` is an unknown command (usage on stderr, exit 4) in both."
+
+[[feature]]
+name = "glob arguments (dede enc '.env.*')"
+status = "missing"
+ts = "dede.ts:956 Bun.Glob scanSync"
+note = "An argument with * ? [ or { is expanded by Bun.Glob in the TypeScript; any such invocation goes back. Rare: the shell has usually expanded it before dede sees it. Cases `…: a glob` hold the line."
+
+# ───────────────────────────── Behaviour ─────────────────────────────
+
+[[feature]]
+name = "where private keys come from (DOTENV_PRIVATE_KEY* in the environment, ./.env.keys, -fk / DOTENV_KEYS_FILE)"
+status = "verified"
+ts = "dede.ts:106 treeFor; dede.ts:154 privateKeyFor; dede.ts:171 keyByName"
+rs = "rs/src/dede.rs tree_for; rs/src/dede.rs key_by_name; rs/src/primitives.rs keyring"
+proof = "rs/parity.json cases `get: the key …`, `get: -fk …`, `get: DOTENV_KEYS_FILE`, `keys: …`, `enc: a key of that name …`; rs/src/primitives.rs tests"
+note = "Including how bun reads a key that is not 64 clean hex digits (Buffer.from(…, \"hex\") stops at the first pair that is not hex, so of two keys with a comma between them in a variable only the first counts). A key with characters beyond ASCII goes back."
+
+[[feature]]
+name = "the key tree (.env.keys.<name>.enc opened by a held key, recursively)"
+status = "verified"
+ts = "dede.ts:106 treeFor"
+rs = "rs/src/dede.rs tree_for"
+proof = "rs/parity.json cases `keys: the key tree …`, `get: through the key tree`, `dec: through the key tree`, `enc: a key of that name in the key tree is used`; rs/cross-compat.sh (each climbs the tree the other made)"
+note = "A node holding a private key that is none (64 zeros) ends the TypeScript in an uncaught error; that goes back."
+
+[[feature]]
+name = ".enc files: dotenvx format, read and written (secp256k1 ECIES, AES-256-GCM)"
+status = "verified"
+ts = "dede.ts:200 splitEnc; dede.ts:231 decryptAll; dede.ts:465 buildEnc"
+rs = "rs/src/primitives.rs encrypt; rs/src/primitives.rs decrypt; rs/src/dede.rs split_enc"
+proof = "rs/parity.json (fixed ciphertexts made by @dotenvx/primitives are read in every reading case; everything written is decrypted by @dotenvx/primitives in an `after` probe, which also checks canonical base64 and the layout); rs/cross-compat.sh (dotenvx 2.31.1 in both directions); rs/src/primitives.rs tests (ciphertexts made outside the package with node:crypto)"
+note = "Ciphertext with characters beyond ASCII goes back (bun's base64 reading of such text was not recorded)."
+
+[[feature]]
+name = "parsing and rewriting dotenv text (scan, upsert, remove of @dotenvx/primitives)"
+status = "verified"
+ts = "dede.ts:216 values; dede.ts:224 rewrite"
+rs = "rs/src/primitives.rs scan_with; rs/src/primitives.rs upsert; rs/src/primitives.rs remove"
+proof = "rs/src/primitives.rs tests against rs/src/testdata/primitives.json (340 sources, every upsert and remove on each, recorded from the package under bun by rs/vectors.gen.mjs); rs/parity.json cases `enc: every kind of value …`, `dec: every kind of value …`"
+note = "The package's own regular expressions, run on an ECMAScript engine (the regress crate), so quoting, line ends, repeated names and odd input follow the package rather than a re-reading of it. That engine does not give up where bun's does; very large values are the next entry."
+
+[[feature]]
+name = "values beyond bun's regular expressions (very large quoted values, very large escaped values)"
+status = "missing"
+ts = "dede.ts:216 values (scan of @dotenvx/primitives 3.0.3); dede.ts:224 rewrite (upsert)"
+rs = "rs/src/primitives.rs QUOTED_SPAN_LIMIT; rs/src/primitives.rs longest_quoted_span; rs/src/dede.rs foresee; rs/src/dede.rs merged_enc_bound"
+note = "Measured on bun 1.4.0: the scanner's quoted alternatives stop matching when one repetition runs over more than 540,669 UTF-16 code units in single quotes, 442,366 in double quotes or 393,214 in backticks (twice that of escaped quotes); bun then does not see that value nor any assignment after it, an unclosed quote running to the end of the text. upsert refuses to build an expression longer than 1,048,576 code units (36 plus the escaped name and old value), a SyntaxError. So the TypeScript refuses such files (enc: `would commit part of its value as plaintext`, `SyntaxError (invalid key or file?)`) or reads them short (get: `not found`; dec exits 0 with ciphertext left in the plaintext file, a TypeScript bug of its own). The binary hands back any text it would scan where a value could repeat over more than 131,072 units, and any upsert expression longer than 524,288 (a third and a half of the limits), for every file it reads (env files, .enc, keys files, key-tree nodes), and before writing, for what it will write: each new ciphertext's length is known in advance (a quoted value of 98,198 bytes is the largest that stays native, a bare one of 196,487); a keys file a new key would push past goes back. A three-way merge is foreseen too, and since whether one happens is for the sync record to say, which git names later, enc and dec look at it whenever both files are there and differ, an ordinary edit included: two files over 120,000 units together go back; and for enc, an .enc of the merge that could pass 131,072 units, counted as both files twice, plus per name and place the longest ciphertext it can get (new, or kept from the .enc), in quotes, plus the header (rs/src/dede.rs merged_enc_bound). So an edited file of 23 values of 1,000 bytes stays native and one of 24 goes back; with values of 10 bytes the line is at 597 values. (At 2c2a075 every ciphertext of both sides was counted, and an edited file of 450 such values, about 10 KB, went back.) So an .enc the binary writes stays readable by a JavaScript-side dede (Windows, DOTENVDOTENC_NO_NATIVE=1). Cases `large: …` and the large-value cases of `recheck2: …` (28 answered by the binary, 34 handed back) sit on both sides of the margin; rs/src/primitives.rs tests hold the measured limits."
+
+[[feature]]
+name = "the sync record (.git/dotenvdotenc/state.json) and the three-way merge per key"
+status = "verified"
+ts = "dede.ts:300 loadState; dede.ts:308 saveState; dede.ts:352 merge3; dede.ts:478 drift"
+rs = "rs/src/dede.rs save_state; rs/src/dede.rs merge3; rs/src/js.rs parse_json"
+proof = "rs/parity.json scenes `… both changed …`, `… the record …` under status, dec and enc; the `state` probe of rs/parity/probe.mjs after every writing case; rs/cross-compat.sh (each merges against the record the other wrote)"
+
+[[feature]]
+name = "a sync record that is not of the shape dede writes"
+status = "missing"
+ts = "dede.ts:300 loadState"
+rs = "rs/src/dede.rs check_sync_record; rs/src/repo.rs possible_records"
+note = "A record that is not a JSON object, holds a number other than a whole one, or whose entry for the file is not an object of strings: the TypeScript goes on with whatever JavaScript makes of it (a list is `no record`, null is a TypeError). All of these go back. For enc and dec that has to be known before the first write, and git's answer comes later, so the pre-read looks at every record git could take: up the path as written and the real one, past a .git directory git passes over (at 24d24a9 an empty one made the binary stop half-way), in a parent repository too; and at every entry. A record of another shape anywhere there, or an entry of another file that is not of dede's shape, sends enc and dec back (conservative); so does GIT_DIR or GIT_COMMON_DIR in the environment. Only a hand-edited or damaged record gets there."
+
+[[feature]]
+name = "what may be committed (every line sealed, no credential-like comment)"
+status = "verified"
+ts = "dede.ts:250 assertSealed"
+rs = "rs/src/dede.rs assert_sealed"
+proof = "rs/parity.json cases `enc: a line that is no assignment` … `enc: bytes that are not UTF-8`, `guard: an .enc …`"
+note = "The 16 characters of a commented-out value are counted the way a JavaScript regular expression without the u flag counts them (two for a character beyond the Basic Multilingual Plane); two cases hold that."
+
+[[feature]]
+name = "how files are written (temp file, fsync, rename; 0600 for plaintext, keys and the record, 0644 for .enc; a loose plaintext tightened)"
+status = "verified"
+ts = "dede.ts:406 writeAtomic; dede.ts:423 tighten"
+rs = "rs/src/dede.rs write_atomic; rs/src/dede.rs tighten"
+proof = "rs/parity.json: the listing with modes after every writing case (no temp file left, modes as the TypeScript leaves them)"
+note = "Same steps in the same order (create exclusively with the mode, write, fsync, chmod, rename); a write that fails leaves the temp file, as the TypeScript does. The fsync and the temp file's name are not observable in a case. A first write of setup that fails is handed back, and the binary then removes its own temp file first, so that one temp file is left, the JavaScript's, as without the binary (at 24d24a9 two were: rs/perm-compat.sh, a .gitignore or package.json of another user in a sticky directory). A disk that fails between two writes is not covered."
+
+[[feature]]
+name = "which files are a pair (names, skipped names, symlinks, committed plaintext)"
+status = "verified"
+ts = "dede.ts:950 pairs; dede.ts:87 isEnvName"
+rs = "rs/src/dede.rs pairs; rs/src/dede.rs is_env_name"
+proof = "rs/parity.json cases `get: …` (file arguments), `status: …`, `enc: the plaintext is …`"
+note = "Including that a default run names a skipped file twice when both it and its .enc are there."
+
+[[feature]]
+name = ".env files bun loads by itself before the program starts"
+status = "partial"
+ts = "dede.ts:1 (#!/usr/bin/env bun)"
+rs = "rs/src/env.rs"
+proof = "rs/parity.json cases `bun env: …` (100 answered by the binary, 34 handed back as they should be)"
+note = "Not written anywhere in the TypeScript, but real for the published command: .env.development.local, .env.local, .env.development and .env of the current directory (other names under NODE_ENV=production or test) are in process.env. So a DOTENV_KEYS_FILE or DOTENV_PRIVATE_KEY* in one of them is honoured, and every variable in them, the plaintext secrets included, is in the environment of each git dede starts and of the hooks git runs. Rust reproduces which files, their order, and the syntax where a value is literal: KEY=value, quoted values, a # comment, blank lines, CRLF, a repeated name. Not ported, so the invocation goes back: $ anywhere in a value (bun expands, in single quotes too), a backslash in quotes, values over several lines, backticks, a quote inside a bare value, `export`, indentation, names with . or -, a BOM, bytes that are not UTF-8; BUN_ENV, BUN_OPTIONS or NODE_OPTIONS in the environment; a bunfig.toml in the directory or the user's configuration; a .env that sets HOME, PATH, BUN_* or NODE_* (other than NODE_ENV). A directory whose .env or .env.local uses such syntax therefore runs every dede command through the JavaScript, as today. Files bun does not load (.env.production, .env.staging, …) may hold anything."
+
+[[feature]]
+name = "errors in red where bun takes standard error for a terminal's, or is told to (NO_COLOR, FORCE_COLOR)"
+status = "verified"
+ts = "dede.ts:278 log (console.error)"
+rs = "rs/src/out.rs error_colour"
+proof = "rs/tty-compat.py (scenes on a pseudo-terminal with each of the streams a terminal or a pipe, under several TERM, COLORTERM, CI, NO_COLOR and FORCE_COLOR values; a stand-in package shows which the binary answers); rs/parity.json cases `colour: …` (27 answered by the binary, without a terminal); rs/src/out.rs tests (the table recorded from bun 1.4.0)"
+note = "Under bun console.error is wrapped in ESC[0m ESC[31m … ESC[0m when standard error is a terminal (whatever TERM says), or FORCE_COLOR is \"\", 1, 2, true or a space; NO_COLOR 1, 2, true, 00 or a space switches it off, FORCE_COLOR 0, false, no or 00 everywhere but on a terminal. Reproduced, from the real environment only (bun decides before it loads a .env file). The next entry is the situation that is not."
+
+[[feature]]
+name = "errors when standard output is a terminal and standard error is not (`dede status 2> log`)"
+status = "missing"
+ts = "dede.ts:278 log (console.error)"
+rs = "rs/src/out.rs finish; rs/src/out.rs go_live"
+note = "There bun colours by TERM (xterm, screen, linux, … red; unset, empty, dumb, alacritty, wezterm and others plain), COLORTERM, CI, TMUX and more, by a rule that was not worked out; at 24d24a9 the binary coloured every time. Now anything that would print to standard error in that situation is handed back, unless NO_COLOR or FORCE_COLOR decides: read-only commands collect their output and go back if any of it is for standard error; enc, dec, setup and keys link go back before their first change. What prints only to standard output stays native (`dede get NAME 2>/dev/null` on a terminal). Same for a NO_COLOR or FORCE_COLOR value other than the nine recorded. 31 scenes of rs/tty-compat.py are in that situation: 21 handed back, 10 answered by the binary (NO_COLOR or FORCE_COLOR deciding, or nothing on standard error)."
+
+[[feature]]
+name = "failures the TypeScript reports as an uncaught JavaScript error"
+status = "missing"
+ts = "dede.ts:1077 an error that is not dede's own is thrown again; dede.ts:1084"
+note = "Outside the per-file loop any error that is not dede's own ends the TypeScript in bun's report with source excerpt and stack: reading a directory in place of a file, a .env.keys that is a link to nowhere, a keys file or key-tree node with an unusable key, a directory that cannot be listed, a link keys link cannot make, and the setup situations of their own entry. Where Rust meets one of these before it has printed or changed anything it goes back, and the JavaScript prints that report. Inside the per-file loop the TypeScript prints `<file>: <ErrorName> (invalid key or file?)`; that is ported (cases `… a name every JavaScript object has`, `enc: an invalid key of that name`, rs/perm-compat.sh: a directory that cannot be written)."
+
+[[feature]]
+name = "git output larger than bun's buffer"
+status = "missing"
+ts = "dede.ts:268 git (spawnSync)"
+note = "bun's spawnSync cuts a git's output off at about 1 MiB and reports failure; where it cuts depends on how the pipe delivered it. Rust hands back when a git printed more than 1,000,000 bytes. In practice: `guard` with a staged file of that size, `health` on an .enc of a thousand lines. Case `guard: a staged file larger than bun's buffer`."
+
+[[feature]]
+name = "invocations whose arguments, directory or environment are not plain text, or have no HOME"
+status = "missing"
+ts = "dede.ts:1084 process.argv, process.cwd() and process.env as bun gives them"
+rs = "rs/src/main.rs; rs/src/cli.rs run; rs/src/env.rs startup"
+note = "Handed back before anything happens: an argument that is not UTF-8, a current directory that is gone or whose path is not UTF-8, HOME unset (bun's bunfig.toml lookup is not imitated without it), a DOTENV_* or NODE_ENV variable that is not UTF-8, and NO_COLOR or FORCE_COLOR that are not UTF-8 when something goes to standard error. Rare. Cases `status: the directory it runs in has been removed …`."
+
+[[feature]]
+name = "macOS"
+status = "ported"
+ts = "dede.ts"
+rs = "rs/src"
+note = "On macOS the binary answers every command natively, exactly as on Linux (rs/src/cli.rs platform_is_proven is cfg!(unix)), and no case has ever run there: the parity job runs on Linux, the cases need GNU stat and date, and the install test runs only the usage and two refusals of `get`. It type-checks for aarch64-apple-darwin. One difference from Linux: `dede get` into a pipe or a socket is handed back there whatever its size, since the room in a pipe is not asked of macOS. Its file system (case-insensitive names, other errors), its git (Apple's, with its own system configuration) and bun there are unproven. Under parity/README.md a command moves to Rust when a test proves it; whether macOS answers natively before such a test exists, or hands back as Windows does, is for the owner to decide before a release."
+
+[[feature]]
+name = "Windows"
+status = "missing"
+ts = "dede.ts:58 WIN; dede.ts:277 rel"
+note = "Every invocation is handed back on Windows (rs/src/cli.rs platform_is_proven): its path rules, the absence of mode bits and its symlinks are not ported, and no case has run there. The crate type-checks for x86_64-pc-windows-msvc."
