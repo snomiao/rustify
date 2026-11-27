@@ -160,16 +160,20 @@ move. The procedure is `docs/porting.md`; follow it exactly. In short:
 2. One command at a time: write its parity cases first and make them pass
    TypeScript against TypeScript, then port until they pass against Rust
    (`templates/parity/parity.mjs`, v4: a case can run on a terminal with
-   `"tty"`, unset a variable with `null`, and write to files with
-   `"capture": "files"`), then switch the command over in `main.rs`.
+   `"tty"`, unset a variable with `null`, write to files with
+   `"capture": "files"`, and be handed back or skipped on some operating
+   systems only with `"handback"` or `"skip"` keyed by `process.platform`;
+   `setup` and `after` lines are POSIX shell, run on Windows by Git for
+   Windows' bash), then switch the command over in `main.rs`.
    Rust takes only the situations it implements exactly and hands back the
    rest, through `js_fallback::attempt` (helper v5); `--handback` proves which
    cases it really answers itself.
 3. Pass the test to the pipeline with `parity:` so CI holds the line, and
    name in `parity-platforms` every platform where the binary answers
-   natively, or hand that platform back. Add a `smoke-extra` line for the
-   command marked `[native]`. Set the ledger entry to `verified` with the
-   cases file as `proof`.
+   natively, or hand that platform back; `parity:` runs on each, and its
+   `--handback` check holds the cases to that system's marks. Add a
+   `smoke-extra` line for the command marked `[native]`. Set the ledger
+   entry to `verified` with the cases file as `proof`.
 
 Each project is a large, self-contained job that needs its whole codebase in
 view. Give it to its own agent — or to the lane that already owns the project
