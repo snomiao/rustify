@@ -1,0 +1,158 @@
+# Parity ledger for bunto (command `bunto`). Format and rules: parity/README.md.
+#
+# Written by reading, 2026-11-27, at dec02fd (the head of main; the branch
+# build/rustify-pipeline adds only the crate in rs/ and a workflow, so the
+# TypeScript is the same there). Read in full: cli.ts, index.tsx,
+# bunPMCommand.ts, notneed.ts, globWatch.ts, globMapFlow.ts,
+# createIgnoreFilter.ts, nil.ts, arrayDiffs.tsx, mapReads.ts,
+# promiseWithResolvers.ts, wait.ts, logError.ts, import-helpers.ts,
+# builtins.ts, PartialUnion.ts (test-data/sub/*.ts are empty), package.json,
+# bunfig.toml; the order in which yargs 17.7.2 (the version bun.lock pins)
+# answers --help, validates and runs a handler (build/lib/command.js,
+# yargs-factory.js); and bin/cli.js as `bun run build` bundles it at dec02fd.
+# For the published release, index.ts and globflow.ts of e59f19b, from which
+# 1.4.18 was published, were read too.
+#
+# Nothing was run beyond --help: `bunto --help`, `bunto i --help`,
+# `bunto --version` and one usage error (`bunto --nope`), with bun from an
+# empty directory with HOME, USERPROFILE and XDG_CONFIG_HOME pointing at a
+# throwaway one, and the same help commands and usage error through rustify's
+# install smoke test. The default command, `install` and `remove` were not
+# run: they scan the current directory and start `bun install` and
+# `bun remove` there. No test exists (`bun test || true`), so no proof is
+# cited.
+#
+# How the two fit together. The Rust binary is meant to be the installed
+# command; today it hands every invocation to bin/cli.js, a bundle of cli.ts
+# that is a build product (not in git). So every feature here is `missing`.
+#
+# For the owner, before anything is ported:
+# - main has never been published. Its semantic-release run failed, and npm's
+#   1.4.18 is e59f19b. Between the two, index.ts became index.tsx and
+#   bunAuto() was rewritten around @snomiao/glob-watch, unfinished: as read,
+#   every command but help and version throws `ReferenceError: getDeps is not
+#   defined` (index.tsx:50). The working scan of 1.4.18 is still in
+#   index.tsx as useBunAuto(), which nothing calls and the bundle leaves out.
+#   A port has to match one of the two; which one is the owner's decision.
+#   The notes below say what each does.
+# - package.json's exports, module and types name ./index.ts, which main no
+#   longer has (and `files` ships only the root's .ts), so `import "bunto"`
+#   from a release of main would fail.
+# - Files that nothing reachable from cli.ts imports, and that have no
+#   feature of their own: arrayDiffs.tsx, mapReads.ts, promiseWithResolvers.ts,
+#   wait.ts, logError.ts, import-helpers.ts, builtins.ts, PartialUnion.ts,
+#   createIgnoreFilter.ts, globMapFlow.ts. The audit counts them among the
+#   784 lines to replace.
+#
+# Rust-only behaviour, with no TypeScript counterpart, for the owner to bless
+# or remove (all from the hand-back helper, rs/src/js_fallback.rs v5):
+# BUNTO_NO_NATIVE=1 hands everything back; BUNTO_PACKAGE_ROOT tells the
+# binary where the package is; with RUSTIFY_HANDBACK_TRACE set it writes
+# `rustify: handed back to the JavaScript` to stderr first; a binary without
+# its package beside it says so and fails. Handed back, bin/cli.js starts with
+# the runtime its first line names (bun), or node when there is no bun, and
+# under node the bundle cannot run (it imports `bun`).
+
+reconciled = "dec02fd"
+
+# ───────────────────────────── Commands ─────────────────────────────
+
+[[feature]]
+name = "bunto / bunto auto (the default command)"
+status = "missing"
+ts = "cli.ts:13; index.tsx:38 bunAuto"
+note = "Flags: -w/--watch (default false), --dry (false), -r/--remove (true), -i/--install (true); `-r` and `-i` are these flags here, while `r` and `i` alone are the commands. At dec02fd bunAuto() reads only `watch`: it starts three glob watchers on the current directory (see `watching`) and then throws ReferenceError at index.tsx:50, which yargs reports (see `errors a command throws`); exit 1, by reading. In 1.4.18 it scans once and acts: prints `[Bun Auto] v<version>`, `* Package <file>` for every package.json, `+ <file>0<deps as JSON>` for every source file (the `0` is index.tsx:243's `${+\" \"}`), `[Bun Auto] Watching... (-w=false to turn off watching mode)` when --watch is on (nothing is watched), runs the installs, then the removals, and prints `[Bun Auto] All done!`. With no flags that removes every dependency it judges unused."
+
+[[feature]]
+name = "bunto install / bunto i"
+status = "missing"
+ts = "cli.ts:45; index.tsx:38 bunAuto"
+note = "The default command with install on and remove off; -w/--watch defaults to true here, and --dry is accepted. At dec02fd bunAuto() ignores install, remove and dry, so this throws the same ReferenceError. In 1.4.18 it installs what is missing and removes nothing."
+
+[[feature]]
+name = "bunto remove / bunto r"
+status = "missing"
+ts = "cli.ts:32; index.tsx:38 bunAuto"
+note = "The default command with remove on and install off; -w/--watch defaults to true, --dry is accepted. At dec02fd: the same ReferenceError. In 1.4.18 it removes what it judges unused and installs nothing."
+
+[[feature]]
+name = "--help / -h, and each command's help"
+status = "missing"
+ts = "cli.ts:60; cli.ts:62"
+note = "yargs 17's text, exit 0, before any handler runs. Seen: the top-level help has the usage line `bunto <cmd> [args]`, the commands auto [default], remove [aliases: r] and install [aliases: i], three examples, and of the options only -v, -h and `--dry [boolean] [default: dry run mode]` (the third argument of .default() is shown as the default); -w, -r and -i are not listed. `bunto i --help` shows `bunto install`, its description and the same options. Includes yargs's other ways to ask for help (see porting.md, `The argument parser`)."
+
+[[feature]]
+name = "--version / -v"
+status = "missing"
+ts = "cli.ts:58"
+note = "Prints package.json's version as it was bundled into bin/cli.js (`.version(pkg.version)`), so it is right under bun's global install too. The pipeline stamps package.json before it builds bin/cli.js, so the bundle carries the release version."
+
+[[feature]]
+name = "usage errors"
+status = "missing"
+ts = "cli.ts:61"
+note = "`.strict()`: an unknown option or word prints the top-level help to stderr, a blank line and `Unknown argument: <name>`, exit 1, before any handler runs (seen for `--nope`). The other messages are yargs's own."
+
+[[feature]]
+name = "errors a command throws"
+status = "missing"
+ts = "cli.ts:30; cli.ts:43; cli.ts:56"
+note = "There is no .fail() handler: a handler's rejection goes to yargs, which prints the help to stderr and then the error as bun prints it (message, source excerpt, stack of the bundle), exit 1. By reading; not run. At dec02fd this is what all three commands end in. The text cannot be reproduced natively, so these are handed back for good (porting.md)."
+
+[[feature]]
+name = "what bun does before the program"
+status = "missing"
+ts = "cli.ts:1"
+note = "bin/cli.js starts with `#!/usr/bin/env bun`. bun first reads .env files, bunfig.toml and package.json/tsconfig.json of the current directory (and the ones above), which for this command is the user's project; see porting.md, `What the TypeScript means`. A native command has to hand back wherever that changes what the program sees."
+
+# ─────────────── What the commands do (1.4.18; at dec02fd not reached) ───────────────
+
+[[feature]]
+name = "watching (-w / --watch)"
+status = "missing"
+ts = "globWatch.ts:17 globFlow; index.tsx:39"
+note = "At dec02fd globFlow() starts @snomiao/glob-watch 0.2.1 on ./**/package.json and ./**/*.{ts,tsx,js,jsx,mjs,cjs} under the current directory whatever --watch says, before the throw; its first answer is the only one taken (the stream closes after it). --watch decides only whether bunAuto() would run the installs and removals (index.tsx:86, index.tsx:92), which it never reaches. In 1.4.18 watching is switched off (commented out in index.ts since the commit `fix(main): disable watch`): the scan runs once, and --watch only prints the `Watching...` line."
+
+[[feature]]
+name = "finding the packages each source file imports"
+status = "missing"
+ts = "index.tsx:187; index.tsx:213; index.tsx:224"
+note = "Not reached at dec02fd (useBunAuto, never called). In 1.4.18: every ./**/*.{ts,tsx,js,jsx,mjs,cjs} not ignored (see `.gitignore files`), with dot files, read and scanned with Bun.Transpiler for its loader, plus lines matching /^import type .* from \"(.*?)\";$/m; paths starting with `.`, `@/`, `~/` or holding `:` dropped; a scoped name cut to `@scope/name`, any other to its first segment. A file that is empty or gone is forgotten. Next.js `[...x]` path segments are matched as `x` (hackNextJSPath, which main's index.tsx refers to but no longer imports)."
+
+[[feature]]
+name = "which package.json manages which files (nested packages)"
+status = "missing"
+ts = "index.tsx:150; index.tsx:321 getInstallRemoveActions"
+note = "Not reached at dec02fd. In 1.4.18: every ./**/package.json not ignored; its dependencies are the keys of every field whose name ends in `dependencies` (any case); packages are processed deepest first, and each source file belongs to the deepest package.json above it. In 1.4.18 a package.json that is not JSON ends the run with JSON.parse's error."
+
+[[feature]]
+name = "packages that are never installed or removed"
+status = "missing"
+ts = "index.tsx:24 cfg; index.tsx:114; index.tsx:328"
+note = "Not reached at dec02fd. In 1.4.18: never installed: node's builtins and bun's (`bun`, `sqlite`, `test`, `main`), with and without the `node:`/`bun:` prefix. Never removed: those, typescript, react, react-dom, vue, bun, jest, node and their @types/, ts-toolbelt, names starting prettier-plugin- or eslint-config-, names that occur in the package's scripts, names that occur anywhere in the root's ./*{config,rc}.{ts,tsx,jsx,js,mjs,cjs,json} files, and @types/<x> for an imported x."
+
+[[feature]]
+name = ".gitignore files"
+status = "missing"
+ts = "index.tsx:386 createIgnoreFilterFlow"
+note = "Not reached at dec02fd (createIgnoreFilterFlow and createIgnoreFilter.ts are never called). In 1.4.18 (getIgnoreFilterFromGlob): every ./**/.gitignore applies, with the `ignore` package's rules, to the files below its directory; node_modules is not otherwise excluded there."
+
+[[feature]]
+name = "running bun install / bun remove, with @types"
+status = "missing"
+ts = "bunPMCommand.ts:6"
+note = "In the bundle at dec02fd, but never reached: the throw comes first. In 1.4.18: for each package directory and each package, prints `[Bun Auto] bun <install|remove> <name> in <dir>`; with --dry nothing more; otherwise runs `bun <install|remove> <name>` there, output hidden and failure ignored, and when that succeeded and the name is not on the list below, `bun <install|remove> -d @types/<name>`. Installs first, then removals. This is the part that changes the user's project."
+
+[[feature]]
+name = "the packages that need no @types (DefinitelyTyped's list)"
+status = "missing"
+ts = "notneed.ts:27; notNeededPackages.json"
+note = "A copy of DefinitelyTyped's notNeededPackages.json, bundled at build time (no download; the updater in notneed.ts is commented out). Its libraryName values are the packages for which no @types/ package is installed or removed."
+
+# ───────────────────────────── Library ─────────────────────────────
+
+[[feature]]
+name = "import \"bunto\" (the JavaScript API)"
+status = "missing"
+ts = "index.tsx:22; index.tsx:38"
+note = "package.json exports, module and types name ./index.ts: in 1.4.18 that file exports bunAuto (default) and bunAutoInstall. A binary cannot stand in for it. At dec02fd the file is index.tsx, which the exports do not name and `files` does not ship, so the import would fail from a release of main. For the owner: keep it as TypeScript (keep_ts), or drop it."

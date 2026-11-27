@@ -1,0 +1,238 @@
+# Parity ledger for wtx (npm package @snomiao/wtx, command `wtx`). Format
+# and rules: parity/README.md.
+#
+# Written by reading, 2026-11-27, at 2c1b22f (v0.3.4, the published version;
+# `npm view @snomiao/wtx bin` is `wtx: wtx.mjs`). Read in full: wtx.mjs,
+# src/cli.ts, src/index.ts, src/server.ts, src/term-summary.ts (987 lines),
+# their three test files, package.json, README.md, docs/wtx.md,
+# docs/protocol.md and the two workflows. lib/ is the separate browser
+# package @snomiao/wtx-react (keep_ts) and has no entries.
+#
+# Nothing was run beyond what proves the hand-back is safe. wtx has no
+# `--help`: wtx.mjs reads no arguments, and every command line starts the
+# server and keeps it running. So wtx was only ever started with a temp
+# directory name no file system accepts, where src/server.ts throws at its
+# first mkdir (line 78), before Bun.serve and before it writes a file: once
+# directly with bun, and through the install smoke test of the branch
+# build/rustify-pipeline (bun and npm, Linux x64). No port was bound by
+# wtx, no PTY started and no test of the project run. Every note below comes
+# from the source; none was seen to happen, and no test is cited as a proof.
+#
+# How it fits together. `wtx` is one foreground bun process: Bun.serve on
+# 127.0.0.1:3004 by default, answering a small HTTP API and WebSockets.
+# Each session is one PTY (bun-pty) running a shell or a given command,
+# with a 1 MB buffer of its output that a client gets again when it
+# attaches. Sessions live in the process's memory only and outlive their
+# WebSocket clients, not the process. The same module is the package's
+# library API (src/index.ts), which other bun programs import to run the
+# server inside their own process and to add sessions to it.
+#
+# Status. The crate (rs/ on build/rustify-pipeline) hands every command
+# line to wtx.mjs, so every feature below is `missing`. Nothing is
+# `dropped`: that is the owner's decision. The install smoke test starts
+# with `[1] wtx`, a command meant to fail before the server listens, since
+# no command of wtx exits on its own.
+#
+# Candidates to stay TypeScript (the owner decides; nothing is `dropped`):
+#   - the library API: a binary cannot satisfy an import, and the functions
+#     work on the session map of the importing process
+#   - the WebSocket and HTTP protocol itself is shared with
+#     @snomiao/wtx-react (lib/), which stays TypeScript; a Rust server has
+#     to keep the frames byte for byte
+#
+# Traps for an exact port, found while reading:
+#   - every argument is ignored; `wtx --help` and `wtx --version` start the
+#     server like plain `wtx`
+#   - the start-up line prints the parsed TERMINAL_WS_PORT, not the port
+#     Bun.serve took (`port 0` for 0); parseInt takes `3004abc` as 3004, and
+#     what Bun.serve does with NaN, a negative or a too large port, or an
+#     empty TERMINAL_WS_HOST was not checked
+#   - <temp dir>/koho-term-zshrc is one fixed directory, rewritten at every
+#     start by every user and instance; a failure there ends wtx before it
+#     listens
+#   - query numbers go through parseInt and Math.max: `cols=abc` gives NaN,
+#     which reaches the PTY of a new session and is skipped when sizes are
+#     negotiated
+#   - route keys: /sessions/:key/buffer and /sessions/:key/input use the key
+#     as it is in the URL, /sessions/:key and /sessions/:key/git decode it
+#   - a working directory that does not exist is created (mkdir -p) by a
+#     WebSocket `?cwd=` or a POST, and `..` is refused only as `/../`
+#   - /sessions/:key/git trims git's whole porcelain output, so the first
+#     line loses its leading space: a file changed only in the worktree is
+#     counted as staged when it comes first
+#   - /summary renders only the last non-blank line of the screen (tail 1),
+#     and summarises that line alone
+#   - a JSON body of `null` for POST /sessions/:key throws outside the try
+#     (what bun answers then was not checked)
+#   - PTY input from a binary frame or an /input body is decoded as UTF-8
+#     with replacement before it is written; the queries the server answers
+#     (DA, CPR) and the OSC 7 sequence are looked for in each chunk alone
+#   - replacing or deleting a session leaves its clients attached to the
+#     old one: they get its `[session ended]`, and what they type goes to
+#     whatever session holds the key afterwards
+#   - with TERMINAL_ACCESS_KEY unset every route is open to whoever reaches
+#     the address (loopback by default since 0.3.2)
+
+reconciled = "2c1b22f"
+
+[[feature]]
+name = "wtx (the command): starts the server, reads no arguments"
+status = "missing"
+ts = "wtx.mjs:3; src/cli.ts:3; package.json:19 bin"
+note = "The bin is wtx.mjs, `#!/usr/bin/env bun`, which imports src/server.ts and calls startTerminalWS(); src/cli.ts is the same two lines (README: `bun ./node_modules/wtx/src/cli.ts`, and the `./cli` export). No argument is read, so any command line, `--help` and `--version` included, starts the server and runs until it is killed. Needs bun: Bun.serve, Bun.spawn, bun-pty, and an import of ./src/server without extension that node cannot resolve."
+
+[[feature]]
+name = "listening address (TERMINAL_WS_PORT, TERMINAL_WS_HOST) and the start-up line"
+status = "missing"
+ts = "src/server.ts:113; src/server.ts:503; src/server.ts:813"
+note = "Port parseInt(TERMINAL_WS_PORT ?? \"3004\"), host TERMINAL_WS_HOST ?? \"127.0.0.1\" (an empty value stays empty). Prints `Terminal WS server listening on port <parsed port>` on stdout once Bun.serve returned. Bun.serve's own behaviour for odd values and for a port in use was not checked (not run). startTerminalWS returns the Bun server object to library callers."
+
+[[feature]]
+name = "access key for clients that are not on loopback (TERMINAL_ACCESS_KEY)"
+status = "missing"
+ts = "src/server.ts:116; src/server.ts:511"
+note = "When set, every request (routes and WebSocket upgrades) from an address other than exactly 127.0.0.1, ::1 or ::ffff:127.0.0.1 needs `Authorization: Bearer <key>` or `?key=<key>` (a header without `Bearer ` falls back to the query); otherwise 401 `Unauthorized`. Unset: no check at all."
+
+[[feature]]
+name = "settings from .env files in the working directory (bun)"
+status = "missing"
+ts = "src/server.ts:114"
+note = "The code expects TERMINAL_ACCESS_KEY and the like to come from .env (comment at :114, and the allow-list's note that .env secrets must not reach shells). That is bun loading .env, .env.local and the NODE_ENV variants from the current directory before the program starts, with bun's syntax; see docs/porting.md, `What the TypeScript means`. A Rust server has to read the same files the same way."
+
+[[feature]]
+name = "shell start-up files for directory reporting (<temp dir>/koho-term-zshrc, ZDOTDIR, PROMPT_COMMAND)"
+status = "missing"
+ts = "src/server.ts:77; src/server.ts:274"
+note = "At module load, before anything listens: mkdir -p join(os.tmpdir(), \"koho-term-zshrc\") and write .zshenv and .zprofile (source the user's own) and .zshrc (sources ~/.zshrc, adds a precmd that prints OSC 7 with $HOST and $PWD). Every PTY gets ZDOTDIR pointing there, and for bash a PROMPT_COMMAND printing the same OSC 7, followed by `; <the server's own PROMPT_COMMAND>` when one is set. A failure to create the directory throws and wtx exits 1 (the install smoke test relies on that)."
+
+[[feature]]
+name = "PTY environment: the secret-scrubbing allow-list and the variables set for every shell"
+status = "missing"
+ts = "src/server.ts:141; src/server.ts:224; src/server.ts:239; src/server.ts:249"
+note = "Only variables named in ALLOW_ENV_NAMES (POSIX core, display, SSH agent, editor and pager, KUBECONFIG, DOCKER_HOST, DOCKER_CONTEXT, GITHUB_OWNER, GH_TOKEN, GITHUB_TOKEN, ZDOTDIR, VS Code's, Windows essentials, CODEHOST, CODEHOST_ROOT) or starting with an allowed prefix (LC_, XDG_, NODE_, npm_, NPM_, BUN_, PNPM_, YARN_, GIT_, VSCODE_, TERMINFO, SSH_) reach a shell; then TERM=xterm-256color, COLORTERM=truecolor, LANG and LC_ALL=C.UTF-8, HOST and HOSTNAME=os.hostname(), ZDOTDIR and PROMPT_COMMAND as above. bun-pty spawns cmd[0] with the rest of cmd, the session's size and cwd."
+
+[[feature]]
+name = "GET /sessions: list every session"
+status = "missing"
+ts = "src/server.ts:543"
+note = "Any method. JSON with two-space indentation: key, cwd, cmd, cols, rows, clients, bufferBytes, startedAt, lastActivity (ms), exited, in the order the sessions were created."
+
+[[feature]]
+name = "GET /sessions/:key/buffer: the raw replay buffer"
+status = "missing"
+ts = "src/server.ts:564; src/server.ts:591"
+note = "Any method; the key is not URL-decoded; 404 `session not found`. Without strip=1, tail or offset: the buffer's chunks joined, application/octet-stream."
+
+[[feature]]
+name = "GET /sessions/:key/buffer?strip=1|tail=N|offset=N: the screen as text"
+status = "missing"
+ts = "src/server.ts:575; src/server.ts:31"
+note = "strip=1, or a tail or offset above 0 (parseInt, Math.max(0, ...); NaN counts as 0), renders the bytes through @xterm/headless at the session's size (scrollback 50000, or tail+offset+rows), takes each line trimEnd'ed, drops trailing blank lines, then keeps lines [end-tail, end) with end = length-offset; text/plain; charset=utf-8. If @xterm/headless cannot be loaded: a regex strip of escape and control characters on the decoded bytes, split on \\n, the same slicing."
+
+[[feature]]
+name = "GET /sessions/:key/git: branch and change counts of the session's directory"
+status = "missing"
+ts = "src/server.ts:607"
+note = "GET only (other methods fall through to the upgrade, 426); the key is URL-decoded; 404 `session not found`. Runs `git -C <cwd>` branch --show-current, status --porcelain and rev-list --left-right --count @{u}...HEAD at once, trims each output, and answers JSON {branch, staged, unstaged, untracked, ahead, behind}; no upstream gives 0 and 0. Exit codes are not looked at. The trim takes the first porcelain line's leading space (see the header)."
+
+[[feature]]
+name = "POST /sessions/:key/input: type into a session (?cr=1)"
+status = "missing"
+ts = "src/server.ts:641"
+note = "POST only; the key is not URL-decoded; 404 `session not found`. The body is decoded as UTF-8 and written to the PTY, then `\\r` as a second write when cr=1. Answers 200 `ok`."
+
+[[feature]]
+name = "POST /sessions/:key: create or replace a named session"
+status = "missing"
+ts = "src/server.ts:654; src/server.ts:319; src/server.ts:417"
+note = "The key is URL-decoded. Optional JSON body {cmd, cwd, cols, rows}; a body that is not JSON counts as {}. cmd: the array if it has elements, else [$SHELL or bash]. cols Math.max(10, cols ?? 80), rows Math.max(2, rows ?? 24). cwd: body.cwd ?? WTX_DEFAULT_CWD ?? the server's cwd, backslashes made slashes, must be absolute (/ or a drive letter) and must not contain `/../`, created if missing; else 400 with `cwd is required` or `invalid cwd: <raw>`. A session under the same key is killed and replaced (`[term] replacing existing session <key>`). 201 with JSON {key, cmd, cwd, cols, rows}."
+
+[[feature]]
+name = "DELETE /sessions/:key: kill and forget a session"
+status = "missing"
+ts = "src/server.ts:681"
+note = "The key is URL-decoded; 404 `session not found`; kills the PTY, removes the session, answers 200 `ok`. Attached clients stay on the old session object and get its `[session ended]` when the PTY exits. Other methods on /sessions/:key fall through to the upgrade (426)."
+
+[[feature]]
+name = "GET /summary?cwd=<path>: summary of the session in a directory"
+status = "missing"
+ts = "src/server.ts:598; src/server.ts:834"
+note = "Any method. No cwd: 400 `missing cwd`. The first session (in creation order) whose cwd is the path or lies under path + `/` is rendered with tail 1, so only its last non-blank screen line is summarised; answers JSON of the summary plus sessionKey and lastActivity, or `null` when no session matches."
+
+[[feature]]
+name = "terminal summary: state, recap, last assistant line, errors, waiting for the user, time worked"
+status = "missing"
+ts = "src/term-summary.ts:101"
+note = "Made for Claude Code screens. state: `empty` without a non-blank line; `running` when the last 15 lines mention esc to interrupt, Actioning…, Running… or (ctrl+b to run in background); `bg` for Command running in background; else `idle`. recap: the last `※ recap:` line with its indented continuation lines, without `(disable recaps in /config)`. lastAssistant: the last `⏺ ` line with its indented continuation lines. errorCount: lines among the last 80 matching error, failed, NOT_FOUND or exit code 1-9 as words, any case. waitingForUser: idle and recap or lastAssistant ends with ? or ？ or one of three Japanese request endings. workedSec: `✻ Worked|Cogitated for [Nm ]Ns` within the last 20 lines. Reached through /summary and getTermSummaryForCwd only."
+
+[[feature]]
+name = "GET /status/:owner/:repo: activity of the session in a repository (WTX_REPO_BASE)"
+status = "missing"
+ts = "src/server.ts:529; src/server.ts:817"
+note = "Any method. Without WTX_REPO_BASE: 404 `WTX_REPO_BASE not configured`. Else the first session whose cwd starts with <base>/<owner>/<repo> (a plain prefix, segments not decoded) gives {status: active (output within 60 s) or idle, lastActivity, cwd}, none gives {status: closed, lastActivity: null, cwd: null}; compact JSON, application/json."
+
+[[feature]]
+name = "any other request: WebSocket upgrade, or 426"
+status = "missing"
+ts = "src/server.ts:690"
+note = "Every path and method the routes above do not answer is offered to server.upgrade; a request that is not a WebSocket handshake gets 426 `WebSocket upgrade expected`. So the WebSocket endpoint is any such path, not only `/`."
+
+[[feature]]
+name = "WebSocket attach by working directory (?cwd=)"
+status = "missing"
+ts = "src/server.ts:697; src/server.ts:413"
+note = "Without a non-empty `session`, the cwd parameter is validated as for POST (created if missing); an error is sent as a red line (ESC[31m<message>ESC[0m CR LF, binary), logged on stderr as `[term] rejecting connection: <message>`, and the socket closed with 1008. The session key is `s_` and the first 12 hex digits of sha256(cwd). A session that exited is replaced by a new one (`[term] session <key> exited, creating fresh session`); a missing one is created with [$SHELL or bash] at cols Math.max(10, parseInt(cols ?? 80)) and rows Math.max(2, parseInt(rows ?? 24))."
+
+[[feature]]
+name = "WebSocket attach to a named session (?session=)"
+status = "missing"
+ts = "src/server.ts:706; src/server.ts:735"
+note = "Attaches to the session of that key, whatever its cwd. Unknown key: a red `session \"<key>\" not found` line and close 1008 `session not found`. An exited session is shown (its replay) but not resized, and stays exited."
+
+[[feature]]
+name = "replay on attach and the 1 MB replay buffer"
+status = "missing"
+ts = "src/server.ts:754; src/server.ts:403; src/server.ts:119"
+note = "On attach: text frame {\"type\":\"replay-start\"}, every buffered chunk as its own binary frame, {\"type\":\"replay-end\"}; then, unless the session exited, a {\"type\":\"size\",\"cols\",\"rows\"} frame with the session's current size. The buffer keeps PTY output chunks as they came and drops the oldest while it holds more than 1,048,576 bytes and more than one chunk. src/replay-server.test.ts checks the bracketing (needs a PTY and a port)."
+
+[[feature]]
+name = "terminal size: the smallest attached client's, and size frames"
+status = "missing"
+ts = "src/server.ts:444; src/server.ts:480; src/server.ts:467"
+note = "Each client's size (from the query on attach, then from resize messages) is clamped to at least 10 x 2; the session runs at the minimum cols and the minimum rows over the clients' finite sizes, floored; with none, it keeps its size. Re-negotiated 50 ms after an attach, a resize or a disconnect (per session, the last one wins), not for an exited session or one without clients; a change resizes the PTY and sends {\"type\":\"size\",\"cols\",\"rows\"} to every client. negotiateSize is exported from server.ts (not from index.ts) and tested in src/negotiate.test.ts."
+
+[[feature]]
+name = "client messages: resize, ping, and keyboard input"
+status = "missing"
+ts = "src/server.ts:771"
+note = "Ignored when the client's session is gone. A text frame that parses as JSON with type `resize` and truthy cols and rows sets the client's size; type `ping` is answered with {\"type\":\"pong\",\"t\": t ?? Date.now()}; any other text, JSON or not, is written to the PTY as it is. A binary frame is decoded as UTF-8 and written to the PTY."
+
+[[feature]]
+name = "PTY output to clients, and cwd frames from OSC 7"
+status = "missing"
+ts = "src/server.ts:351; src/server.ts:96"
+note = "Each output chunk updates lastActivity, goes into the buffer and to every attached client as a binary frame (bun-pty's text, encoded as UTF-8). When the chunk holds an OSC 7 `ESC ]7;file://<host><path>` ended by BEL or ESC \\, the path (decodeURIComponent, raw on failure) becomes the session's cwd if it differs, and {\"type\":\"cwd\",\"path\"} follows the chunk to each client whose send did not return a negative number (backpressure)."
+
+[[feature]]
+name = "server-side answers to terminal queries (device attributes, cursor position)"
+status = "missing"
+ts = "src/server.ts:354"
+note = "A chunk of PTY output containing ESC[c or ESC[0c is answered with ESC[?1;2c, one containing ESC[6n with ESC[1;1R, written straight back to the PTY whether or not a client is attached, once per chunk. The output still goes to the clients unchanged."
+
+[[feature]]
+name = "end of a session: [session ended] and exited sessions"
+status = "missing"
+ts = "src/server.ts:379"
+note = "When the PTY exits: CR LF ESC[33m[session ended]ESC[0m CR LF is added to the buffer and sent to the session's clients, `[term] session <key> PTY exited` is logged, the session is kept and marked exited (`exited: true` in /sessions), and the onExit callback of createSession runs. A WebSocket client's disconnect never ends a session (`[term] client disconnected from <key> (<n> remaining)`)."
+
+[[feature]]
+name = "log lines on stdout and stderr"
+status = "missing"
+ts = "src/server.ts:257; src/server.ts:394; src/server.ts:715; src/server.ts:804"
+note = "stdout: `[term] spawning: bun-pty → <cmd0> <args> (<cols>x<rows>) in <cwd>` (args is always empty, so two spaces), `[term] created session <key> → <cmd joined by spaces> in <cwd>`, the replacing, exited, PTY-exited and client-disconnected lines in the entries above, and the start-up line. stderr: `[term] rejecting connection: <message>`. Seen by whoever keeps the server's log (pm2, a terminal)."
+
+[[feature]]
+name = "library API (import from @snomiao/wtx, and @snomiao/wtx/cli)"
+status = "missing"
+ts = "src/index.ts:1; package.json:36 main; package.json:39 exports"
+note = "main, module, types and the `.` export are the TypeScript source src/index.ts: startTerminalWS, createSession(key, cmd, cols, rows, cwd, onExit?), hasSession, getTerminalStatusForRepo, getTermSummaryForCwd, all on the session map of the importing process; `./cli` starts the server on import. A binary cannot be imported, so this stays TypeScript unless the owner decides otherwise; the CLI's port does not touch it."
