@@ -1123,6 +1123,36 @@ function compareAll() {
 }
 
 let gone = null;
+// Removes the run's directory. A case may have left a directory that cannot
+// be written or entered (a test of what a program does without permission);
+// without root such a tree cannot be removed until its modes are restored.
+// The result of the run never depends on this: whatever cannot be removed is
+// named, and the run ends as its cases say.
+function removeRun(dir) {
+  const remove = () => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+  try {
+    return remove();
+  } catch {}
+  const open = (at) => {
+    let entries = [];
+    try {
+      const stat = fs.lstatSync(at);
+      if (stat.isSymbolicLink()) return;
+      fs.chmodSync(at, stat.isDirectory() ? 0o700 : 0o600);
+      if (stat.isDirectory()) entries = fs.readdirSync(at);
+    } catch {
+      return;
+    }
+    for (const name of entries) open(path.join(at, name));
+  };
+  open(dir);
+  try {
+    remove();
+  } catch (error) {
+    console.log(`parity: could not remove ${dir} (${error.code || error.message}); remove that directory by this exact path`);
+  }
+}
+
 try {
   if (handback) handbackCheck();
   else compareAll();
@@ -1142,7 +1172,7 @@ try {
     console.log(`kept ${work}`);
     console.log(`  When you are done with it, remove that directory by this exact path, and nothing else:`);
     console.log(`  never ${path.join(path.dirname(work), "rustify-parity-*")} as a pattern, which takes the directories of runs still going.`);
-  } else fs.rmSync(work, { recursive: true, force: true, maxRetries: 3 });
+  } else removeRun(work);
 }
 if (gone) process.exit(3);
 skipReport();
