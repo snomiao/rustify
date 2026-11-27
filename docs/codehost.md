@@ -12,12 +12,21 @@ page, its workers and the signaling Worker are TypeScript too and stay so.
 
 - npm: `codehost`, published by semantic-release on every push to main. The
   commands `codehost` and `ch` are `src/cli/index.ts`, run by bun.
-- Ledger: `parity/codehost.toml`, 192 features, all `missing`. Written by
-  four readers who read every tracked file, merged, then checked by two
-  critics who enumerated commands, options, variables, files, routes,
-  messages and test titles mechanically. Nothing was run.
-- Rust: none on main yet. The first slice is being ported on the branch
-  `build/rust-port`.
+- Ledger: `parity/codehost.toml`, 200 features: 7 verified, 15 partial,
+  178 missing. Written by four readers who read every tracked file, checked
+  by two critics who enumerated commands, options, variables, files, routes,
+  messages and test titles mechanically, then updated by the first port.
+- Rust: snomiao/codehost PR #10. Native on Linux: `open --print`, `init`, the
+  room-token check of `serve`, `dev` and `expose`, and `dev` registering with
+  a running host daemon, answered in 11 to 17 ms against 177 to 259 ms. 440
+  parity cases (300 answered by the binary, 140 handed back) on pipes and on
+  a terminal, plus 52,358 helper answers and 20,000 command lines compared
+  with the TypeScript. An independent verifier found four differences (project
+  files bun warns about, `.env` variables that reach git, git output over
+  1 MiB); all are handed back now.
+- Still the JavaScript: everything else, everything on macOS and Windows, and
+  any project with its own `.env` in the current directory (bun loads it and
+  git inherits it), so many users see no speed-up yet.
 
 ## Why it matters
 
