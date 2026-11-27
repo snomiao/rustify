@@ -74,6 +74,18 @@ found by a port or by the verification of one, and each was visible to a user.
   case compares it all the same), and whether the binary should copy the
   loss is the owner's decision.
 
+**On Windows, bun**
+
+- removes nothing when told to remove a directory by a path that starts with
+  `./` or `.\`: `fs.promises.rm("./.genvx", { recursive: true, force: true
+  })` and `fs.rmSync` return without an error and leave the directory as it
+  was (bun 1.4.2; `.genvx` without the `./` is removed, and node 24 removes
+  both). genvx's TypeScript names its working directory `./.genvx`, so on
+  Windows it never removes it, and its Rust does;
+- hangs, instead of failing, when `TEMP` names a directory it cannot use:
+  wtx's first CI run on Windows hung in `bun --version` until the job was
+  cancelled.
+
 **JavaScript itself**
 
 - writes a number in the shortest form that reads back the same, and where
@@ -213,6 +225,37 @@ the cases file can be committed as it is. A `null` in `env` removes a
 variable, whether the cases file's global `env` or the runner set it, so one
 case can go without the `TZ` that the global `env` gives every other case.
 
+`setup` and `after` lines are POSIX shell. The runner runs them with
+`/bin/sh`, on Windows with Git for Windows' bash, which it finds by itself,
+or with the shell `--shell` names; never with Windows' own `bash.exe`, which
+starts WSL. Write them so that they mean the same on every system the cases
+run on. A path that the program is to read, in a file that a line writes or
+in a variable, goes in as `<CWD>`, `<HOME>`, `<ROOT>` or `<REPO>`, never as
+`$(pwd)`, `~` or `$HOME`. On Windows the shell spells those `/c/Users/…` or
+`/tmp/…`, which no Windows program reads as meant, while the runner writes
+the placeholders as `C:/Users/…`, which both read. 138 of genvx's cases
+write the path of a store beside their directory, such as `"$(cd .. &&
+pwd)/store.git"`, into a configuration file, and on Windows they test a
+store that does not exist; `<ROOT>/store.git` is the same store on every
+system. A probe that a system's tools answer differently proves nothing
+there: GNU `stat -c '%a'` fails the same way on both sides on macOS, and Git
+Bash reports 644 for every file, whatever its mode (71 of genvx's cases);
+GNU `touch -d` fails on macOS. Where a case cannot mean the same thing on a
+system, give it `"skip": { "win32": "<why>" }`, keyed by operating system as
+node's `process.platform` names it (`linux`, `darwin`, `win32`). A misspelt
+system (`windows`) or one with an architecture (`darwin-arm64`) stops the
+run. Every run says at its end how many cases were skipped there and why,
+and a run in which every case was skipped fails as "no case ran".
+
+On Windows a directory comes back as its placeholder in every spelling, and
+a spelling other than the runner's own keeps a tag. `<CWD>` is the directory
+as Windows gives it, or with forward slashes. `<CWD:json>` has doubled
+backslashes, as JSON and Rust's `{:?}` write them; `<CWD:msys>` is the way
+MSYS tools print it; `<CWD:8.3>` is the short spelling; `:case` marks other
+letter case. A line's `pwd` is therefore `<CWD:msys>` there. When both sides
+print the same spelling, they compare the same. A port that prints `{:?}`
+where its TypeScript prints the plain path differs, as its users would see.
+
 The runner compares the exit code (for a program that a signal ended, which
 signal: `signal SIGTERM`), stdout, stderr, and what each `after` line prints.
 Through pipes, stdout and stderr are read as UTF-8 text, so bytes that are
@@ -301,6 +344,23 @@ it is compared.
   data.
 - **A value that must not be in the cases file** (dotenvdotenc refuses to
   commit a file holding a private key): the wrapper computes it.
+
+On Windows a wrapper started with `sh` is a program of the MSYS family. It
+reads its command line by rules of its own and gives the program it starts
+`TERM=xterm-256color`. The runner writes that command line so that the
+case's arguments still arrive as written: it puts in double quotes what MSYS
+would glob or expand, and it gives that one program `MSYS2_ARG_CONV_EXCL=*`
+and `MSYS_NO_PATHCONV=1`, which stop MSYS from turning POSIX paths into
+Windows ones. Everything behind the wrapper inherits those two variables,
+git's own `sh` included. Put the same wrapper in front of both sides, so that
+both get the same TERM and the same variables. Put `env NAME=value` first,
+before the wrapper. The runner does a leading `env` itself, while an `env`
+behind a wrapper is MSYS's: it gives only that side a TERM, and it reads the
+command line the wrapper wrote for it by MSYS's rules, globbing included.
+qqdocs's `--rs "node rs/parity/with-mock.mjs env QQDOCS_PACKAGE_ROOT=… …"`
+would do that on Windows; `--rs "env QQDOCS_PACKAGE_ROOT=… node
+rs/parity/with-mock.mjs …"` would not. A POSIX path of the wrapper's own
+that it hands a Windows program has to be converted with `cygpath -w`.
 
 The runner runs one case at a time. To use more cores, start several runners
 at once, each with its own `--filter` (give each group of cases a common name
@@ -452,6 +512,14 @@ It runs only the binary, with a stand-in package whose JavaScript entry does
 nothing but say it was reached, and fails unless exactly the marked cases got
 there. On genvx this caught four cases that were believed native.
 
+A case that the binary hands back on some systems only is marked for those,
+keyed as `skip` is (step 2): `"handback": { "win32": "<why>" }`. On every
+other system the binary is meant to answer it. Run the check on every system
+the binary answers natively on. On Windows it found 14 genvx cases that the
+Rust hands back only there (`setup --dir`, `GENVX_CONFIG_DIR`, lefthook),
+none of them marked. Marked so, the check passes on Windows (224 answered by
+the binary, 92 handed back), and it still passes on macOS (238 and 78).
+
 For the ordinary parity run, the binary built in the repo has to know where
 the package is, so that handed-back cases reach the real JavaScript:
 
@@ -461,6 +529,10 @@ the package is, so that handed-back cases reach the real JavaScript:
 
 (`$GITHUB_WORKSPACE` in CI. The JavaScript entry named in `main.rs` has to
 exist there, so build it first if it is a build product.)
+
+On Windows the runner does this leading `env` itself and passes the value as
+written. So write a Windows path there: `$GITHUB_WORKSPACE`, or `$(pwd -W)`
+in Git Bash, where `$PWD` is `/c/…`.
 
 ## 6. Make CI hold the line
 
@@ -513,13 +585,18 @@ A binary that answers natively on macOS or Windows should be proven there,
 or hand that platform back. Running existing ports' cases on a Mac found
 differences that Linux could not show: gchat-cli's binary runs a program file
 without a `#!` line through the shell, where bun fails with ENOEXEC, and in
-qqdocs a closed connection was taken as success. On Windows, about a third of
-genvx's cases differed; that is being investigated. Cases written for Linux
-may need work first. The GNU-only `stat -c` and `touch -d` fail on macOS. A
-terminal case is BROKEN on Windows, so run the `--tty` command only where
-`$RUSTIFY_PLATFORM` does not start with `win32`. Setup lines on Windows need
-a POSIX shell, and a case handed back on some platforms only needs a mark per
-platform; the runner's support for this is coming.
+qqdocs a closed connection was taken as success. On Windows, genvx's cases
+found one difference that comes from the runtime: bun leaves `./.genvx`
+behind (see "What the TypeScript means"). They also showed what cases
+written for Linux need first: placeholders instead of `$(pwd)` in paths that
+a line hands the program, a `skip` for probes that mean nothing there (step
+2), and marks for what goes back only there (step 5). The same `parity:`
+command serves every platform, with any `env` put before the wrapper (step
+2). On Windows the runner starts `$RUSTIFY_BIN_DIR/mycli` as `mycli.exe`;
+the "Windows" section at the top of `templates/parity/parity.mjs` says what
+else differs there. A terminal case is BROKEN on Windows, so run the `--tty`
+command only where `$RUSTIFY_PLATFORM` does not start with `win32`. Add a
+platform to `parity-platforms` once the cases pass on it.
 
 Add a line to `smoke-extra` for the command too, so that every platform runs
 it once after installing: `<command> [args] => <text>`, with a leading `[2] `
@@ -558,7 +635,8 @@ file under a named `ts` directory (a shell script the program runs, a
 template it writes out). At the repository root only scripts count, so a
 change to `package.json`, a workflow or the README does not ask for one.
 Nothing under `ignore`, `keep_ts` or the crate counts. See `parity/README.md` for how to record a
-command that is native in its plain use and handed back in some situations.
+command that is native in its plain use and handed back in some situations,
+or native on some operating systems only.
 
 ## 8. Have someone else try to break it
 
