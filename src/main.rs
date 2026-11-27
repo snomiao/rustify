@@ -455,8 +455,12 @@ fn audit_project(project: &Project, home: &Path, root: &Path, offline: bool, her
 fn locations(value: &str) -> impl Iterator<Item = &str> {
     value
         .split(';')
-        .filter_map(|part| part.trim().split([':', ' ']).next())
-        .filter(|file| !file.is_empty())
+        .enumerate()
+        .filter_map(|(i, part)| part.trim().split([':', ' ']).next().map(|file| (i, file)))
+        // After the first location, a `;` may just be punctuation in a
+        // description: only something that looks like a path is one.
+        .filter(|(i, file)| !file.is_empty() && (*i == 0 || file.contains('/') || file.contains('.')))
+        .map(|(_, file)| file)
 }
 
 fn audit_ledger(s: &mut Section, project: &Project, dir: &Path, path: &Path) {
@@ -607,6 +611,12 @@ fn audit_delivery(s: &mut Section, project: &Project, dir: &Path, offline: bool)
     let package: Option<Json> =
         fs::read_to_string(dir.join("package.json")).ok().and_then(|t| serde_json::from_str(&t).ok());
     let config = package.as_ref().and_then(|p| p.get("rustify"));
+    if let Some(package) = &package {
+        let intended = &package["publishConfig"]["bin"];
+        if !intended.is_null() && *intended != package["bin"] {
+            s.warn("`publishConfig.bin` differs from `bin`, and npm does not apply it when publishing: the published command is what `bin` names. The hand-back must go there too");
+        }
+    }
     let mut pipeline_ready = true;
     if cargo.is_none() {
         pipeline_ready = false;
@@ -851,12 +861,11 @@ fn ts_paths(dirs: &[String]) -> String {
 }
 
 /// The JavaScript file each command of a package runs, as published:
-/// command name → file, relative to the package root.
+/// command name → file, relative to the package root. That is `bin`.
+/// `publishConfig.bin` is not it: npm does not apply it when publishing
+/// (pnpm and yarn do), so packages published with npm run `bin`.
 fn js_entries(package: &Json) -> Vec<(String, String)> {
-    let bin = match &package["publishConfig"]["bin"] {
-        Json::Null => &package["bin"],
-        published => published,
-    };
+    let bin = &package["bin"];
     let clean = |file: &str| file.trim_start_matches("./").to_string();
     match bin {
         Json::String(file) => {
@@ -1082,14 +1091,17 @@ mod tests {
         assert_eq!(found, ["ts/tail.ts", "ts/cli.ts"]);
         assert_eq!(locations("rs/src/main.rs").collect::<Vec<_>>(), ["rs/src/main.rs"]);
         assert_eq!(locations(" ; ").count(), 0);
+        let found: Vec<&str> = locations("rs/parity.json 600 cases; a write-up follows; tests/x.test.ts").collect();
+        assert_eq!(found, ["rs/parity.json", "tests/x.test.ts"]);
     }
 
     #[test]
     fn the_published_bin_is_the_js_entry() {
         let entries = |text: &str| js_entries(&serde_json::from_str(text).unwrap());
+        // npm publishes `bin` and ignores publishConfig.bin.
         assert_eq!(
             entries(r#"{"bin":{"slack":"./ts/cli.ts"},"publishConfig":{"bin":{"slack":"./dist/cli.js"}}}"#),
-            [("slack".to_string(), "dist/cli.js".to_string())]
+            [("slack".to_string(), "ts/cli.ts".to_string())]
         );
         assert_eq!(entries(r#"{"name":"@me/x","bin":"cli.mjs"}"#), [("x".to_string(), "cli.mjs".to_string())]);
         assert!(entries(r#"{"name":"x"}"#).is_empty());

@@ -34,7 +34,7 @@ Start with `agent-yes` and `slack-hub`.
 - [Delivering Rust through npm](npm-distribution.md) — design and what is verified
 - [全平台原生速度方案](native-speed.zh.md) — Windows plan and the public-repo layout (Chinese)
 - Parity ledgers: [`parity/`](../parity/README.md)
-- Per project: [agent-yes](agent-yes.md), [slack-hub](slack-hub.md), [rechrome](rechrome.md), [otoji](otoji.md), [fbi-proxy](fbi-proxy.md), [genvx](genvx.md)
+- Per project: [agent-yes](agent-yes.md), [slack-hub](slack-hub.md), [rechrome](rechrome.md), [otoji](otoji.md), [fbi-proxy](fbi-proxy.md), [genvx](genvx.md), [gchat-cli](gchat-cli.md)
 
 Notes about this migration belong in this directory, not in Claude memory.
 

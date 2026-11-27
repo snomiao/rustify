@@ -38,8 +38,10 @@ Nearly everything else, by TS module:
 
 ## Release state
 
-- npm: published as `slack-hub` by semantic-release; the `slack` bin is bundled
-  TS (`dist/cli.js`). An npm install gets no Rust at all.
+- npm: published as `slack-hub` by semantic-release. The `slack` command is
+  `ts/cli.ts`, run by bun: `package.json` names `dist/cli.js` in
+  `publishConfig.bin`, but npm does not apply that when publishing, so the
+  bundle ships unused. An npm install gets no Rust at all.
 - Rust: no CI build, no release artifacts, not found on crates.io. The crate is
   named `slack-cli` (v0.2.0), a name already taken on crates.io by another
   project, so it needs renaming before it can be published.
@@ -50,7 +52,7 @@ Four pull requests in snomiao/slack-hub, none merged yet:
 
 | PR | What | State |
 |---|---|---|
-| #117 | The Rust `slack` built and install-tested on six platforms; hands every command back to `dist/cli.js`. Renames the crate to `slack-hub`, makes it compile on Windows. | green (the red `TypeScript` check fails on `main` too; #112 fixes it) |
+| #117 | The Rust `slack` built and install-tested on six platforms; hands every command back to `ts/cli.ts`. Renames the crate to `slack-hub`, makes it compile on Windows. | green (the red `TypeScript` check fails on `main` too; #112 fixes it) |
 | #119 | `search` answered natively. `tests/parity.test.ts`: 164 cases, comparing stdout, stderr, exit code, every request the mock received and every file left in `HOME`. | green, parity job included |
 | #120 | `news` answered natively: 209 cases. | green |
 | #118 | Release wiring: build, install-test, then tag and publish the native package. Rehearsed from the branch with nothing published. | merging it turns native publishing on |
@@ -58,8 +60,8 @@ Four pull requests in snomiao/slack-hub, none merged yet:
 #119 and #120 are stacked on #117; #118 is stacked on #117 as well and does
 not yet pass `parity:` to the build, which it should before it is switched on.
 
-`search` against a local mock: 13 ms native, against 158 ms for the bundled
-JavaScript.
+`search` against a local mock: 13 ms native, against 108 ms for `bun
+ts/cli.ts`, which is what users run today.
 
 What still goes to the JavaScript besides unported commands: any machine with
 a `settings.yml` in `~/.config/slack-hub/` or the nearest `.slack-hub/` (bun's
@@ -71,8 +73,10 @@ back.
 
 Found in the TypeScript on the way and left as it is, for the owner:
 
-- 1.57.1's bundle starts with `// @bun`; bun then reads it as Latin-1 and
-  prints non-ASCII text as mojibake (real Node prints it correctly);
+- the bundle `dist/cli.js` starts with `// @bun`; bun then reads it as
+  Latin-1 and prints its non-ASCII text as mojibake. Users are not affected,
+  because nothing runs the bundle, but it would bite if the package ever
+  switched to it;
 - a server that keeps answering 429 with `Retry-After: 0` makes the retry
   loop spin forever;
 - `./.slack-cli/.env.local` is meant to win over the global files, but the

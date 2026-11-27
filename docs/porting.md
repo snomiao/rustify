@@ -37,7 +37,11 @@ first line of the program:
   globally with bun (it looks for the package relative to its own location,
   which in bun's flat `node_modules` is not the package), and the version
   when installed with npm;
-- a bundled entry can differ from the source it was built from.
+- a bundled entry can differ from the source it was built from. Check which
+  file the *published* package runs: `npm view <package> bin`. npm ignores
+  `publishConfig.bin`, so a package that sets it still runs what `bin` names
+  (slack-hub and gchat-cli run `ts/cli.ts`, not the `dist/cli.js` they also
+  ship). That file is what the binary hands back to.
 
 Find out which of these the project's users can observe before deciding what
 a case has to cover. For genvx this was the largest part of the work.
@@ -104,9 +108,10 @@ Cover, for the command:
 - where its settings come from: every file, variable and flag, and which one
   wins.
 
-The runner starts each case in an empty directory with an empty `HOME` and
-without a terminal; `<CWD>` and `<HOME>` in a case stand for those
-directories. A command that talks to a service needs both implementations
+The runner starts each case in an empty directory with an empty `HOME`, its
+own temp directory and no terminal. `<CWD>` and `<HOME>` in a case stand for
+those directories and `<REPO>` for the directory the runner was started in,
+so the cases file can be committed as it is. A command that talks to a service needs both implementations
 pointed at the same stand-in: a mock server the project's tests already have,
 a fake of the external program it calls, or recorded responses. Compare what
 each implementation *asked* the stand-in for, not only what it printed. A

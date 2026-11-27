@@ -1,0 +1,167 @@
+# Parity ledger for gchat-cli. Format and rules: parity/README.md.
+#
+# Written with the port, on the project's branch build/rust-port (TypeScript
+# at 4ced1d2, untouched). Every `verified` below was seen to pass on that
+# branch on Linux x64, against both the glibc and the static musl build:
+#
+#   node rs/parity.gen.mjs
+#   node <rustify>/templates/parity/parity.mjs --cases rs/parity.json \
+#     --ts "bun ts/cli.ts" --rs "rs/target/release/gchat-cli"
+#   → all 602 case(s) behave the same        (bun 1.4.0)
+#
+# What the proof is. gchat has no network code: everything goes through the
+# `gws` CLI. The cases replace PATH so that the only `gws` on it is
+# rs/parity/gws, a stand-in that answers from the case's own gws.json and
+# records every argument list it is called with. That record is compared along
+# with stdout, stderr, the exit code, the cache file and the pending-send file
+# (content and modes). GCHAT_GWS_BIN is unset, as it is for users, in all but
+# the 15 cases about that variable.
+#
+# Who answers a case is part of the case (rs/parity.gen.mjs):
+#   419 are run by Rust. Their GCHAT_CLI_PACKAGE_ROOT names a directory that
+#       does not exist, so the binary has no JavaScript to hand back to; they
+#       pass only if Rust answered alone.
+#   128 are handed back at once: command lines that are yargs's to answer,
+#       a gws that cannot be started, GCHAT_CLI_NO_NATIVE=1.
+#    55 are handed back after gws answered with something the TypeScript was
+#       not written for (see the last feature). The JavaScript then asks gws
+#       again, so these compare which calls were made, not how many.
+# The proofs below name the cases by their name prefix in rs/parity.json.
+#
+# Not covered by any case, by construction: Windows and macOS (the parity job
+# runs on Linux), a real gws, and anything timing-dependent beyond what the
+# tail and watch entries say.
+#
+# Rust-only behaviour (no TypeScript counterpart; to be blessed or removed):
+# GCHAT_CLI_NO_NATIVE=1 hands everything back; a binary without the npm
+# package beside it answers what it would hand back with one line and exit 1;
+# a panic before anything was printed or sent hands back instead of crashing.
+
+reconciled = "4ced1d2"
+
+# ───────────────────────────── Commands ─────────────────────────────
+
+[[feature]]
+name = "spaces / rooms / ls"
+status = "verified"
+ts = "ts/commands/spaces.ts:6 cmdSpaces; ts/cli.ts:19 dispatch"
+rs = "rs/src/commands/spaces.rs"
+proof = "rs/parity.json the `spaces:` cases (33 run by Rust) and the nine `cli: spaces are ordered the same under <locale>` cases"
+note = "Table and --format json, paging, order, the cache rewrite. The TypeScript sorts with localeCompare; Rust uses character order, which is the same for timestamps in Google's notation (YYYY-MM-DDTHH:MM:SS[.fraction]Z), checked under nine locales. A list with any other lastActiveTime is handed back."
+
+[[feature]]
+name = "read <space>"
+status = "verified"
+ts = "ts/commands/read.ts:6 cmdRead; ts/cli.ts:32 dispatch"
+rs = "rs/src/commands/read.rs"
+proof = "rs/parity.json the `read:` cases (86 run by Rust)"
+note = "-n/--limit (0 and negative values included, with the TypeScript's slice behaviour), --format text|json, `<space>:<thread>` accepted and ignored."
+
+[[feature]]
+name = "send <space[:thread]> <message> (first call: context, confirm code, pending file)"
+status = "verified"
+ts = "ts/commands/send.ts:34 printContext; ts/commands/send.ts:62 cmdSend; ts/cli.ts:49 dispatch"
+rs = "rs/src/commands/send.rs"
+proof = "rs/parity.json the `send: first call` cases (37 run by Rust)"
+note = "Compared: the context block, the code, and the pending file's place (TMPDIR, then TMP, then TEMP), content and mode. Rust writes the pending file before it prints the block (the TypeScript prints first), so that a failed write can still be handed back; on success the result is the same."
+
+[[feature]]
+name = "send --code (second call: post, --dry-run, refusals)"
+status = "verified"
+ts = "ts/commands/send.ts:80; ts/gws.ts:187 sendMessage"
+rs = "rs/src/commands/send.rs; rs/src/gws.rs send_message"
+proof = "rs/parity.json the `send:` cases other than `first call` (60 run by Rust), one of which confirms a send stored by the TypeScript's first call"
+note = "Exit codes 1 (wrong code, nothing pending, expired, gws error) and 3 (missing scope); the pending file is kept or removed as in the TypeScript. Once gws has been started for the post nothing is handed back."
+
+[[feature]]
+name = "tail <space> (backlog, then polling)"
+status = "verified"
+ts = "ts/commands/tail.ts:46 tailSpace; ts/cli.ts:68 dispatch"
+rs = "rs/src/commands/tail.rs"
+proof = "rs/parity.json the `tail:` cases (100 run by Rust, counting the next feature's), where a plain tail is ended by the fake gws sending SIGTERM to its caller on a chosen poll"
+note = "Proven: backlog, -n, dedup by message name, --format json, poll errors reported and survived, death by SIGTERM/SIGINT. Not proven: the default 20 s interval between polls (cases poll every 50 ms), and behaviour on a closed stdout. The TypeScript's timer can fire a millisecond early and squeeze in one more poll before a deadline; Rust never does."
+
+[[feature]]
+name = "tail --exit-on-message / --timeout (wait for a reply)"
+status = "verified"
+ts = "ts/commands/tail.ts:14 parseDuration; ts/commands/tail.ts:22 cmdTail; ts/gws.ts:227 getSelfUserId"
+rs = "rs/src/commands/tail.rs; rs/src/gws.rs get_self_user_id"
+proof = "rs/parity.json the `tail:` cases with --exit-on-message or --timeout"
+note = "Own messages skipped via the People API id, with every way that lookup fails; durations (s, m, h, d, fractions, surrounding blanks) and the order in which a bad duration is reported. Timeouts are proven at zero and as a short deadline with no poll before it."
+
+[[feature]]
+name = "watch <spaces..>"
+status = "verified"
+ts = "ts/commands/watch.ts:6 cmdWatch; ts/cli.ts:91 dispatch"
+rs = "rs/src/commands/watch.rs; rs/src/rt.rs all"
+proof = "rs/parity.json the `watch:` cases (18 run by Rust), ended like a plain tail by the fake gws"
+note = "Several tails at once, each line prefixed with its space. JavaScript runs them on one thread, a task running until it waits for gws or a timer; Rust gives each a thread and passes a turn between them to the same effect. In both, the order of the output is the order in which gws processes finish, so the cases hold the two spaces half a poll cycle (400 ms) apart to have one order to compare; they passed ten runs in a row, one with every CPU busy. What is proven is therefore a watch whose spaces are out of step. When two answers arrive in the same instant neither implementation fixes the order. A space that fails after another has printed can no longer be handed back; for a gws error that is exact (a case), for an answer of an unexpected shape it is bun's wording only where a tail case pins it."
+
+[[feature]]
+name = "auth"
+status = "verified"
+ts = "ts/commands/auth.ts:10 cmdAuth; ts/cli.ts:110 dispatch"
+rs = "rs/src/commands/auth.rs"
+proof = "rs/parity.json the `auth:` cases (74 run by Rust)"
+note = "Text report with exit 1 when a scope is missing, and --format json."
+
+[[feature]]
+name = "--help, --version, usage errors"
+status = "missing"
+ts = "ts/cli.ts:119 demandCommand, strict, help, fail"
+note = "yargs's, and they stay there: its text follows the user's locale (ts/cli.ts ships the locale files; the bundled dist/cli.js does not). Rust takes a command line only in the plain spellings (rs/src/args.rs: `--name value`, `--name=value`, `-n value`, bare flags, each once) and hands back the rest: unknown or repeated options, `-n5`, `--no-x`, `--x=true`, camel-case names, values starting with a dash, empty arguments, options before the command. --version is handed back on purpose: yargs reads it from package.json, which a release stamps separately from the binary. 128 cases cover the hand-back."
+
+# ───────────────────────── Shared behaviour ─────────────────────────
+
+[[feature]]
+name = "gws backend: GCHAT_GWS_BIN / PATH, arguments, results and errors"
+status = "verified"
+ts = "ts/gws.ts:19 gwsBin; ts/gws.ts:48 runGws; ts/gws.ts:78 gwsJson; ts/cli.ts:131 error report"
+rs = "rs/src/gws.rs; rs/src/rt.rs finish"
+proof = "rs/parity.json the `auth:` cases (error envelopes, exit codes, stderr cleaning, non-JSON output, a killed gws, GCHAT_GWS_BIN empty, absolute, relative and a bare name on PATH) and the gws-calls.jsonl record compared in every case, nearly all of which find gws on PATH with GCHAT_GWS_BIN unset"
+note = "Linux only (see the Windows entry). The TypeScript decodes gws output chunk by chunk, so a multi-byte character split across two chunks becomes U+FFFD; Rust decodes the whole output and has no such corruption. That difference cannot be pinned by a case."
+
+[[feature]]
+name = "a gws that cannot be started"
+status = "missing"
+ts = "ts/gws.ts:56"
+rs = "rs/src/gws.rs spawn_failure"
+note = "The message is the JavaScript runtime's own (`Executable not found in $PATH: …`, `ENOENT: …, posix_spawn …`; ENOEXEC even bypasses the GwsError wrapper), so Rust hands the invocation back as long as nothing was printed or sent; 10 cases. Where it cannot (a running tail, a standalone binary) it prints bun 1.4.0's wording for ENOENT and EACCES, which no case pins."
+
+[[feature]]
+name = "gws on Windows (.exe or .cmd), TEMP and USERPROFILE"
+status = "ported"
+ts = "ts/gws.ts:51 spawn without a shell"
+rs = "rs/src/gws.rs program (windows); rs/src/config.rs"
+note = "Type-checks for x86_64-pc-windows-msvc (cargo check); never run. bun resolves a bare name on PATH trying .exe, .cmd, .bat per directory and starts a batch file through cmd.exe, whose argument rules differ. Rust starts gws itself only when that lookup ends at an .exe (same argument quoting as bun); a .cmd/.bat (gws installed through npm) or anything else is handed back, so the arguments reach gws exactly as before, just not faster. The lookup order is from reading bun's source, not from a test."
+
+[[feature]]
+name = "space arguments (id, spaces/<id>, display name) and the space cache"
+status = "verified"
+ts = "ts/space-resolver.ts:26 splitThread; ts/space-resolver.ts:35 resolveSpace; ts/config.ts:26"
+rs = "rs/src/resolver.rs; rs/src/config.rs"
+proof = "rs/parity.json the `read:` cases on resolving and on the cache (fresh, 4m50s, 5m10s, broken, of other shapes), with ~/.config/gchat-cli/spaces.json and the modes of what is created compared"
+note = "HOME and the temp directory are joined the way path.join does it. With HOME unset the TypeScript asks the system for the home directory; Rust hands that case back."
+
+[[feature]]
+name = "message and table rendering"
+status = "verified"
+ts = "ts/format.ts:9 formatTime; ts/format.ts:21 threadIdOf; ts/format.ts:31 shortSender; ts/format.ts:46 formatSpacesTable; ts/format.ts:66 formatMessage"
+rs = "rs/src/format.rs"
+proof = "rs/parity.json the `read:` and `spaces:` cases on times, senders, text, threads and column widths"
+note = "Local time: the JavaScript runtime uses ICU's zone data, Rust the tz database compiled into the binary (jiff, 2026f). Compared for UTC, Asia/Tokyo, America/New_York, Europe/Berlin (both changes of 2026), Asia/Kolkata, Pacific/Pago_Pago, Australia/Sydney, US/Pacific and the system zone, for times from 1970 to 2099. Rust reads only Google's notation (YYYY-MM-DDTHH:MM:SS[.fraction] with Z or ±HH:MM) and only a TZ that names a zone; other times and other TZ forms are handed back."
+
+[[feature]]
+name = "--format json output"
+status = "verified"
+ts = "ts/commands/spaces.ts:19; ts/commands/read.ts:19; ts/commands/auth.ts:13; ts/commands/tail.ts:112"
+rs = "rs/src/json.rs"
+proof = "rs/parity.json the `auth: json …` cases and the json cases of spaces, read and tail"
+note = "gws output goes through JSON.parse and JSON.stringify in the TypeScript, so Rust reads and prints JSON the JavaScript way: doubles in JavaScript's number format, index-like keys first, a repeated key keeping its first place and last value, JavaScript's escapes."
+
+[[feature]]
+name = "answers from gws the TypeScript was not written for"
+status = "partial"
+ts = "ts/gws.ts:78 gwsJson (typed as T, never checked)"
+rs = "rs/src/rt.rs Fail::Unsupported; rs/src/format.rs thread_id_of"
+note = "A null or wrongly typed field makes the TypeScript throw a TypeError whose text is bun's, or do something accidental (iterate a string's letters, parse a date in a legacy notation). Rust does not reproduce that in general: it hands the invocation back, which costs one repeated read-only gws call (55 cases). Where handing back is impossible it prints what bun 1.4.0 prints: after a post (14 `send: posted` cases) and for failed polls of a running tail (6 cases). Not reproduced there: a time in a notation only JavaScript reads (Rust shows it as it came), and whatever other TypeErrors no case pins. An unpaired surrogate escape in gws output is handed back too."

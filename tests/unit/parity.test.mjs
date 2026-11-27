@@ -22,6 +22,7 @@ function setup(rsBody) {
     if (cmd === "env") console.log(process.env.GREETING + " " + process.env.TZ);
     if (cmd === "fail") { console.error("nope"); process.exit(3); }
     if (cmd === "stamp") console.log("at " + new Date().toISOString());
+    if (cmd === "tmp") console.log("tmp=" + process.env.TMPDIR + " entries=" + fs.readdirSync(process.env.TMPDIR).length);
   `;
   fs.writeFileSync(path.join(dir, "ts.cjs"), base);
   fs.writeFileSync(path.join(dir, "rs.cjs"), rsBody ? base + rsBody : base);
@@ -113,10 +114,14 @@ test("<CWD> and <HOME> in a case stand for the directories of the run", () => {
           after: ["cat ref.txt", "test -d '<HOME>' && echo home-exists"],
         },
         { name: "env placeholder reaches the program", args: ["env"], env: { GREETING: "<CWD>", TZ: "UTC" } },
+        { name: "<REPO> is where the runner was started", args: ["echo", "x"], after: ["test -f '<REPO>/parity.json' && echo found-the-cases-file"] },
+        { name: "each run has its own empty temp directory", args: ["tmp"] },
       ],
     }, ["--show"]);
     assert.equal(r.status, 0, r.stdout + r.stderr);
-    assert.match(r.stdout, /all 2 case\(s\) behave the same/);
+    assert.match(r.stdout, /all 4 case\(s\) behave the same/);
+    assert.match(r.stdout, /found-the-cases-file/);
+    assert.match(r.stdout, /tmp=<ROOT>[\\/]tmp entries=0/);
     // --show prints what was compared, with the run's paths normalised again.
     assert.match(r.stdout, /<CWD>\/a <HOME>\/b/);
     assert.match(r.stdout, /home-exists/);

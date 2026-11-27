@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// rustify parity runner v2 — zero dependencies, runs on node or bun.
+// rustify parity runner v3 — zero dependencies, runs on node or bun.
 //
 // Runs the same command lines against two implementations of a CLI and fails
 // unless they behave the same: stdout, stderr, exit code, and whatever they
@@ -43,7 +43,9 @@
 //   }
 //
 // <CWD> and <HOME> in `args`, `env`, `stdin`, `files`, `setup` and `after`
-// stand for the directories of the run.
+// stand for the directories of the run, and <REPO> for the directory the
+// runner was started in, so a committed cases file needs no machine's path.
+// Each run also gets its own empty temp directory.
 //
 // The paths of the temp directories are replaced by <CWD> and <HOME> before
 // comparing. Anything else that legitimately varies between two runs
@@ -96,7 +98,9 @@ function runCase(testCase, impl, index, extraEnv = {}) {
   fs.mkdirSync(cwd, { recursive: true });
   fs.mkdirSync(home, { recursive: true });
   // <CWD> and <HOME> in what a case says stand for this run's directories.
-  const here = (text) => String(text).split("<CWD>").join(cwd).split("<HOME>").join(home);
+  const tmp = path.join(root, "tmp");
+  fs.mkdirSync(tmp, { recursive: true });
+  const here = (text) => String(text).split("<CWD>").join(cwd).split("<HOME>").join(home).split("<REPO>").join(launchDir);
   const hereAll = (object) => Object.fromEntries(Object.entries(object || {}).map(([k, v]) => [k, here(v)]));
   for (const [file, content] of Object.entries(testCase.files || {})) {
     const target = path.join(cwd, file);
@@ -112,8 +116,9 @@ function runCase(testCase, impl, index, extraEnv = {}) {
     // Outside HOME: a JavaScript runtime fills its cache, a native binary
     // does not, and that must not show up as a difference in HOME.
     XDG_CACHE_HOME: path.join(root, "cache"),
-    TMPDIR: process.env.TMPDIR || os.tmpdir(),
-    ...(isWindows ? { SystemRoot: process.env.SystemRoot, TEMP: process.env.TEMP, TMP: process.env.TMP, PATHEXT: process.env.PATHEXT } : {}),
+    // Its own: programs keep state in the temp directory too.
+    TMPDIR: tmp,
+    ...(isWindows ? { SystemRoot: process.env.SystemRoot, TEMP: tmp, TMP: tmp, PATHEXT: process.env.PATHEXT } : {}),
     ...hereAll(spec.env),
     ...hereAll(testCase.env),
     ...extraEnv,
@@ -137,7 +142,7 @@ function runCase(testCase, impl, index, extraEnv = {}) {
   const rules = [...(spec.normalize || []), ...(testCase.normalize || [])].map(([pattern, to]) => [new RegExp(pattern, "g"), to]);
   const clean = (text) => {
     let out = String(text ?? "");
-    for (const [dir, name] of [[cwd, "<CWD>"], [home, "<HOME>"], [root, "<ROOT>"]]) {
+    for (const [dir, name] of [[cwd, "<CWD>"], [home, "<HOME>"], [root, "<ROOT>"], [launchDir, "<REPO>"]]) {
       out = out.replace(new RegExp(escapeRegExp(dir), "g"), name);
       if (isWindows) out = out.replace(new RegExp(escapeRegExp(dir.replace(/\\/g, "/")), "g"), name);
     }
