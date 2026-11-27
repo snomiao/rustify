@@ -1,0 +1,155 @@
+# Parity ledger for snocommit. Format and rules: parity/README.md.
+#
+# First full pass, 2026-11-27, written by reading the code at a683fcd, the
+# commit the project's branch build/rustify-pipeline starts from (that branch
+# adds the crate, rs/, and changes no TypeScript). Read in full: everything
+# under src/ (cli.ts, commitTypes.ts, index.tsx, promptT.ts; 288 lines
+# without the two spec files), postbuild.ts, package.json, README.md, the
+# release workflow, and the bundle `bun run build` makes of them (dist/cli.js),
+# which is where the code of snorun, phpdie, package-up, tsa-composer and
+# z-chat-completion was read. The openai SDK was not read.
+#
+# Nothing was run beyond the commands without arguments. snocommit has no
+# --help or --version, and any command given arguments runs git (see the
+# hazards below). Run: the built dist/cli-feat.js, dist/cli-chore.js and
+# dist/cli.js with no arguments under node and bun, in an empty directory
+# outside any git repository, with a home directory of its own and a `git`
+# first on PATH that only logged its calls (it logged none); and the six
+# installed commands with no arguments, through rustify's install smoke test.
+# No test was run, no service was contacted. No entry cites a proof.
+#
+# How it fits together. `bun run build` bundles src/cli.ts into dist/cli.js
+# (`#!/usr/bin/env node`, so node runs it), and postbuild.ts copies that file
+# to dist/cli-<type>.js for the six commit types, the files `bin` names for
+# chore, docs, feat, fix, refactor and styles. One program, which learns its
+# commit type from the name of its own file. Given a scope and a description
+# it stages files, asks OpenAI to write a conventional commit message from the
+# diff, commits, pulls and pushes, printing every git command as it goes.
+#
+# Status. The crate on build/rustify-pipeline hands every invocation to the
+# command's own dist/cli-<command>.js, so every feature below is `missing`.
+# Nothing is `dropped`: that is the owner's decision.
+#
+# Grain. The six commands are one file with the type as its only difference,
+# so they are one entry; then one per step of the pipeline, per source of the
+# API key, and per behaviour shared by every step (the echo of git commands,
+# how errors end the program).
+#
+# No entries, and why:
+# - postbuild.ts: the build step that makes the command files; it is not run
+#   by users. projects.toml counts only src/.
+# - `breaking`: README.md lists it as a command, but it is not a commit type
+#   and has no `bin`. The published 0.1.0 still carries a dist/cli-breaking.js
+#   from an older build.
+#
+# What is published differs from main. npm's latest is 0.1.0 (2025-10-24),
+# package.json on main says 0.1.1, and release.yml's semantic-release has
+# npmPublish: false. 0.1.0's command files start with `#!/usr/bin/env bun`,
+# so bun runs them there and loads the current directory's .env files first
+# (an OPENAI_API_KEY in a project's .env is used); main's build is run by
+# node, which loads none. 0.1.0 also has other dependencies (execa, ink,
+# react). The bins are the same seven names in both, and in both `snocommit`
+# names dist/cli-snocommit.js, which neither contains: npm and bun install no
+# `snocommit` command (checked with both, into a prefix of their own).
+#
+# Hazards for whoever ports or tests this. Every command with a scope and a
+# description runs `git add`, `git commit`, `git pull` and `git push` in the
+# current directory, and sends the diff and recent commit subjects to OpenAI
+# with the user's key. Without a description it stops before any git command
+# (`Missing description (desc)`), and the generic form without a known type
+# stops at `commit type not found`. Parity cases need a git repository of
+# their own with a bare remote of their own, and a stand-in for the OpenAI API
+# on 127.0.0.1 (the SDK reads OPENAI_BASE_URL); a `git` shim that logs its
+# arguments shows what each side asked of git.
+
+reconciled = "a683fcd"
+
+# ───────────────────────────── Commands ─────────────────────────────
+
+[[feature]]
+name = "chore, docs, feat, fix, refactor, styles <scope> <description…>"
+status = "missing"
+ts = "src/cli.ts:8 cli; src/commitTypes.ts:2"
+note = "The type is the name of the running file: process.argv[1] matched against /(?:cli-|bin\\/)(.*?)(?:\\.[mc]?[tj]s)?$/ and kept when it is one of fix, styles, feat, docs, chore, refactor. The first argument is the scope, the rest joined with single spaces is the description. The match takes the leftmost `cli-` or `bin/` anywhere in the path, so an install path with one before the package (a home directory such as /home/robin/) leaves the type unrecognised, and the command then behaves as the generic form with its first argument as the type. Before the binary, node saw the symlink's path for an npm install (`…/bin/feat`, which the `bin/` alternative catches); handed back, it sees the real path, dist/cli-feat.js; both give `feat`."
+
+[[feature]]
+name = "snocommit <type> <scope> <description…> (the generic form)"
+status = "missing"
+ts = "src/cli.ts:17"
+note = "When the file name gives no type, the first argument is the type, the second the scope, the rest the description. An unknown or missing type throws `commit type not found: <first argument>` (`undefined` when there is none) before anything else runs. Not reachable as an installed command: `bin` points `snocommit` at dist/cli-snocommit.js, which the build never makes (postbuild.ts copies only the six types), so neither npm nor bun installs it; rustify.bins leaves it out for that reason. Reached by running dist/cli.js itself, or through an install path the type match misreads (previous entry)."
+
+[[feature]]
+name = "a description is required"
+status = "missing"
+ts = "src/index.tsx:28"
+note = "With fewer than two arguments after the type (nothing, or a scope alone), throws `Missing description (desc)` before any git command. `--help`, `--version` and every other flag are not options: they are taken as the scope or as words of the description."
+
+# ─────────────────────────── The pipeline ───────────────────────────
+
+[[feature]]
+name = "staging by scope: -, ., @, or a path"
+status = "missing"
+ts = "src/index.tsx:48 gitAddByScope"
+note = "`-` stages nothing; `.` runs `git add .`; `@` runs `git add <directory of the nearest package.json, searched from the current directory upwards>` and throws the string `No package.json found for \"@\" scope.` when there is none; anything else runs `git add <scope>`. Each goes through a shell unquoted (a scope with spaces is several paths; shell syntax in it is interpreted). A failing `git add` is not noticed: the program goes on."
+
+[[feature]]
+name = "what counts as changes, and `No files staged to commit.`"
+status = "missing"
+ts = "src/index.tsx:67 getStagedFileChanges; src/index.tsx:33"
+note = "`git status --porcelain`, each line trimmed, empty ones dropped. That lists unstaged and untracked files too, not only staged ones. No lines: prints `No files staged to commit.` and ends with exit code 0, also when git failed (outside a repository git's error goes to stderr, stdout is empty, so the result is the same message and exit code 0, as read). With scope `-` and nothing staged but other changes present, it goes on to the commit, which fails unnoticed (see that entry)."
+
+[[feature]]
+name = "the staged diff sent with the prompt"
+status = "missing"
+ts = "src/index.tsx:75 getTruncatedGitDiffOfFiles"
+note = "For each status line, `git diff --cached -- <the whole trimmed line>` through a shell, so the status letters become a pathspec (`M src/a.ts` asks for `M` and `src/a.ts`; `??` is a shell and pathspec glob). A diff longer than 2,000 characters is cut to its first 1,000, `\\n\\n... (diff truncated) ...\\n\\n` and its last 1,000. Each diff is also printed as it runs (see the echo entry). As read, not run: a staged rename's line `R  old -> new` makes the shell redirect that git command's output into the working-tree file `new`, overwriting it (the index, and so the commit, keep the real content)."
+
+[[feature]]
+name = "recent commits sent with the prompt"
+status = "missing"
+ts = "src/index.tsx:224 getRecentCommits"
+note = "`git log -n 5 --pretty=format:\"%h<TAB>%an<TAB>%ad<TAB>%s\" --date=short`, each line made `- <hash> | <author> | <date> | <subject>`; `(no recent commits found)` when git prints nothing (also when it fails). The `(unable to read recent commits)` branch cannot be reached, as snorun never rejects. Also exported from the library (see that entry) and tested by src/index.spec.ts."
+
+[[feature]]
+name = "OpenAI API key: ~/.snocommitrc.json, then OPENAI_API_KEY, then asked and saved"
+status = "missing"
+ts = "src/index.tsx:166 getOpenAIApiKey; src/index.tsx:211 validApiKey; src/index.tsx:15 zSnocommitRC; src/promptT.ts:5"
+note = "Asked only after the files are staged and the diff is read, so without a key the program stops with the files staged. The home directory is $HOME, else $USERPROFILE. First .snocommitrc.json there: JSON whose OPENAI_API_KEY matches /^sk-/; any error is ignored. Then $OPENAI_API_KEY. A key is accepted when it starts with `sk-` and is longer than 20 characters, then trimmed. Then `Please enter your OpenAI API Key (sk-...):` on stdout through readline, the answer trimmed; an accepted answer is written to <home>/.snocommitrc.json as two-space JSON without a final newline, with the default file mode, and `Saved OpenAI API Key to <path>` printed. Otherwise throws the string `No valid OPENAI_API_KEY provided. Please set it as an environment variable or in ~/.snocommitrc.json`. As read, not run: with stdin at its end the question is never answered and the program ends there, exit code 0. The comments number the environment variable first; the code reads the file first. The key is put into process.env.OPENAI_API_KEY for the SDK."
+
+[[feature]]
+name = "commit message written by OpenAI"
+status = "missing"
+ts = "src/index.tsx:89 generateCommitMessage"
+note = "Prints `Generating commit message with gpt-4o...`, then one chat completion (z-chat-completion over the openai SDK, which also reads OPENAI_BASE_URL, OPENAI_ORG_ID, OPENAI_PROJECT_ID and its other variables) with the model gpt-4o, a strict JSON schema {type: one of the six, scope, title of 1 to 72 characters, body of 1 or more, is_BREAKING_CHANGE} and one system message: the current directory, the suggested type, the suggested scope as `(<scope>)` (`none` for `.` or no scope; `(-)` and `(@)` for those two), the description, the recent commits, the status lines and their diffs in a ```diff block, and the format. The message is `<type>(<scope>)<! when breaking>: <title>`, a blank line and the body; an empty scope leaves out the parentheses, one already in parentheses keeps a single pair. An empty answer throws `NO_CONTENT: No content returned from OpenAI chat completion.`; an answer that fails the schema throws zod's error; the SDK's own errors pass through."
+
+[[feature]]
+name = "commit"
+status = "missing"
+ts = "src/index.tsx:155 gitCommit"
+note = "Prints `Committing with message:`, a newline, a space and the message (console.log with two arguments). Then `git commit -m\"<message>\"` through a shell with only `\"` escaped: `$`, backticks and backslashes in the model's text are interpreted by the shell. A failed commit is not noticed."
+
+[[feature]]
+name = "pull, push, and `Commit pushed successfully.`"
+status = "missing"
+ts = "src/index.tsx:162 gitPullAndPush; src/index.tsx:45"
+note = "`git pull && git push` through a shell, then `Commit pushed successfully.` and exit code 0 whatever git said: a failed pull or push is not noticed."
+
+# ─────────────────────── Shared by every step ───────────────────────
+
+[[feature]]
+name = "git commands echoed, their output passed through"
+status = "missing"
+ts = "src/index.tsx:6 snorun"
+note = "Every git command is printed to stdout as `> <command>` in blue before it runs, and its stdout and stderr are piped through as they come, so diffs, logs and git's own errors show. The colour is chalk's: supports-color reads FORCE_COLOR, TERM, COLORTERM, CI variables and whether stdout is a terminal (not NO_COLOR), and also looks for --color, --no-color and their variants among the command's own arguments. Commands run through child_process.exec (a shell, the default buffer limit) and their exit codes are ignored."
+
+[[feature]]
+name = "errors end the program as unhandled rejections"
+status = "missing"
+ts = "src/cli.ts:5"
+note = "cli() is called as `cli().then()`, so every throw above reaches the runtime as an unhandled rejection: node prints the file and line, the source line with a caret, the error and its stack and `Node.js v<version>`, and exits 1 (for a thrown string: node's ERR_UNHANDLED_REJECTION text naming it); bun, which runs it when node is missing, prints its own report. The paths of the installed files are part of that text, so it cannot be reproduced and these errors have to be handed back. Seen by running without arguments: `Missing description (desc)` and `commit type not found: undefined` under node 20, and the first under bun 1.4.0, each with exit code 1."
+
+[[feature]]
+name = "library: import snocommit from \"snocommit\""
+status = "missing"
+ts = "src/index.tsx:19 snocommit; src/index.tsx:224 getRecentCommits; src/index.tsx:15 zSnocommitRC"
+note = "exports.import is dist/index.js: the default export snocommit({type, scope, desc}) runs the pipeline above, plus getRecentCommits and zSnocommitRC. exports.require (dist/index.cjs), main (dist/index.min.cjs) and types (src/index.ts) name files the package does not ship. A binary cannot stand in for a module; whether it stays JavaScript is the owner's decision. Tested by src/built.spec.ts."

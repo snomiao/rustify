@@ -1,0 +1,200 @@
+# Parity ledger for rustdesk.skill (npm package rustdesk-skill, commands
+# `rustdesk-skill` and `rds`). Format and rules: parity/README.md.
+#
+# First pass, 2026-11-27, written by reading the code at c759994. Every line
+# of the TypeScript was read: bin/rustdesk-skill.ts and the seven files of
+# src/ (1,317 lines), with test/unit.test.ts, the two OCR scripts in ocr/,
+# package.json, README.md, SKILL.md and CLAUDE.md. Nothing was run beyond
+# --help: the only invocations were the install smoke test of the branch
+# build/rustify-pipeline (`--help`, `connect --help`, no command, an unknown
+# command), with a home directory of its own, all answered by yargs before
+# any command runs. No browser, no playwright-cli, no OCR, no test, and
+# nothing was contacted. No test was seen to pass, so none is cited as a
+# proof. A statement that is a deduction from the code, not something a test
+# asserts, says `read, not run`.
+#
+# How it fits together. Every command except `list` drives a browser tab
+# through Microsoft's `playwright-cli` (@playwright/cli), started once per
+# step with `-s=<session>` so that separate invocations share one tab on
+# https://rustdesk.com/web/. The RustDesk web client is a Flutter canvas, so
+# the program reads it by screenshot and OCR (a Python script in ocr/:
+# PaddleOCR, or macOS Vision) and acts by coordinates. State: passwords and
+# recent IDs under ~/.config/rustdesk-skill (RDS_CONFIG_DIR), the session
+# name in the environment or ./.env.local, screenshots in the temp directory.
+# The package has no `exports` and no library entry; the commands are the
+# whole interface.
+#
+# Status. The crate on build/rustify-pipeline hands every invocation back to
+# bin/rustdesk-skill.ts, so every feature below is `missing`. Nothing is
+# `dropped`: that is the owner's decision.
+#
+# For the owner. Almost every command spends its time in playwright-cli and
+# Python, which a Rust binary would still start; a port saves the start of
+# bun and yargs per invocation, not the work. `list` and the argument
+# errors are the only paths that touch neither.
+#
+# Rust-only behaviour, from the hand-back helper (no TypeScript counterpart;
+# to be blessed or removed): RUSTDESK_SKILL_NO_NATIVE=1 hands everything
+# back; RUSTDESK_SKILL_PACKAGE_ROOT tells the binary where the package is.
+
+reconciled = "c759994"
+
+# ───────────────────────────── Commands ─────────────────────────────
+
+[[feature]]
+name = "connect / c <id> [pw] [--remember-password] [--new]"
+status = "missing"
+ts = "bin/rustdesk-skill.ts:95; src/connect.ts:180 connect; src/connect.ts:58 enterId; src/connect.ts:74 triggerConnect"
+note = "Resolves the password first (see the password store), then opens the RustDesk tab (navigates only when not on it already, or always with --new), OCRs the screen and clicks the first box containing リモートID / Remote ID / Control Remote / ID, types the id and presses Enter, OCRs again and clicks 接続 / Connect, handles the password dialog once, saves the password with --remember-password, records the id in the recents, and prints {ok, id, connected, note} as JSON (two-space indent). `ok` is always true and the id is recorded whatever happened on screen (read, not run). note is \"password dialog handled\" or \"no password dialog observed\". The id is kept as a string (leading zeros stay)."
+
+[[feature]]
+name = "screenshot / ss [file]"
+status = "missing"
+ts = "bin/rustdesk-skill.ts:115; src/screen.ts:43 screenshot"
+note = "Writes the canvas PNG to <file>, relative to the current directory, default ./rds-screenshot.png, and says `[rustdesk-skill] saved <file>` on stderr. Does not navigate."
+
+[[feature]]
+name = "ocr [--json] [--lang ja,en] [--ocr paddle|vision]"
+status = "missing"
+ts = "bin/rustdesk-skill.ts:125; src/screen.ts:51 ocr"
+note = "Screenshot, then OCR. Plain output is one line per box: x and y padded to 5, `  `, w and h padded to 4 around `x`, `  `, the confidence with two decimals (toFixed), `  `, the text. --json prints the boxes {text, conf, x, y, w, h} as JSON with a two-space indent. --ocr outside its choices is a yargs error."
+
+[[feature]]
+name = "click <text> [--nth N] [--contains] [--ocr] [--lang]"
+status = "missing"
+ts = "bin/rustdesk-skill.ts:150; src/screen.ts:57 clickText"
+note = "OCR, match (see text matching), click the box's centre. Says `[rustdesk-skill] clicked \"<box text>\" @ <x>,<y>` on stderr, with the box's top-left corner, not the point clicked. Several matches without --nth: a warning on stderr naming the count, then the first. No match, or --nth past the matches: `text not found on screen: \"<text>\" (<n> boxes scanned)`, exit 1."
+
+[[feature]]
+name = "click-xy <x> <y>"
+status = "missing"
+ts = "bin/rustdesk-skill.ts:171; src/screen.ts:77 clickXY; src/pw.ts:191 clickScreenshotPx"
+note = "Coordinates in screenshot pixels: takes a screenshot for its size, converts to CSS pixels, then mousemove, mousedown, mouseup. A value that is not a number reaches playwright-cli as `NaN` (read, not run)."
+
+[[feature]]
+name = "move <x> <y>"
+status = "missing"
+ts = "bin/rustdesk-skill.ts:180; src/screen.ts:82 move; src/pw.ts:183 moveScreenshotPx"
+note = "As click-xy without the button: a screenshot for the size, then mousemove in CSS pixels."
+
+[[feature]]
+name = "scroll <dy>"
+status = "missing"
+ts = "bin/rustdesk-skill.ts:186; src/screen.ts:87 scroll; src/pw.ts:198 scroll"
+note = "`mousewheel 0 <dy>` at the pointer, dy in CSS pixels, negative is up. No screenshot."
+
+[[feature]]
+name = "type <text> [--force]"
+status = "missing"
+ts = "bin/rustdesk-skill.ts:192; src/screen.ts:98 type; src/screen.ts:26 SHIFT_CHARS"
+note = "Refuses text with a character that needs Shift on a JP layout (A-Z and ~!@#$%^&*()_+{}|:\"<>?): a warning on stderr listing them once each in order of appearance, then exit 4, before playwright-cli is started. --force says on stderr that it types them anyway, and types. Covered by test/unit.test.ts (`type shift-warning`)."
+
+[[feature]]
+name = "key <key>"
+status = "missing"
+ts = "bin/rustdesk-skill.ts:201; src/pw.ts:208 pressKey; src/pw.ts:237 parseKeyChord; src/pw.ts:250 normalizeKeyName"
+note = "`mod+mod+key`: modifiers ctrl/control, alt/option, shift, meta/cmd/win (any case) become keydown before and keyup after (reversed) a press. Key names enter, esc/escape, tab, backspace, delete, space, up/down/left/right, backquote (any case) are mapped to Playwright's; other keys go as typed. An unknown modifier or an empty chord: `[rustdesk-skill] error: unknown modifier: <m>` / `empty key chord: <chord>`, exit 1."
+
+[[feature]]
+name = "paste <text>"
+status = "missing"
+ts = "bin/rustdesk-skill.ts:207; src/screen.ts:119 paste; src/pw.ts:216 pasteCtrlV"
+note = "Sets the local clipboard with pbcopy on macOS and `xclip -selection clipboard` elsewhere, Windows included (read, not run), then sends Ctrl+V (never Cmd+V). Failures: `pbcopy failed: …` or `clipboard set failed (need xclip on Linux)`, exit 1."
+
+[[feature]]
+name = "status"
+status = "missing"
+ts = "bin/rustdesk-skill.ts:213; src/connect.ts:234 status"
+note = "Prints {onRustdesk, connected, url} as JSON; url is the fixed text `rustdesk.com/web` when on the client, else empty. The URL check swallows every error, a missing playwright-cli and a session-name error included, so without a browser it prints false/false/\"\" and exits 0 (read, not run). connected comes from the detection below."
+
+[[feature]]
+name = "disconnect"
+status = "missing"
+ts = "bin/rustdesk-skill.ts:214; src/connect.ts:244 disconnect; src/browser.ts:51 reloadHome"
+note = "Navigates the tab to https://rustdesk.com/web/ again, which drops the remote session, and says `[rustdesk-skill] disconnect sent` on stderr."
+
+[[feature]]
+name = "list"
+status = "missing"
+ts = "bin/rustdesk-skill.ts:220; src/connect.ts:222 listRecent"
+note = "Prints the recent ids as a JSON array with a two-space indent; [] when the file is missing, unreadable, not JSON or not an array. Starts no browser. The array is printed as stored, whatever its elements are."
+
+# ─────────────────────── Shared by every command ───────────────────────
+
+[[feature]]
+name = "command line: yargs, --help, --version, usage errors"
+status = "missing"
+ts = "bin/rustdesk-skill.ts:91 buildParser; bin/rustdesk-skill.ts:221 demandCommand/strict/help; bin/rustdesk-skill.ts:227"
+note = "yargs 17 with scriptName `rustdesk-skill` whatever the command was called (`rds --help` says rustdesk-skill too), usage `$0 <command> [options]   (alias: rds)`, aliases c and ss, strict, at least one command. No command: the help and `Not enough non-option arguments: got 0, need at least 1`, exit 1; an unknown command or option: `Unknown argument: …`, exit 1 (both seen in the smoke test). --version is yargs's own: `unknown` when installed globally with bun. `help` as the last word, --help on each command, option types and choices are yargs's."
+
+[[feature]]
+name = "error messages and exit codes"
+status = "missing"
+ts = "bin/rustdesk-skill.ts:66 guard"
+note = "Every handler runs in one guard: playwright-cli missing exit 5, no session name exit 6, no password exit 3 (each `[rustdesk-skill] <message>` on stderr), shift characters refused exit 4 (the warning was already printed), anything else `[rustdesk-skill] error: <message>` and exit 1. Output already printed before the error stays (a click warns before it clicks)."
+
+[[feature]]
+name = "session name: RDS_SESSION_NAME, git or folder default, prompt, .env.local"
+status = "missing"
+ts = "src/session.ts:97 resolveSessionName; src/session.ts:35 sanitizeSessionName; src/session.ts:48 gitDefaultSessionName; src/session.ts:74 upsertEnvLocal"
+note = "RDS_SESSION_NAME (trimmed) wins, sanitised: runs of characters outside [A-Za-z0-9._-] become one `-`, repeated `-` collapse, leading and trailing `-` go. Otherwise the default is `<repo>/<branch>` from `git rev-parse` (repo alone on a detached HEAD), else the current folder's name, sanitised. Unless stdin and stdout are both terminals: a note on stderr naming the default, once per playwright-cli call, so several times in one command (read, not run); exit 6 when no default exists (the root directory). When both are: two prompts (the name, editable; whether to save it, Y by default), an empty name is exit 6, and `RDS_SESSION_NAME=<name>` is written into ./.env.local (replacing an existing line, else appended, trailing blank lines dropped), with a message, or a warning when it cannot be written. Asked only once per process. Covered in part by test/unit.test.ts (`session name`)."
+
+[[feature]]
+name = "environment files read by bun (.env, .env.local)"
+status = "missing"
+ts = "src/session.ts:12 contract; bin/rustdesk-skill.ts:1 #!/usr/bin/env bun"
+note = "The session-name contract rests on bun loading .env, .env.local and the NODE_ENV variants from the current directory before the program starts, with bun's syntax. Every RDS_* variable in this ledger can come from there. A Rust binary has to read them the same way or hand back when such a file exists."
+
+[[feature]]
+name = "browser backend: playwright-cli, RDS_PW_BIN, RDS_SESSION_DIR"
+status = "missing"
+ts = "src/pw.ts:67 pw; src/pw.ts:37 pwCmd; src/pw.ts:48 sessionDir"
+note = "Each step starts `playwright-cli -s=<session> <args>` (RDS_PW_BIN replaces the command and is split on whitespace, so it may carry arguments) in the session directory, RDS_SESSION_DIR or <temp>/rustdesk-skill, created when missing, with the whole environment. Not found: the message naming @playwright/cli, RDS_PW_BIN and RDS_PW_BROWSER, exit 5 (test/unit.test.ts `pw backend availability`). A failed step: `playwright-cli <subcommand> failed (exit <n>): <stderr, else stdout, else the error>`, exit 1. Commands run one after another, each waiting for the last."
+
+[[feature]]
+name = "RustDesk web tab: open, reuse, RDS_PW_BROWSER"
+status = "missing"
+ts = "src/browser.ts:31 ensureSession; src/browser.ts:14 currentUrl; src/pw.ts:131 parseEvalResult"
+note = "Only connect and disconnect navigate. The current URL comes from `eval () => location.href`, its value taken from the `### Result` block of playwright-cli's report (test/unit.test.ts `parseEvalResult`), quotes stripped; a URL containing rustdesk.com/web counts as the client. To open: `open [--browser=<RDS_PW_BROWSER>] https://rustdesk.com/web/`, and `goto` when that fails."
+
+[[feature]]
+name = "screenshots and coordinates"
+status = "missing"
+ts = "src/pw.ts:109 screenshotPng; src/pw.ts:99 pngSize; src/pw.ts:151 viewport; src/pw.ts:169 screenshotToCss"
+note = "`screenshot --hires --filename=<session dir>/rds-shot.png`, then the file is looked for there and as ./rds-shot.png; missing: `screenshot not found (looked in: …)`, exit 1. Its size comes from the PNG header (`not a valid PNG (too short)` below 24 bytes). Screenshot pixels are the one coordinate space users see; they become CSS pixels by the viewport (`eval` of innerWidth/innerHeight, once per process), rounded, and 1:1 when the viewport is unknown (test/unit.test.ts `screenshotToCss`)."
+
+[[feature]]
+name = "OCR backends: RDS_OCR, --lang, ocr/ocr.py, ocr/ocr-mac.py"
+status = "missing"
+ts = "src/ocr.ts:34 resolveBackend; src/ocr.ts:41 langArg; src/ocr.ts:104 runOcr; src/ocr.ts:128 ocrBuffer; src/ocr.ts:76 normalizeBoxes; ocr/ocr.py; ocr/ocr-mac.py"
+note = "Backend: --ocr, else RDS_OCR (paddle or vision, any case; another value is ignored), else vision on macOS and paddle elsewhere. --lang for vision maps ja, en→en-US, zh/ch→zh-Hans and passes others on (an empty list gives ja,en-US); for paddle only the first language counts, en, ja→japan, zh/ch→ch, others passed on, ch when empty. The PNG is written to <temp>/rds-ocr-<pid>.png, which is never removed (read, not run), and `python3 <package>/ocr/<script> <png> <lang>` is run; the scripts are found beside the package, so a port needs the package root. Paddle boxes are pixels, Vision boxes are fractions scaled by the PNG size; all rounded; confidence 1 when missing. Failures: `OCR (<backend>) failed: …`, `OCR (<backend>) produced non-JSON output: <first 200 characters>`, `OCR script missing: <path>`, exit 1. The Python scripts can stay as they are."
+
+[[feature]]
+name = "text matching (--contains, --nth)"
+status = "missing"
+ts = "src/ocr.ts:155 matchText; src/ocr.ts:169 boxCenter; src/connect.ts:46 findAny"
+note = "Trimmed and lower-cased with JavaScript's toLowerCase (full Unicode case mapping), exact by default, substring with --contains; --nth is 1-based; several matches without it take the first and warn. The centre is rounded with Math.round (halves go up). connect's own lookups always match by substring and try their candidate texts in order. test/unit.test.ts `matchText`."
+
+[[feature]]
+name = "password store: passwords.json, RDS_CONFIG_DIR"
+status = "missing"
+ts = "src/passwords.ts:17 configDir; src/passwords.ts:26 loadPasswords; src/passwords.ts:39 savePasswords; src/passwords.ts:65 resolvePassword"
+note = "<RDS_CONFIG_DIR, else ~/.config/rustdesk-skill>/passwords.json, an id→password object in plain text, written whole with a two-space indent and a final newline; the directory is created 0700 and the file 0600 (the mode applies when the file is created). Missing or corrupt reads as empty. Password: the argument unless empty, else the remembered one, else `no password for id <id>; pass one (rds c <id> <pw>) or save it with --remember-password`, exit 3, before any browser starts. test/unit.test.ts `password store`, `resolvePassword precedence`."
+
+[[feature]]
+name = "recent ids: recents.json"
+status = "missing"
+ts = "src/connect.ts:214 recordRecent; src/connect.ts:210 recentsPath"
+note = "<config dir>/recents.json, written by every connect: the id moves to the front, at most 20 kept, two-space indent, directory 0700 and file 0600 when created. Read by `list`."
+
+[[feature]]
+name = "connected detection"
+status = "missing"
+ts = "src/connect.ts:169 detectConnected; src/connect.ts:153 homeScreenPresent; src/connect.ts:84 passwordDialogPresent"
+note = "By OCR: not connected while a password dialog shows (パスワードが必要です, Password Required, Please enter, パスワード) or the home screen does (リモートID, Remote ID, リモートデスクトップ, Control Remote, Remote Desktop), otherwise connected if the tab is on the client. Used by connect and status. test/unit.test.ts `homeScreenPresent`."
+
+[[feature]]
+name = "password dialog"
+status = "missing"
+ts = "src/connect.ts:110 handlePasswordDialog; src/connect.ts:93 pickPasswordField"
+note = "One OCR: the field is the topmost box below the title that mentions パスワード/password and none of 必要, 確認, 記憶, remember, required, confirm; without one, a click 2×(title height), at least 40 px, below the title. Types the password directly, ticks 記憶する / Remember with --remember-password, then clicks OK / 确定 / 確定 / 接続 / Connect or presses Enter. test/unit.test.ts `pickPasswordField`."

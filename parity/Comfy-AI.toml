@@ -1,0 +1,179 @@
+# Parity ledger for Comfy-AI (npm package comfy-ai, command `comfy-ai`).
+# Format and rules: parity/README.md.
+#
+# Written by reading the code at aa56999 (1.2.2), 2026-11-27, on the
+# project's branch build/rustify-pipeline, whose crate (rs/) only hands every
+# command back; read this ledger with `rustify audit Comfy-AI --at <that
+# worktree>`. Nothing was run beyond --help: the only invocations were
+# `comfy-ai --help`, a bare `comfy-ai` and `comfy-ai pair not-a-url`, in a
+# throwaway home and directory, by hand and through the install smoke test.
+# No daemon was started, no port was bound, no pairing URL was fetched and no
+# test exists to cite, so every entry is `missing` and every note comes from
+# the source.
+#
+# What was read, in full: ts/cli.ts, ts/config.ts, ts/protocol.ts,
+# ts/serve.ts (1,017 lines), package.json, README.md and release.yml; and,
+# for --help and --version, the parts of dist/cli.js (built at that commit
+# with `bun run build`) that come from yargs 18.0.0 and y18n. Not in scope
+# (keep_ts in projects.toml): ts/extension/, ts/userscript/ and ts/ui/, the
+# browser extension and userscript, which run in a browser; and
+# ts/mock-spa.ts, a development stand-in for the browser tab that the package
+# does not ship. The browser panel connects to a PTY server at
+# ws://localhost:7681/ws by default, which `comfy-ai serve` does not provide;
+# package.json's description ("WebSocket PTY server CLI") is older than the
+# bridge.
+#
+# How it fits together. The published command is dist/cli.js (`npm view
+# comfy-ai bin`), a `bun build --target bun` bundle of ts/cli.ts with yargs
+# inside it. `comfy-ai serve` is a relay daemon on 127.0.0.1:7437: browser
+# tabs of the ComfyAI SPA connect to /spa, the CLI's other commands connect
+# to /ctl, and GET /pair/<code> turns a code the tab shows into a token the
+# CLI keeps in ~/.config/comfy-ai/state.json. The binary hands every
+# invocation to dist/cli.js, unchanged, before it prints anything.
+#
+# Rust-only behaviour, with no TypeScript counterpart, for the owner to bless
+# or remove (from the scaffold): COMFY_AI_NO_NATIVE=1 hands every invocation
+# back; COMFY_AI_PACKAGE_ROOT tells the binary where the package is;
+# RUSTIFY_HANDBACK_TRACE makes it say on stderr that it handed back.
+
+reconciled = "aa56999"
+
+# ───────────────────────────── The command ─────────────────────────────
+
+[[feature]]
+name = "comfy-ai (CLI entry point, run by bun)"
+status = "missing"
+ts = "package.json:7 bin; package.json:30 build:cli; ts/cli.ts:1; ts/cli.ts:273"
+note = "The bin is ./dist/cli.js, built by `bun build ts/cli.ts --target bun` (release.yml runs the whole `bun run build`); its first line is `#!/usr/bin/env bun`. It needs bun: Bun.file, Bun.write, Bun.serve and `for await (const line of console)` have no node equivalent. yargs 18.0.0 is bundled into the file, so the installed yargs dependency is not what runs; the @xterm dependencies are for the browser builds only. yargs with script name `comfy-ai`, usage `$0 <command> [options]`, the nine commands in the order serve, pair, list, tail, attach, send, eval, kill, logout, then demandCommand(1), strict(), help(), version() and a fail() handler. Before the program, bun does what porting.md lists (.env files from the current directory, bunfig.toml, package.json and tsconfig.json above it)."
+
+[[feature]]
+name = "--help (global and per command)"
+status = "missing"
+ts = "ts/cli.ts:354; ts/cli.ts:275"
+note = "yargs-generated help on stdout, exit 0: the usage line, `Commands:` with each command's describe text, `Options:` --help and --version (seen). Per command (`comfy-ai serve --help`) the command's positionals and options with types and defaults (`[number] [default: 7437]`, `[default: \"http://127.0.0.1:7437\"]` for list's --daemon, which follows COMFY_AI_DAEMON). Wrapped to the terminal's width, at most 80 columns. Always English in the bundle: y18n looks for its locale files at `../../../locales` from dist/cli.js (that is `<node_modules>/locales/`), finds none and falls back to the built-in strings, whatever LC_ALL, LC_MESSAGES, LANG or LANGUAGE say (read in dist/cli.js, not run under another locale). A trailing `help` word is yargs's (porting.md); not run."
+
+[[feature]]
+name = "--version"
+status = "missing"
+ts = "ts/cli.ts:355"
+note = "Prints the `version` of the first package.json found walking up from the directory above the last `node_modules` in dist/cli.js's own path, or from the current directory when that path has no node_modules (a checkout); `unknown` when that package.json has no version or none is found. So an install with `bun i -g` reads ~/.bun/install/global/package.json, which has no version, and prints `unknown`; under `npm i -g` the walk starts at the prefix's lib/ and most likely finds nothing (`unknown`); in a development checkout it prints the version of whatever project the current directory is in. Read in dist/cli.js (yargs 18's esm shim and pkgUp), not run. Exact parity includes the `unknown`."
+
+[[feature]]
+name = "usage errors and the error line (exit 1)"
+status = "missing"
+ts = "ts/cli.ts:352 demandCommand; ts/cli.ts:353 strict; ts/cli.ts:356 fail"
+note = "The fail() handler prints, on stderr, either yargs's own message alone (no help text) or, for an error a command threw, `error: <message>`, then exits 1. Seen: a bare `comfy-ai` prints `Specify a command`; `comfy-ai pair not-a-url` prints `error: expected an http(s) URL, got: not-a-url`. From reading: an unknown command or option is refused by strict() (`Unknown argument: …`), a missing positional (`pair`, `send`, `eval` without one) is yargs's not-enough-arguments message. Every runtime failure of the commands below comes out through this line, including bun's own messages (a URL it cannot parse, a port in use), whose wording is bun's and was not run."
+
+# ───────────────────────────── serve: the daemon ─────────────────────────────
+
+[[feature]]
+name = "serve [--port] [--host] [--verbose]"
+status = "missing"
+ts = "ts/cli.ts:276; ts/serve.ts:77; ts/serve.ts:400"
+note = "Starts the bridge daemon with Bun.serve on --host (default 127.0.0.1) and --port (number, default 7437), prints on stderr `comfy-ai bridge listening on http://<host>:<port>`, the SPA, CLI and pair endpoints, and `Press Ctrl+C to stop.`, and runs until it is killed; all state (sessions, pairing codes, tokens) is in memory only. --verbose logs on stderr with a `[comfy-ai]` prefix: `session opened <id> <title>`, `session closed <id>`, `cli disconnected` (any /ctl socket closing), `pair-request <code> → <id>`. A port in use makes Bun.serve throw, which the fail() line reports (not run). Bun's WebSocket defaults apply to both endpoints (idle timeout, automatic pings, payload limit); not read in bun's source. The four endpoints have entries of their own."
+
+[[feature]]
+name = "daemon: GET /pair/<code> (claim a pairing code)"
+status = "missing"
+ts = "ts/serve.ts:127; ts/serve.ts:114 purgeExpiredPairs; ts/serve.ts:65 PAIR_DEFAULT_TTL_MS"
+note = "Any method on a path starting with /pair/. Codes that have expired are purged first, at each such request only. The code is the rest of the path, trimmed, as the URL spells it (percent-encoding is not decoded). JSON answers: 400 `{\"ok\":false,\"error\":\"missing code\"}`; 404 `unknown or expired pairing code`; 410 `session for this code is no longer open` (the code is dropped); otherwise a new random UUID token is added to the session, the code is used up, the tab gets `{v:1,type:\"paired\",code}`, and the answer is 200 `{\"ok\":true,\"sessionId\",\"title\",\"token\"}`, `title` left out when the tab gave none. A code lives for the tab's ttlMs, 5 minutes when it gives none."
+
+[[feature]]
+name = "daemon: /spa WebSocket (browser tab sessions)"
+status = "missing"
+ts = "ts/serve.ts:173; ts/serve.ts:227; ts/serve.ts:247; ts/serve.ts:263 handleSpaMessage"
+note = "Upgrades any request to /spa, with no token and no Origin check (any page in a browser on the machine can connect); a failed upgrade is 400 `upgrade failed`. Frames that are not JSON objects with v === 1 are dropped. `hello` with a sessionId opens a session (id, title, the socket's open time, no tokens); a second hello with the same id from another tab replaces the record, and when either tab closes the id is removed. Before hello every frame is ignored. `event` fans the payload out unchanged to every /ctl socket subscribed to the session, as `{v:1,type:\"event\",sessionId,payload}`. `evalResult` goes only to subscribed sockets that have that opId pending, which then forget it. `pair-request` registers the code for the session (see /pair). `pong` is ignored; the daemon never sends `ping`. Closing the tab ends the session, unsubscribes every CLI from it and so voids its tokens."
+
+[[feature]]
+name = "daemon: /ctl WebSocket (CLI clients, token check)"
+status = "missing"
+ts = "ts/serve.ts:185; ts/serve.ts:324 handleCtlMessage"
+note = "A `token` query parameter that no open session holds is refused with 401 `invalid token`; a valid one binds the socket to its session and subscribes it. Without a token the socket is accepted, unbound. A socket receives events only after it has sent its first frame (that is when it is registered). `list` answers `{type:\"sessions\",sessions:[{id,title,openedAt}]}` with every session; `subscribe`, `send` and `eval` answer `{type:\"error\",message:\"unknown session: <id>\"}` for a session that is not open (eval's error carries its opId); `send` reaches the tab as `{type:\"send\",text,source:\"remote\"}`; `eval` marks the opId pending, subscribes the socket and forwards `{type:\"eval\",opId,script}`; `abort` forwards `{type:\"abort\"}` and is silently dropped for an unknown session. The session a frame names is not checked against the token: any /ctl client, with a token or without, may list, watch, send to, eval in and abort any open session."
+
+[[feature]]
+name = "daemon: GET /health and the banner on every other path"
+status = "missing"
+ts = "ts/serve.ts:211; ts/serve.ts:219"
+note = "/health answers JSON `{\"status\":\"ok\",\"version\":1,\"sessions\":<open sessions>}`. Any other path answers text/plain: `comfy-ai bridge daemon (v1)`, `sessions: N`, and the endpoint list built from the --host and --port given (so `--port 0` shows 0 there, while the startup lines show the port actually bound)."
+
+# ───────────────────────────── The client commands ─────────────────────────────
+
+[[feature]]
+name = "pair <url>"
+status = "missing"
+ts = "ts/cli.ts:292; ts/cli.ts:124 cmdPair"
+note = "Trims the URL and refuses one that does not start with `http` (`error: expected an http(s) URL, got: <url>`, before any request; seen). Otherwise a GET with bun's fetch (redirects followed, bun's proxy variables honoured; not run), the body read as JSON (a body that is not JSON fails with bun's parse message). When the status is not 2xx or `ok` is not true: `error: pairing failed: <body.error, or HTTP <status>>`. On success the state file is replaced by sessionId, token, daemonUrl, title and pairedAt (ms); daemonUrl is the URL with path and query emptied and one trailing slash removed (a #fragment or user:password stay). Prints `Paired with session \"<title, or the session id>\".` and `Try: comfy-ai send \"hello\"`."
+
+[[feature]]
+name = "list [--daemon <url>]"
+status = "missing"
+ts = "ts/cli.ts:303; ts/cli.ts:149 cmdList"
+note = "--daemon defaults to the default daemon URL (see `which session and daemon`); when it is left at that value the paired daemonUrl from the state file wins. Connects to /ctl without a token, sends `list`, and prints `(no SPA tabs connected)` or one line per session: `<id>  <title, or (untitled)>  +<age>s`, the age in whole seconds by toFixed(0). Waits without a time limit for the answer."
+
+[[feature]]
+name = "tail [session]"
+status = "missing"
+ts = "ts/cli.ts:310; ts/cli.ts:175 cmdTail"
+note = "Connects with the saved token, subscribes, prints `tailing <id> — Ctrl+C to exit` on stderr, then one line per event on stdout (see `event lines`) and `error: <message>` on stderr for a daemon error (an unknown session, after which it keeps waiting). Runs until interrupted; what it does when the daemon goes away was not run (nothing handles the close). README documents `--session=<id>` here; the command declares `session` only as a positional, and whether yargs's strict mode takes the flag spelling was not run. The same applies to attach and kill."
+
+[[feature]]
+name = "attach [session]"
+status = "missing"
+ts = "ts/cli.ts:316; ts/cli.ts:189 cmdAttach"
+note = "As tail, with `attached to <id> — type to send, Ctrl+D to detach` on stderr, and every line of stdin (read with bun's `for await (const line of console)`), trimmed, sent as a `send` frame; blank lines are skipped. At the end of stdin the socket is closed and the command ends."
+
+[[feature]]
+name = "send <text> [-s|--session]"
+status = "missing"
+ts = "ts/cli.ts:322; ts/cli.ts:209 cmdSend"
+note = "Sends one `send` frame, waits 50 ms and closes. Prints nothing and exits 0 whether or not the daemon knew the session (its error is not listened for)."
+
+[[feature]]
+name = "eval <script> [-s|--session] (exit code of the tab's run)"
+status = "missing"
+ts = "ts/cli.ts:331; ts/cli.ts:219 cmdEval"
+note = "Sends `eval` with a random UUID opId and waits for the evalResult with that opId: writes its stdout to stdout and its stderr to stderr as they are (no newline added), closes, and exits with its exitCode (0 when absent) through process.exit. A daemon error with that opId (an unknown session) ends it with `error: <message>`, exit 1; no answer within 60 s with `error: eval timed out (60s)`, exit 1."
+
+[[feature]]
+name = "kill [session]"
+status = "missing"
+ts = "ts/cli.ts:343; ts/cli.ts:256 cmdKill"
+note = "Sends `abort`, waits 50 ms, closes and prints `abort sent to <id>` on stderr, exit 0, also for a session the daemon does not know (it drops the frame silently)."
+
+[[feature]]
+name = "logout"
+status = "missing"
+ts = "ts/cli.ts:349; ts/cli.ts:266 cmdLogout; ts/config.ts:46 clearState"
+note = "Writes `{}` and a newline to the state file (the file stays; its directory is created when missing) and prints `cleared local pairing state.`. Talks to no daemon."
+
+# ───────────────────────────── Shared behaviour ─────────────────────────────
+
+[[feature]]
+name = "pairing state file (~/.config/comfy-ai/state.json, COMFY_AI_CONFIG_DIR)"
+status = "missing"
+ts = "ts/config.ts:23 statePath; ts/config.ts:29 readState; ts/config.ts:40 writeState"
+note = "The file is `<COMFY_AI_CONFIG_DIR>/state.json` when that variable is set (also when set to an empty string, which makes it `state.json` in the current directory), otherwise `<home>/.config/comfy-ai/state.json`; XDG_CONFIG_HOME is not consulted. Home is os.homedir() under bun (HOME on Unix). A missing or unreadable file, or one that is not JSON, reads as empty, silently. Written with Bun.write as JSON indented by two spaces plus a newline, after creating the directory; the mode is the umask's (README: 0644 by default), with the token in clear text. Fields: sessionId, token, daemonUrl, title, pairedAt."
+
+[[feature]]
+name = "which session and daemon a command uses (--session, [session], COMFY_AI_DAEMON)"
+status = "missing"
+ts = "ts/cli.ts:32 DEFAULT_DAEMON; ts/cli.ts:46 resolveSession"
+note = "The default daemon URL is COMFY_AI_DAEMON when set and not empty, with a leading `ws:` turned into `http:` and `wss:` into `https:`, else `http://127.0.0.1:7437`. tail, attach, send, eval and kill take the session given (positional or -s/--session) or the saved sessionId; with neither they end with `error: no paired session — run `comfy-ai pair <url>` first, or pass --session <id>.` before connecting. Either way the daemon is the saved daemonUrl, else the default, and the saved token is sent, also when another session was named."
+
+[[feature]]
+name = "connecting to the daemon (/ctl URL, token, unreachable daemon)"
+status = "missing"
+ts = "ts/cli.ts:38 deriveWsUrl; ts/cli.ts:70 openCtl; ts/cli.ts:91 parseDaemonMsg"
+note = "The WebSocket URL is the daemon URL with http→ws and https→wss, the path replaced by /ctl, any query kept and `token=<token>` set when there is one. A connection that fails, including the daemon's 401 for a token whose tab has closed, ends the command with `error: cannot reach daemon at <daemon url> — is `comfy-ai serve` running?`. A daemon URL that is not a URL fails in the URL parser with bun's message (not run). Frames from the daemon that are not JSON or whose v is not 1 are ignored."
+
+[[feature]]
+name = "event lines printed by tail and attach"
+status = "missing"
+ts = "ts/cli.ts:101 formatEvent; ts/cli.ts:183"
+note = "One line per event, each followed by a newline: message `[<role>] <text>`; delta the text alone (so a streamed answer comes out one delta per line); tool `$ <script>`, then stdout and `[stderr] <stderr>` (each left out when empty), then `(exit <code>)`, joined by newlines; state `(streaming…)` or `(idle)`; clear `--- session cleared ---`. A payload of any other kind prints `undefined`."
+
+[[feature]]
+name = "wire protocol v1 (JSON text frames between tab, daemon and CLI)"
+status = "missing"
+ts = "ts/protocol.ts"
+note = "The compatibility surface with the ComfyAI SPA, which is not in this repository: every frame is a JSON object with `v: 1` and `type`. Tab→daemon hello, event, evalResult, pair-request, pong; daemon→tab send, eval, abort, paired (ping is declared, never sent); CLI→daemon list, subscribe, send, eval, abort; daemon→CLI sessions, event, evalResult, error. Default port 7437 and host 127.0.0.1 are defined here. The daemon passes event payloads through unchecked, so a Rust daemon must not reshape them (key order, numbers)."

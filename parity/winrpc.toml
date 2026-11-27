@@ -1,0 +1,288 @@
+# Parity ledger for winrpc. Format and rules: parity/README.md.
+#
+# First full pass, 2026-11-27, written by reading the code at 91cda75, the
+# commit the project's branch build/rustify-pipeline starts from (that branch
+# adds the crate, rs/, and changes no TypeScript). Read in full: every file
+# under src/ (src/index.ts, server.ts, auth.ts, redact.ts, lease.ts,
+# ui-lock.ts, ahk.ts, powershell.ts, screenshot.ts, ocr.ts, tray.ts; 1,802
+# lines), the two PowerShell scripts the server runs (src/ps/), ocr.py and
+# ocr-mac.py, the AutoHotkey templates in ahk/, scripts/, the three test
+# files, README.md, SPEC.md, docs/ and package.json. No dependency was read
+# (there is no node_modules and no lock file in the repository): what yargs,
+# Elysia, systray2 and bun do around the program is assumed from what the
+# code asks of them, and the notes say so.
+#
+# Nothing was run beyond --help: `winrpc --help` and the --help of serve,
+# ahk-repl, lock and tray, installed from a locally packed release by
+# rustify's smoke test with a home directory of its own, in an empty working
+# directory. No server was started, no client command was run, no service
+# was contacted, and no test was run. No entry cites a proof.
+#
+# How it fits together. `winrpc` is one bun program, src/index.ts (yargs). Its
+# default command, `serve`, starts an HTTP server (Elysia on Bun.serve) that a
+# Windows desktop is driven through: AutoHotkey v2 scripts, PowerShell,
+# screenshots, OCR, and a UI lock that other programs on the machine share
+# through a file. The other commands are its clients: `ahk-repl` and `lock`
+# talk to a server over HTTP, `tray` shows a Windows tray icon for the server
+# on this host. The access token is created by the server in ./.env.local on
+# its first start, and everything the program prints is passed through a
+# redaction of that token.
+#
+# Status. The crate on build/rustify-pipeline hands every invocation to
+# src/index.ts, so every feature below is `missing`. Nothing is `dropped`:
+# that is the owner's decision.
+#
+# Grain. One entry per command and subcommand, per HTTP route, and per
+# behaviour with its own module or test file (token, redaction, templates,
+# AutoHotkey runner, lock file, lease, request queue). Minor flags and the
+# variables that only switch one feature are in that feature's note.
+#
+# No entries, and why:
+# - scripts/ (install-schtask.ps1, serve-loop.ps1, the .vbs launchers,
+#   wx-tray.ps1): Windows supervisor scripts. They run `bun src/index.ts`
+#   from a git checkout they keep up to date themselves, never the installed
+#   command, so the port does not reach them. They are not TypeScript.
+# - ocr.py and the PowerShell and AutoHotkey files are what the server runs;
+#   they are part of the features that run them. ocr-mac.py is not run by
+#   any code.
+# - Code no route or command reaches (package.json has no `main` or
+#   `exports`): ahkEscape (src/ahk.ts:25), runPowerShell (src/powershell.ts:3),
+#   withUiLock (src/ui-lock.ts:153), withUiQueue (src/server.ts:42).
+#
+# Hazards for whoever ports or tests this. Plain `winrpc`, and `winrpc` with
+# only --host or --port, is `winrpc serve`: it listens on 0.0.0.0:12371 by
+# default and creates ./.env.local. A server answers anyone with the token by
+# running AutoHotkey and PowerShell on the desktop. The client commands send
+# the token to whatever URL they are given. Parity cases need a stand-in
+# server on 127.0.0.1 for the clients, and `serve` cases need a port of
+# their own and a working directory of their own.
+
+reconciled = "91cda75"
+
+# ───────────────────────────── Commands ─────────────────────────────
+
+[[feature]]
+name = "serve (the default command) [--host] [--port]"
+status = "missing"
+ts = "src/index.ts:129; src/index.ts:12 serve; src/server.ts:119 makeApp"
+note = "`winrpc` with no command is `winrpc serve`. --host defaults to $HOST, else 0.0.0.0; --port to parseInt($PORT), else 12371 (yargs shows both defaults in --help, NaN when PORT is not a number). Imports server.ts and auth.ts only here, so no other command creates the token. Runs until it is stopped; what it prints is the startup banner (own entry)."
+
+[[feature]]
+name = "access token: created in ./.env.local on the first serve"
+status = "missing"
+ts = "src/auth.ts:23 loadOrCreateToken; src/auth.ts:21 ENV_FILE"
+note = "WINRPC_TOKEN (trimmed) is kept when it has 16 characters or more. Otherwise 32 random bytes in hex are written as `WINRPC_TOKEN=<hex>` to .env.local in the current directory: appended (after a newline when the file does not end in one), or a new file with mode 0600. A shorter WINRPC_TOKEN is replaced silently and the file then holds two WINRPC_TOKEN lines. The next start finds it because bun loads .env.local (see the configuration entry)."
+
+[[feature]]
+name = "serve's startup banner"
+status = "missing"
+ts = "src/index.ts:15; src/auth.ts:69 printTokenBanner"
+note = "On listening: `winrpc listening on http://<host>:<port>`, `  AHK_TEMPLATES_DIR=<value, or <cwd>/ahk>`, `  Platform: <platform>  PID: <pid>`, then a block between two rules of ━ naming the token's file and its first four characters with …, and `WINRPC_URL=http://<token>@<localhost when host is 0.0.0.0, else host>:<port>` with the word <token>, never the token. All through console.log, so redaction applies."
+
+[[feature]]
+name = "ahk-repl [url] [--lease]"
+status = "missing"
+ts = "src/index.ts:137; src/index.ts:89 ahkRepl"
+note = "Each line of stdin, trimmed, if not empty, is POSTed as text/plain to <url>/ahk-eval. The answer's stdout and stderr go to stdout and stderr with a newline added when missing; `ok: false` without stderr prints `[exit <exitCode or ?>]`; a failed request prints `[request failed] <message>`; 423 prints the lease-held line and exits 75. On a terminal: `winrpc ahk-repl → <base>  (Ctrl-D to exit)` on stderr and an `ahk> ` prompt; through a pipe nothing else. As read: lines are not awaited one by one, so piped lines are all sent at once and their answers print in the order they arrive; and a body that is not JSON (a 401's text) is read twice, so the second read fails and what shows is `[request failed]` with the runtime's message, not the body. These writes do not go through console, so redaction does not apply to them."
+
+[[feature]]
+name = "lock / lock show"
+status = "missing"
+ts = "src/index.ts:149; src/index.ts:163"
+note = "GET <url>/lock, printed as the client prints every answer (see that entry). `show` is the default action; any other word than show, acquire, renew or release is a yargs usage error."
+
+[[feature]]
+name = "lock acquire --owner [--label] [--ttl] [--wait]"
+status = "missing"
+ts = "src/index.ts:165"
+note = "POST <url>/lock/acquire {owner, label, ttl_ms, wait_ms}: --ttl and --wait are seconds, sent times 1000, and left out when not given. Without --owner: `error: lock acquire needs --owner`, exit 2, checked after the URL (a missing URL is reported first). 423 exits 75."
+
+[[feature]]
+name = "lock renew [lease] [--ttl]"
+status = "missing"
+ts = "src/index.ts:177"
+note = "POST <url>/lock/renew {lease, ttl_ms}. The lease is the argument, else $WINRPC_LEASE; without one: `error: lock renew needs the lease id (argument or $WINRPC_LEASE)`, exit 2. A 410 from the server is an HTTP error (exit 1)."
+
+[[feature]]
+name = "lock release [lease]"
+status = "missing"
+ts = "src/index.ts:177"
+note = "POST <url>/lock/release {lease}; the lease as for renew, with `lock release` in the error. A 410 is an HTTP error (exit 1)."
+
+[[feature]]
+name = "tray [--port]"
+status = "missing"
+ts = "src/index.ts:185; src/tray.ts:178 startTray; src/tray.ts:117 buildMenu; src/tray.ts:63 readToken"
+note = "Sets PORT from --port (default $PORT, else 12371), then loads tray.ts, which starts systray2's helper program. Polls http://127.0.0.1:<port>/health every 5 s (2 s timeout), and /lock when it has a token: blue icon while the server answers, red when not, and a menu with the status line (uptime, pid), Copy WINRPC_URL (`http://<token>@localhost:<port>`, through clip.exe, or pbcopy on macOS), Open …/health (cmd /c start, or open), the lock line, Force-unlock UI lock and Restart server (POST /lock/force-unlock and /redeploy), and Quit Tray. The token is WINRPC_TOKEN, else the WINRPC_TOKEN line of the .env.local in the package's own directory; it never creates one. Runs until quit or SIGINT/SIGTERM. Tied to a JavaScript library (systray2) and to a Windows desktop: likely the last thing to leave JavaScript."
+
+# ─────────────────────── What every client shares ───────────────────────
+
+[[feature]]
+name = "client target: URL, token and lease"
+status = "missing"
+ts = "src/index.ts:31 resolveClient"
+note = "The URL is the argument or --url, else $WINRPC_URL. None: `error: provide <url> / --url or set WINRPC_URL`, exit 2; one that does not parse: `error: invalid URL: <the text, user part masked>`, exit 2. The token is the URL's user part (percent-decoded; a bad escape throws, as read), else $WINRPC_TOKEN, sent as `authorization: Bearer <token>`; the user and password parts are removed from the URL and a trailing / is dropped. The lease is --lease (ahk-repl only), else $WINRPC_LEASE, sent as `x-winrpc-lease`, so every lock request also carries $WINRPC_LEASE when it is set."
+
+[[feature]]
+name = "client answers and exit codes"
+status = "missing"
+ts = "src/index.ts:62 postJson; src/index.ts:55 EXIT_LEASE_HELD; src/index.ts:56 printLeaseHeld"
+note = "GET without a body, POST with a JSON body. No connection: `error: cannot reach winrpc at <base> (<path>): <code or message>`, exit 1. 423: `ui lease held by <holder> (<label>) until <expires_at>; retry after it, or pass --lease` on stderr, exit 75. Another status that is not ok: `HTTP <status> <statusText> on <path>` and the body, exit 1. Otherwise the body as JSON with two-space indentation, `{}` when it is not JSON. The error texts carry the runtime's own codes and messages."
+
+[[feature]]
+name = "the token is masked in everything printed"
+status = "missing"
+ts = "src/redact.ts:66 installConsoleRedaction; src/redact.ts:36 redactSecrets; src/redact.ts:21 knownSecrets; src/index.ts:8"
+note = "console.log, info, warn, error and debug are wrapped: in every string, the user part of a URL becomes *** and each known secret of 8 characters or more (WINRPC_TOKEN trimmed; the decoded user and password of WINRPC_URL) its first four characters and …, longest first. Errors are rebuilt with masked message and stack; other objects go through JSON and back when something was masked. yargs's help and errors pass through it. process.stdout/stderr.write does not (ahk-repl's output, the lease-held line). The server masks its error texts the same way (redactSecrets). Has its own test file, test/redact.test.ts."
+
+[[feature]]
+name = "--help, and `help` as the last word"
+status = "missing"
+ts = "src/index.ts:198"
+note = "yargs's help for the program and each command. Its text depends on the environment: the defaults of --host and --port come from HOST and PORT, and ahk-repl's url says `(default $WINRPC_URL, set)` or `, unset)`. Never creates the token (server.ts and auth.ts are loaded only by serve's handler)."
+
+[[feature]]
+name = "--version"
+status = "missing"
+ts = "src/index.ts:127"
+note = "yargs's: the version from package.json, or `unknown` when the package was installed globally with bun (porting.md, `What the TypeScript means`)."
+
+[[feature]]
+name = "usage errors"
+status = "missing"
+ts = "src/index.ts:197"
+note = "`.strict()`: unknown commands and options, a lock action outside its choices, and the like are reported by yargs (help and the error on stderr, exit 1, as yargs does by default; not run). No `.fail()` handler: an error thrown by a command (a bad %-escape in the URL's user part) gets yargs's and bun's own report."
+
+[[feature]]
+name = "configuration from the environment and bun's .env files"
+status = "missing"
+ts = "src/auth.ts:4; src/index.ts:24"
+note = "bun loads .env, .env.local and the NODE_ENV variants from the current directory before the program starts, and the program relies on it: the server finds the token it wrote in .env.local, and its banner tells users to copy the token into the client's .env.local. Read from the environment: WINRPC_URL, WINRPC_TOKEN, WINRPC_LEASE (clients); HOST, PORT, WINRPC_TOKEN, WINRPC_URL (see the AutoHotkey runner), AHK_EXE, AHK_TEMPLATES_DIR, IM_UI_LOCK_PATH, TMPDIR, WINRPC_LEASE_GUARDS (server); PORT, WINRPC_TOKEN (tray); OCR_DEVICE (ocr.py). A binary has to read those files as bun does, or hand back when one exists."
+
+# ───────────────────────────── The server ─────────────────────────────
+
+[[feature]]
+name = "HTTP authentication"
+status = "missing"
+ts = "src/server.ts:128 onRequest; src/auth.ts:54 checkAuth; src/auth.ts:42 extractToken"
+note = "Every route but GET /health (by exact path) needs `Authorization: Bearer <token>` or `Basic <base64 of token:>`, the token compared with !== after trimming. Otherwise 401 with the text `Unauthorized — include access token in URL: http://<token>@host:port` and `WWW-Authenticate: Basic realm=\"winrpc\"`."
+
+[[feature]]
+name = "error answers"
+status = "missing"
+ts = "src/server.ts:121 onError"
+note = "An error a route does not catch answers 500 with {ok: false, stdout: \"\", stderr: <message, masked>, exitCode: 1}; a thrown Response (the 401) passes through as it is. As read, this includes a body that fails a route's schema, with Elysia's own message; Elysia's handling was not checked."
+
+[[feature]]
+name = "GET /health"
+status = "missing"
+ts = "src/server.ts:134"
+note = "Without a token: {ok: true, uptime, pid}."
+
+[[feature]]
+name = "GET /version"
+status = "missing"
+ts = "src/server.ts:135"
+note = "{commit: `git rev-parse --short HEAD` run in the server's working directory, platform, node: process.version}. Installed from npm, that directory is not the package, so the commit is whatever repository (or none) the server was started in. SPEC.md says it returns the package version."
+
+[[feature]]
+name = "GET /lock"
+status = "missing"
+ts = "src/server.ts:140"
+note = "{locked: true, holder, pid, host, expiresIn (ms, at least 0), lease} when the lock file holds a valid state, else {locked: false, lease}. lease is the active lease's owner, label, acquired_at and expires_at, or null; never its id."
+
+[[feature]]
+name = "POST /lock/acquire"
+status = "missing"
+ts = "src/server.ts:146; src/lease.ts:174 acquireLease"
+note = "Body {owner (1-100 characters), label? (up to 200), ttl_ms?, wait_ms?}. Waits in the server's queue behind a running request, for wait_ms counted from arrival (default 30 s, 0 to 60 s). Answers {ok: true, lease (32 hex characters), owner, label, acquired_at, expires_at}, or 423 {ok: false, error: \"ui lease held\", holder, label, expires_at} naming the lease, else the lock file's holder, else `(busy: a running request)` (the handler is not inside the queue's context, so that is the text every time, as read)."
+
+[[feature]]
+name = "POST /lock/renew"
+status = "missing"
+ts = "src/server.ts:192; src/lease.ts:231 renewLease"
+note = "Body {lease, ttl_ms?}. {ok: true, owner, label, acquired_at, expires_at}, or 410 {ok: false, error: \"no such lease (expired or released)\"} for a lease that is not the active one, has used up its lifetime, or lost its lock file."
+
+[[feature]]
+name = "POST /lock/release"
+status = "missing"
+ts = "src/server.ts:196; src/lease.ts:249 releaseLease"
+note = "Body {lease}. {ok: true}, or 410 as for renew. During the holder's own running action the lease ends at once and the lock file is freed when the action ends."
+
+[[feature]]
+name = "POST /lock/force-unlock"
+status = "missing"
+ts = "src/server.ts:201; src/lease.ts:263 dropLease; src/ui-lock.ts:65 forceUnlockUi"
+note = "Ends any lease and deletes the lock file whoever holds it. {ok: true, released: <the lock file's state before, or null>, lease: <the lease ended, or null>}."
+
+[[feature]]
+name = "POST /ahk-eval [?gui] [?readonly]"
+status = "missing"
+ts = "src/server.ts:206"
+note = "The body is the script. Empty: {ok: false, stdout: \"\", stderr: \"Empty script\", exitCode: 1}. Runs through the AutoHotkey runner inside the request queue and the lease gate (guard `ahk-eval`); readonly=1 skips both, so it runs even while another owner holds a lease. gui=1 or true is passed on and, as read, not used by the runner. A failure answers {ok: false, stderr: <message, masked>, exitCode: 1} with status 200."
+
+[[feature]]
+name = "POST /run-template"
+status = "missing"
+ts = "src/server.ts:217"
+note = "Body {name, vars? (string values), gui?, timeout?}. Renders the template (own entry) and runs it as /ahk-eval does, under guard `run-template` with timeout passed to the runner. A template that is not found, or a failed run, answers {ok: false, stderr: <message>, exitCode: 1}. The name is joined to the template directories as it is (a name with ../ leaves them)."
+
+[[feature]]
+name = "AutoHotkey templates: lookup and substitution"
+status = "missing"
+ts = "src/ahk.ts:78 ahkTemplate; src/ahk.ts:42 loadTemplate; src/ahk.ts:31 getTemplateDir; src/ahk.ts:40 OWN_TEMPLATE_DIR"
+note = "<name>.template.ahk, then <name>.ahk, first in $AHK_TEMPLATES_DIR (default <cwd>/ahk), then in the package's own ahk/ (find-owned-window, paste-text, ime-off and the two lib- files). Cached by name and modification time. The preamble (_Print, _PrintErr, an OnError handler) goes first; the markers {{FIND_WECHAT_READONLY}}, {{FIND_WECHAT_PASSIVE}}, {{FIND_WECHAT}}, {{UIA_HELPERS}}, {{FIND_OWNED}} and {{IME_OFF}} are replaced by those templates when they exist; then one pass replaces {{KEY}} by vars[KEY], an upper-case key that was not given by nothing, and leaves every other {{…}} as it is. Inserted values are not scanned again. Has its own test file, test/templates.test.ts."
+
+[[feature]]
+name = "AutoHotkey runner"
+status = "missing"
+ts = "src/ahk.ts:102 runAhk; src/ahk.ts:65 _AHK_PREAMBLE"
+note = "Adds the preamble unless the script already has `_PrintErr(msg)`. When WINRPC_URL is set in the server's own environment, the script is POSTed to $WINRPC_URL/ahk-eval instead (no Authorization header; timeout, default 30 s) and that answer is returned: a server started in a directory whose .env.local holds a client's WINRPC_URL forwards every script there. Otherwise Windows only (`runAhk requires Windows (or set WINRPC_URL for remote)`): writes C:\\tmp\\ahk-eval-<time>-<random>.ahk, runs $AHK_EXE (default C:\\Program Files\\AutoHotkey\\v2\\AutoHotkey64.exe) /ErrorStdOut <file>, kills it after the timeout (default 30 s), deletes the file, answers {ok: exit code 0, stdout, stderr, exitCode}."
+
+[[feature]]
+name = "POST /shell"
+status = "missing"
+ts = "src/server.ts:235; src/powershell.ts:49 runPowerShellInline"
+note = "The body is a PowerShell command, run as `powershell -NoProfile -NonInteractive -Command <body>`, in the request queue and under guard `shell` but without the lock file. Empty: stderr \"Empty command\". After 60 s the process is killed and the answer is {ok: false, stderr: \"shell timeout\", exitCode: 1}. Otherwise {ok, stdout, stderr, exitCode}."
+
+[[feature]]
+name = "POST /screenshot [?window] [?process] [?foreground] [?crop] [?maxw]"
+status = "missing"
+ts = "src/server.ts:248; src/screenshot.ts:30 takeScreenshot; src/powershell.ts:28 runPowerShellFile; src/ps/screenshot-screen.ps1; src/ps/screenshot-window.ps1"
+note = "Runs one of the two PowerShell scripts in the package's src/ps/ (45 s timeout) to write C:\\tmp\\screenshot-<time>.png, then answers the PNG with Content-Type image/png and X-Screenshot-Path. With window (title part, any case) or process (name), the largest visible window matching both is brought forward unless foreground is 0 or false, and the request goes through the request queue and guard `screenshot-window`; the full screen does not. crop is x,y,w,h in pixels or, when all four are at most 1, fractions; maxw scales down. A failure answers 500 with the text `Error: Screenshot failed: <reason>`. Off Windows the file name is /tmp\\screenshot-<time>.png, as read."
+
+[[feature]]
+name = "POST /ocr [?lang]"
+status = "missing"
+ts = "src/server.ts:280; src/ocr.ts:47 runOcr; src/ocr.ts:36 findPython; ocr.py"
+note = "The body is image bytes, saved to C:\\tmp\\ocr-input-<time>.png (that name also off Windows), or JSON {path} (400 {ok: false, error: \"missing path\"} without it). Runs <python> ocr.py <image> <lang, default ch> in the package's directory with PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True; python is the first of a list of fixed Windows paths that exists, else python3. Answers {ok: true, boxes: [{text, confidence, x1, y1, x2, y2}], text: the box texts joined by newlines}, or 500 {ok: false, error} (`OCR process failed (code <n>): <first 500 characters of stderr>`). Needs PaddleOCR in that Python."
+
+[[feature]]
+name = "GET /ocr-stream (server-sent events)"
+status = "missing"
+ts = "src/server.ts:301; src/ocr.ts:75 OcrWorker; src/ocr.ts:126 getOcrWorker; src/ocr.ts:143 diffBoxes"
+note = "Query window, process, crop, maxw, lang (default en), interval (ms, default 400). Starts or reuses one `ocr.py --serve <lang>` worker per language, kept for the server's lifetime. Sends `event: ready` with `data: ocr-stream lang=<lang> interval=<n>ms`, then every interval takes a screenshot without bringing the window forward, OCRs it and sends `data: - x1 y1 x2 y2 \"text\" «row»` for each box gone and `data: + …` for each new one, matched by equal text with centres within 50 px; «row» is the other boxes on the same line, left to right. A failed screenshot sends `event: error`. Not in the request queue and not guarded. Ends when the client goes."
+
+[[feature]]
+name = "POST /redeploy"
+status = "missing"
+ts = "src/server.ts:275"
+note = "Answers {ok: true, message: \"exiting in 200ms\"}, logs `[redeploy] exiting in 200ms — supervisor will restart` and exits with code 2 after 200 ms, for a supervisor (scripts/serve-loop.ps1) to restart it."
+
+[[feature]]
+name = "cross-process UI lock file"
+status = "missing"
+ts = "src/ui-lock.ts:85 acquireUiLock; src/ui-lock.ts:48 getLockPath; src/ui-lock.ts:54 readLockState; src/ui-lock.ts:42 keepAlive"
+note = "$IM_UI_LOCK_PATH, else C:\\tmp\\im-ui.lock on Windows, else $TMPDIR (or /tmp)/im-ui.lock. Shared with other programs on the machine, so its format is an interface: JSON {holder, pid, host, acquiredAt, expiresAt, label} (ms since 1970). Created with O_EXCL; an expired lock is deleted and taken; otherwise polled every 100 ms until the timeout (60 s by default): `UI lock timeout after <n>ms waiting for <holder> (pid <pid>@<host>, expires in <n>ms); want=\"<holder>\"`. A renew rewrites the file only while its pid, acquiredAt and holder are still ours; a running action renews it to 60 s ahead every 15 s."
+
+[[feature]]
+name = "UI lease rules"
+status = "missing"
+ts = "src/lease.ts:79 clampTtl; src/lease.ts:107 activeLease; src/lease.ts:135 gate; src/lease.ts:100 expire"
+note = "One lease at a time, held in the server's memory and as the lock file (holder `lease:<owner>`). TTL default 2 min, at least 1 s, at most 10 min per acquire or renew, and at most 60 min from acquisition in all; the file's expiry is the lease's. Released when its TTL passes without a renew; a holder action still running keeps the file until it ends. Lease ids are compared in constant time. A lease whose file was taken over is lost. Has its own test file, test/lease.test.ts (348 lines; also the CLI against a running server)."
+
+[[feature]]
+name = "request queue and lease guards (WINRPC_LEASE_GUARDS)"
+status = "missing"
+ts = "src/server.ts:71 guarded; src/server.ts:55 enqueue; src/lease.ts:30 leaseGuards"
+note = "Guarded actions run one at a time in the server's queue, each taking the lock file for itself unless a lease holds it. WINRPC_LEASE_GUARDS (comma-separated; default ahk-eval,run-template,shell,screenshot-window) names what a lease guards: while a lease is held, anyone else gets 423 at once and is checked again when its turn comes; the holder (X-Winrpc-Lease) runs inside the lease without waiting for the file. An action that is not guarded runs at once while a lease is held."

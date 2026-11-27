@@ -113,7 +113,10 @@ name = "winrpc"
 repo = "snomiao/winrpc"
 npm = "winrpc"
 crate = "winrpc"
+manifest = "rs/Cargo.toml"
 ts = ["."]
+rust = ["rs/src"]
+ignore = ["rs"]
 
 [[project]]
 name = "chatwork-cli"
@@ -138,14 +141,19 @@ name = "rustdesk.skill"
 repo = "snomiao/rustdesk.skill"
 npm = "rustdesk-skill"
 crate = "rustdesk-skill"
+manifest = "rs/Cargo.toml"
 ts = ["."]
+rust = ["rs/src"]
+ignore = ["rs"]
 
 [[project]]
 name = "wtx"
 repo = "snomiao/wtx"
 npm = "@snomiao/wtx"
 crate = "wtx"
-ts = ["src"]
+manifest = "rs/Cargo.toml"
+ts = ["src", "wtx.mjs"]
+rust = ["rs/src"]
 keep_ts = { "lib" = "React component library, runs in the browser" }
 
 [[project]]
@@ -162,18 +170,26 @@ name = "Comfy-AI"
 repo = "snomiao/Comfy-AI"
 npm = "comfy-ai"
 crate = "comfy-ai"
-ts = ["src", "ts"]
+manifest = "rs/Cargo.toml"
+ts = ["ts"]
+rust = ["rs/src"]
+keep_ts = { "ts/extension" = "browser extension; runs in Chrome", "ts/userscript" = "userscript; runs in the browser", "ts/ui" = "the xterm.js panel the extension and the userscript share; runs in the browser", "ts/mock-spa.ts" = "development stand-in for the browser tab; not in the package" }
 
 [[project]]
 name = "bunto"
 repo = "snomiao/bunto"
 npm = "bunto"
 crate = "bunto"
+manifest = "rs/Cargo.toml"
 ts = ["."]
+rust = ["rs/src"]
+ignore = ["rs"]
 
 [[project]]
 name = "snocommit"
 repo = "snomiao/snocommit"
 npm = "snocommit"
 crate = "snocommit"
+manifest = "rs/Cargo.toml"
 ts = ["src"]
+rust = ["rs/src"]
