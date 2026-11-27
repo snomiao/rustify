@@ -66,6 +66,13 @@
 // (timestamps, random ids) needs a `normalize` rule; keep those rare, each one
 // is a hole in the proof.
 //
+// What is compared: the exit code, or the signal that ended the program
+// ("signal SIGTERM"); stdout and stderr; and what each `after` line prints.
+// Through pipes, stdout and stderr are read as UTF-8 text, so bytes that are
+// not UTF-8 all become U+FFFD there and are not told apart. On a terminal and
+// in regular files (both below) every byte counts, and one that is not UTF-8
+// is shown as \xNN.
+//
 // Variables. A program sees PATH, an empty HOME (and USERPROFILE), the three
 // XDG directories, TMPDIR, then the `env` of the cases file, then the case's.
 // A value of null removes the variable instead: in the case's `env` to take
@@ -128,8 +135,8 @@
 //
 // Regular files. "capture": "files" (--capture files for every case that does
 // not say; "capture": "pipes" in a case keeps the pipes) gives the program
-// regular files as stdout and stderr and compares what is in them when it
-// exits. For a bun program that prints a lot: bun 1.4.0 loses stdout written
+// regular files as stdout and stderr and compares what is in them, byte for
+// byte, when it exits. For a bun program that prints a lot: bun 1.4.0 loses stdout written
 // to a pipe or socket once the program has read process.stdout.isTTY. On the
 // machine this was written on, 500 such lines arrived whole through a pipe in
 // 20 of 30 runs and 5000 lines in none of 20 (1490 of them at worst); into a
@@ -317,12 +324,64 @@ function escapeRegExp(text) {
 // in them can be seen. Line feeds stay line ends. Done for what is printed
 // about a case that has a terminal; the comparison is on the text as it was.
 function spelledOut(text) {
-  return text.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, (char) => {
-    if (char === "\r") return "\\r";
-    if (char === "\t") return "\\t";
-    if (char === "\u001b") return "\\e";
-    return `\\x${char.charCodeAt(0).toString(16).padStart(2, "0")}`;
-  });
+  return visible(
+    text.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, (char) => {
+      if (char === "\r") return "\\r";
+      if (char === "\t") return "\\t";
+      if (char === "\u001b") return "\\e";
+      // \xNN is a byte that is not UTF-8 (see visible); U+0080 to U+009F are characters.
+      const code = char.charCodeAt(0);
+      return code < 0x80 ? `\\x${code.toString(16).padStart(2, "0")}` : `\\u${code.toString(16).padStart(4, "0")}`;
+    }),
+  );
+}
+
+// What the terminal was sent, or a program wrote into a file, as text that
+// keeps every byte: valid UTF-8 as its characters, and every other byte as
+// one of the code units U+DC80 to U+DCFF, which valid UTF-8 never decodes to
+// (Python calls this "surrogateescape"). Decoded as plain UTF-8, two different
+// invalid bytes would both become U+FFFD and compare the same.
+function fromBytes(bytes) {
+  let text = "";
+  let start = 0;
+  let at = 0;
+  while (at < bytes.length) {
+    const length = utf8Length(bytes, at);
+    if (length) {
+      at += length;
+      continue;
+    }
+    text += bytes.toString("utf8", start, at) + String.fromCharCode(0xdc00 + bytes[at]);
+    start = ++at;
+  }
+  return text + bytes.toString("utf8", start, at);
+}
+
+// The length of the well-formed UTF-8 sequence that starts at `at`, or 0
+// (the table of well-formed sequences in the Unicode standard, 3.9).
+function utf8Length(bytes, at) {
+  const lead = bytes[at];
+  if (lead < 0x80) return 1;
+  let length;
+  let [low, high] = [0x80, 0xbf];
+  if (lead >= 0xc2 && lead <= 0xdf) length = 2;
+  else if (lead >= 0xe0 && lead <= 0xef) {
+    length = 3;
+    if (lead === 0xe0) low = 0xa0;
+    if (lead === 0xed) high = 0x9f;
+  } else if (lead >= 0xf0 && lead <= 0xf4) {
+    length = 4;
+    if (lead === 0xf0) low = 0x90;
+    if (lead === 0xf4) high = 0x8f;
+  } else return 0;
+  if (at + length > bytes.length || bytes[at + 1] < low || bytes[at + 1] > high) return 0;
+  for (let next = at + 2; next < at + length; next++) if (bytes[next] < 0x80 || bytes[next] > 0xbf) return 0;
+  return length;
+}
+
+// A byte that is not UTF-8 (see fromBytes), shown as \xNN.
+function visible(text) {
+  return text.replace(/[\u{dc80}-\u{dcff}]/gu, (unit) => `\\x${(unit.charCodeAt(0) - 0xdc00).toString(16)}`);
 }
 
 const work = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "rustify-parity-"));
@@ -433,8 +492,10 @@ function runIn(root, testCase, impl, plan, extraEnv) {
     result = spawnSync(program, args, options);
   }
   for (const fd of Object.values(sinks)) fs.closeSync(fd);
-  const written = (name) => (plan.files ? fs.readFileSync(path.join(own, name), "utf8") : result[name]);
-  const onTerminal = terminals.length && fs.existsSync(transcript) ? fs.readFileSync(transcript, "utf8") : null;
+  // Files and the terminal are read byte for byte; pipes as UTF-8 text, as
+  // the runner always has.
+  const written = (name) => (plan.files ? fromBytes(fs.readFileSync(path.join(own, name))) : result[name]);
+  const onTerminal = terminals.length && fs.existsSync(transcript) ? fromBytes(fs.readFileSync(transcript)) : null;
   // On a terminal the runner started terminal.py, which had started the
   // program: any trouble with that is the run's, whatever exit code came back.
   if (result.error && (result.status === null || terminals.length)) {
@@ -461,7 +522,8 @@ function runIn(root, testCase, impl, plan, extraEnv) {
     return out;
   };
   // A stream that is the terminal has nothing of its own: it is in "terminal".
-  const observed = { "exit code": String(result.status) };
+  // A program ended by a signal has no exit code; which signal it was is compared instead.
+  const observed = { "exit code": String(result.status ?? `signal ${result.signal}`) };
   if (!terminals.includes("stdout")) observed.stdout = clean(written("stdout"));
   if (!terminals.includes("stderr")) observed.stderr = clean(written("stderr"));
   if (terminals.length) observed.terminal = clean(onTerminal);
@@ -473,7 +535,7 @@ function runIn(root, testCase, impl, plan, extraEnv) {
 }
 
 function show(label, text, spell) {
-  const lines = (spell ? spelledOut(text) : text).split("\n");
+  const lines = (spell ? spelledOut(text) : visible(text)).split("\n");
   const shown = lines.slice(0, 30).map((l) => `        ${l}`);
   if (lines.length > 30) shown.push(`        … ${lines.length - 30} more line(s)`);
   return `      ${label}:\n${shown.join("\n")}`;

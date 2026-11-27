@@ -54,6 +54,21 @@ function setup(rsBody) {
     // A program that removes a directory of its own on purpose.
     if (cmd === "remove-own") { fs.rmSync(process.env[rest[0]], { recursive: true, force: true }); console.log("removed " + rest[0] + ", which is there: " + fs.existsSync(process.env[rest[0]])); }
     if (cmd === "inuse") console.log(fs.readFileSync(require("path").resolve(process.env.TMPDIR, "../../IN-USE"), "utf8"));
+    if (cmd === "die") process.kill(process.pid, rest[0]);
+    if (cmd === "bytes") process.stdout.write(Buffer.from(rest[0], "hex"));
+    // Asks for a password; hidden: echo is off before the question appears.
+    function password(hidden) {
+      if (hidden) process.stdin.setRawMode(true);
+      process.stderr.write("Password: ");
+      let got = "";
+      process.stdin.on("data", (data) => {
+        got += data;
+        if (!/[\\r\\n]/.test(got)) return;
+        if (hidden) process.stdin.setRawMode(false);
+        console.log("\\ngot " + got.trim().length + " characters");
+        process.exit(0);
+      });
+    }
   `;
   fs.writeFileSync(path.join(dir, "ts.cjs"), base);
   fs.writeFileSync(path.join(dir, "rs.cjs"), rsBody ? base + rsBody : base);
@@ -167,6 +182,65 @@ test("a --handback that is not ROOT_ENV=entry stops the run before its directory
       assert.equal(r.stderr, "parity: --handback needs <ROOT_ENV>=<js entry>, e.g. MYCLI_PACKAGE_ROOT=dist/cli.js\n");
       assert.deepEqual(fs.readdirSync(tmp), [], `${value} left a directory behind`);
     }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a program ended by a signal: which signal is compared", { skip: isWindows && "Windows has no signals to end a program with" }, () => {
+  const dir = setup(`
+    if (cmd === "another signal") process.kill(process.pid, "SIGKILL");
+    if (cmd === "a signal or an exit code") process.exit(1);
+  `);
+  fs.appendFileSync(path.join(dir, "ts.cjs"), `if (cmd === "another signal" || cmd === "a signal or an exit code") process.kill(process.pid, "SIGTERM");\n`);
+  try {
+    const r = run(dir, {
+      cases: [
+        { name: "the same signal", args: ["die", "SIGTERM"] },
+        { name: "another signal", args: ["another signal"] },
+        { name: "a signal or an exit code", args: ["a signal or an exit code"] },
+      ],
+    }, ["--show"]);
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(shown(r.stdout, "the same signal"), /exit code:\n\s+signal SIGTERM\n/);
+    assert.match(r.stdout, /DIFFER {2}another signal {2}\(exit code\)\n\s+exit code\n\s+TypeScript:\n\s+signal SIGTERM\n\s+Rust:\n\s+signal SIGKILL\n/);
+    assert.match(r.stdout, /DIFFER {2}a signal or an exit code {2}\(exit code\)\n\s+exit code\n\s+TypeScript:\n\s+signal SIGTERM\n\s+Rust:\n\s+1\n/);
+    assert.match(r.stdout, /2 of 3 case\(s\) differ/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Bytes that are not UTF-8: one invalid byte each, and a few sequences that
+// look like UTF-8 and are not (an overlong "/", an encoded surrogate, a code
+// point past U+10FFFF, a lead byte at the end).
+const INVALID = "61ff80" + "c0af" + "eda080" + "f4908080" + "c3";
+const INVALID_SHOWN = "a\\xff\\x80\\xc0\\xaf\\xed\\xa0\\x80\\xf4\\x90\\x80\\x80\\xc3";
+// And UTF-8 that must come through as it is, U+10080 included: its second
+// UTF-16 unit is one that stands for an invalid byte when it is alone.
+const VALID = Buffer.from("é ✓ 😀 \u{10080}\n").toString("hex");
+
+test("capture: files compares bytes, so bytes that are not UTF-8 are told apart; pipes read UTF-8 as before", () => {
+  const dir = setup(`
+    if (cmd === "invalid") process.stdout.write(Buffer.from([0x61, 0xfe, 0x0a]));
+  `);
+  fs.appendFileSync(path.join(dir, "ts.cjs"), `if (cmd === "invalid") process.stdout.write(Buffer.from([0x61, 0xff, 0x0a]));\n`);
+  try {
+    const r = run(dir, {
+      cases: [
+        { name: "different invalid bytes, through pipes", args: ["invalid"] },
+        { name: "different invalid bytes, into files", args: ["invalid"], capture: "files" },
+        { name: "the same invalid bytes", args: ["bytes", INVALID], capture: "files" },
+        { name: "UTF-8", args: ["bytes", VALID], capture: "files" },
+      ],
+    }, ["--show"]);
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    // As the runner always did: both become U+FFFD.
+    assert.match(shown(r.stdout, "different invalid bytes, through pipes"), /stdout:\n\s+a�\n/);
+    assert.match(r.stdout, /DIFFER {2}different invalid bytes, into files {2}\(stdout\)\n\s+stdout\n\s+TypeScript:\n\s+a\\xff\n\s+\n\s+Rust:\n\s+a\\xfe\n/);
+    assert.ok(shown(r.stdout, "the same invalid bytes").includes(`stdout:\n        ${INVALID_SHOWN}\n`), r.stdout);
+    assert.ok(shown(r.stdout, "UTF-8").includes("stdout:\n        é ✓ 😀 \u{10080}\n"), r.stdout);
+    assert.match(r.stdout, /1 of 4 case\(s\) differ/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -554,6 +628,44 @@ test("tty: stdin is typed into the terminal, at once or when the question has be
     const differs = run(dir, cases, ["--filter", "answered when asked"]);
     assert.equal(differs.status, 1);
     assert.match(differs.stdout, /DIFFER {2}answered when asked {2}\(terminal\)/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("tty: the terminal's bytes are compared as bytes, and a signal as a signal", { skip: noTerminal }, () => {
+  const dir = setup(`
+    if (cmd === "invalid") process.stdout.write(Buffer.from([0x61, 0xfe, 0x0a]));
+    if (cmd === "control") process.stdout.write(Buffer.from([0x85, 0x0a]));
+    if (cmd === "a signal or an exit code") process.exit(1);
+  `);
+  fs.appendFileSync(
+    path.join(dir, "ts.cjs"),
+    `if (cmd === "invalid") process.stdout.write(Buffer.from([0x61, 0xff, 0x0a]));\n` +
+      `if (cmd === "control") process.stdout.write("\\u0085\\n");\n` +
+      `if (cmd === "a signal or an exit code") process.kill(process.pid, "SIGTERM");\n`,
+  );
+  try {
+    const r = run(dir, {
+      cases: [
+        { name: "different invalid bytes", args: ["invalid"], tty: "stdout" },
+        // The character U+0085 against the byte 0x85, which is not UTF-8.
+        { name: "a control character or a byte", args: ["control"], tty: "stdout" },
+        { name: "the same invalid bytes", args: ["bytes", INVALID], tty: "stdout" },
+        { name: "UTF-8", args: ["bytes", VALID], tty: "stdout" },
+        { name: "the same signal", args: ["die", "SIGTERM"], tty: true },
+        { name: "a signal or an exit code", args: ["a signal or an exit code"], tty: true },
+      ],
+    }, ["--show"]);
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /DIFFER {2}different invalid bytes {2}\(terminal\)\n\s+terminal\n\s+TypeScript:\n\s+a\\xff\\r\n\s+\n\s+Rust:\n\s+a\\xfe\\r\n/);
+    assert.match(r.stdout, /DIFFER {2}a control character or a byte {2}\(terminal\)\n\s+terminal\n\s+TypeScript:\n\s+\\u0085\\r\n\s+\n\s+Rust:\n\s+\\x85\\r\n/);
+    assert.ok(shown(r.stdout, "the same invalid bytes").includes(`terminal:\n        ${INVALID_SHOWN}`), r.stdout);
+    assert.ok(shown(r.stdout, "UTF-8").includes("terminal:\n        é ✓ 😀 \u{10080}\\r\n"), r.stdout);
+    // terminal.py ends the way the program did, so the runner sees the signal.
+    assert.match(shown(r.stdout, "the same signal"), /exit code:\n\s+signal SIGTERM\n/);
+    assert.match(r.stdout, /DIFFER {2}a signal or an exit code {2}\(exit code\)\n\s+exit code\n\s+TypeScript:\n\s+signal SIGTERM\n\s+Rust:\n\s+1\n/);
+    assert.match(r.stdout, /3 of 6 case\(s\) differ/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
