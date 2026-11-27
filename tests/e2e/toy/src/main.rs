@@ -7,10 +7,48 @@ fn main() {
     if std::env::args().nth(1).as_deref() == Some("js") {
         js_fallback::run("dist/cli.js");
     }
+    // These stand for a ported command that goes through `js_fallback::attempt`:
+    //   toy answer      works out its answer, which is then printed
+    //   toy decline     does not implement the invocation: the JavaScript answers
+    //   toy panic       has a bug: the JavaScript answers and nothing else shows
+    //   toy panic-late  has a bug after it began to print: nothing can answer in its place
+    if let Some(command @ ("answer" | "decline" | "panic" | "panic-late")) = std::env::args().nth(1).as_deref() {
+        let answer = js_fallback::attempt(|| match command {
+            "answer" => Ok("toy answers natively"),
+            "decline" => Err(js_fallback::HandBack),
+            "panic" => panic!("a bug in a ported command"),
+            _ => {
+                js_fallback::commit();
+                println!("toy began to answer");
+                panic!("a bug after the first output");
+            }
+        });
+        match answer {
+            Some(text) => return println!("{text}"),
+            None => js_fallback::run("dist/cli.js"),
+        }
+    }
+    // `toy where <text> <NAME>...` says, for each environment variable, whether
+    // its value contains <text>: `HOME:inside`, `HOME:outside` or `HOME:unset`.
+    // The install smoke test gives commands a home directory of their own; this
+    // shows which variables point into it.
+    let argv: Vec<String> = std::env::args().collect();
+    if argv.get(1).map(String::as_str) == Some("where") {
+        let text = argv.get(2).cloned().unwrap_or_default();
+        let report: Vec<String> = argv
+            .iter()
+            .skip(3)
+            .map(|name| match std::env::var_os(name) {
+                None => format!("{name}:unset"),
+                Some(value) if value.to_string_lossy().contains(&text) => format!("{name}:inside"),
+                Some(_) => format!("{name}:outside"),
+            })
+            .collect();
+        return println!("{}", report.join(" "));
+    }
     // `toy sleep <seconds> <file>` stands for a long-running command: it writes
     // "<version> <tick>" to <file> five times a second and ends after
     // <seconds>, or as soon as <file>.stop exists.
-    let argv: Vec<String> = std::env::args().collect();
     if argv.get(1).map(String::as_str) == Some("sleep") {
         let seconds: u64 = argv.get(2).and_then(|s| s.parse().ok()).unwrap_or(10);
         let file = argv.get(3).cloned().unwrap_or_default();

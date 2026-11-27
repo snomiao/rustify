@@ -1,7 +1,10 @@
-//! rustify JS fallback v4 — copy into the crate as `src/js_fallback.rs`.
+//! rustify JS fallback v5 — copy into the crate as `src/js_fallback.rs`.
 //! (v2: waits for the JavaScript on Ctrl+C on Windows. v3: starts the
 //! JavaScript with the runtime its own `#!` line names, and offers a
-//! TypeScript entry to bun only. v4: says so when bun is what is missing.)
+//! TypeScript entry to bun only. v4: says so when bun is what is missing.
+//! v5: says on stderr that it handed back when `RUSTIFY_HANDBACK_TRACE` is
+//! set; `attempt` runs a ported command so that it can decline, and so that a
+//! bug in it costs the user nothing.)
 //!
 //! For the time when the Rust binary is already the command users run but some
 //! commands still exist only in the package's JavaScript. The binary handles
@@ -15,16 +18,48 @@
 //! ```
 //!
 //! Ported commands start at native speed; the others behave exactly as before.
+//!
+//! A ported command seldom implements every invocation. `attempt` is for the
+//! usual shape: the command works out its whole answer before it prints or
+//! changes anything, and says `Err(HandBack)` for a command line or a state of
+//! the machine it does not implement:
+//!
+//! ```ignore
+//! "status" => {
+//!     if let Some(text) = js_fallback::attempt(|| status::answer(&args[1..])) {
+//!         print!("{text}");
+//!         return;
+//!     }
+//!     js_fallback::run("dist/cli.js")
+//! }
+//! ```
+//!
 //! Delete this file when nothing falls back any more.
 
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Environment variable the npm launcher sets to the package directory when
 /// the binary runs from the platform package. Use the same name as
 /// `rustify.rootEnv` in package.json, and make it specific to the project
 /// (`MYCLI_PACKAGE_ROOT`) so one tool starting another does not inherit it.
 pub const ROOT_ENV: &str = "RUSTIFY_PACKAGE_ROOT";
+
+/// Set this variable to any value that is not empty and `run` writes
+/// `TRACE_LINE` to stderr before it starts the JavaScript. That shows who
+/// answered a command where no parity test runs: rustify's install smoke test
+/// sets it for a line marked `[native]` or `[handback]`, and it finds out
+/// whether a binary is able to say the line by looking for the text in the
+/// file. So the name and the line are the same in every project: do not
+/// change them. Whatever the command starts inherits the variable.
+pub const TRACE_ENV: &str = "RUSTIFY_HANDBACK_TRACE";
+pub const TRACE_LINE: &str = "rustify: handed back to the JavaScript";
+
+fn tracing() -> bool {
+    std::env::var_os(TRACE_ENV).is_some_and(|value| !value.is_empty())
+}
 
 /// Directory of the npm package this binary was installed with, if any.
 pub fn package_root() -> Option<PathBuf> {
@@ -53,6 +88,10 @@ pub fn package_root() -> Option<PathBuf> {
 /// Runs the package's JavaScript entry with this process's arguments and ends
 /// the process with its exit code. `entry` is relative to the package root.
 pub fn run(entry: &str) -> ! {
+    if tracing() {
+        // A closed stderr must not stop the hand-back.
+        let _ = writeln!(std::io::stderr(), "{TRACE_LINE}");
+    }
     let Some(root) = package_root() else {
         eprintln!(
             "this command is not available in the standalone binary yet; \
@@ -92,6 +131,76 @@ pub fn run(entry: &str) -> ! {
         eprintln!("cannot run {}: none of {} could be started ({reason})", script.display(), tried.join(", "));
     }
     std::process::exit(127);
+}
+
+/// What a ported command returns for an invocation, or a state of the
+/// machine, that it does not implement exactly: the JavaScript has to answer.
+#[allow(dead_code)] // unused until the first command is ported
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HandBack;
+
+/// Set by `commit`.
+static COMMITTED: AtomicBool = AtomicBool::new(false);
+
+/// Says that the command is about to print or change something, so the
+/// invocation can no longer be handed back. Only a command that prints or
+/// writes inside `attempt` needs this (one that reports progress while it
+/// works, say); a command that returns its whole answer does not.
+#[allow(dead_code)]
+pub fn commit() {
+    COMMITTED.store(true, Ordering::Relaxed);
+}
+
+/// Runs a ported command up to its answer. `Some(answer)` is for the caller
+/// to print and carry out. `None` means the invocation goes to the
+/// JavaScript (call `run` next): the command declined with `Err(HandBack)`,
+/// or it panicked.
+///
+/// A panic is a bug in the port. As long as the command has printed and
+/// changed nothing, the JavaScript can still answer in its place, so the
+/// panic is swallowed without a word and the user gets what they asked for.
+/// With `TRACE_ENV` set, the panic is reported as usual before the hand-back
+/// line, which is how to find such a bug.
+///
+/// After `commit` there is no way back. A panic is then reported and ends the
+/// process as any panic does (exit code 101), and returning `Err(HandBack)`
+/// is itself a bug and panics.
+///
+/// This relies on unwinding. A crate built with `panic = "abort"` cannot
+/// catch anything: there a panic ends the process at once, with its usual
+/// message. The Cargo.toml that `rustify scaffold` writes leaves the default,
+/// which unwinds.
+#[allow(dead_code)]
+pub fn attempt<T>(command: impl FnOnce() -> Result<T, HandBack>) -> Option<T> {
+    use std::panic;
+    let committed = || COMMITTED.load(Ordering::Relaxed);
+    let outcome = if cfg!(panic = "unwind") {
+        // The hook is what prints "thread 'main' panicked at …". Keep it quiet
+        // while the invocation can still be handed back, on every thread the
+        // command starts, and put the previous hook back afterwards.
+        let previous = std::sync::Arc::new(panic::take_hook());
+        let report = std::sync::Arc::clone(&previous);
+        panic::set_hook(Box::new(move |info| {
+            if committed() || tracing() {
+                report(info);
+            }
+        }));
+        let outcome = panic::catch_unwind(panic::AssertUnwindSafe(command));
+        drop(panic::take_hook());
+        panic::set_hook(match std::sync::Arc::try_unwrap(previous) {
+            Ok(hook) => hook,
+            Err(shared) => Box::new(move |info| shared(info)),
+        });
+        outcome
+    } else {
+        Ok(command())
+    };
+    match outcome {
+        Ok(Ok(answer)) => Some(answer),
+        Ok(Err(HandBack)) if committed() => panic!("a ported command handed back after js_fallback::commit()"),
+        Err(payload) if committed() => panic::resume_unwind(payload),
+        Ok(Err(HandBack)) | Err(_) => None,
+    }
 }
 
 /// The commands to try for running `script`, in order. First what the
@@ -184,6 +293,38 @@ mod tests {
         assert_eq!(interpreter("import x from \"y\";"), None);
         assert_eq!(interpreter("#!/usr/bin/env"), None);
         assert_eq!(interpreter(""), None);
+    }
+
+    /// One test for all of `attempt`: the panic hook and the commit mark are
+    /// shared by the whole process, so the steps have to run in this order.
+    #[test]
+    fn attempt_answers_declines_and_hands_back_a_panic_until_commit() {
+        use std::panic::catch_unwind;
+        use std::sync::atomic::AtomicUsize;
+        static REPORTED: AtomicUsize = AtomicUsize::new(0);
+        let reported = || REPORTED.load(Ordering::Relaxed);
+        let before = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {
+            REPORTED.fetch_add(1, Ordering::Relaxed);
+        }));
+
+        assert_eq!(attempt(|| Ok(7)), Some(7));
+        assert_eq!(attempt(|| Err::<i32, _>(HandBack)), None);
+        assert_eq!(reported(), 0);
+        assert_eq!(attempt(|| -> Result<i32, HandBack> { panic!("a bug in a ported command") }), None);
+        // Silent, unless whoever runs the tests has switched the trace on.
+        assert_eq!(reported(), usize::from(tracing()), "a panic before commit is not reported");
+        let silent = reported();
+        assert!(catch_unwind(|| panic!("outside attempt")).is_err());
+        assert_eq!(reported(), silent + 1, "the hook that was there before is back");
+
+        commit();
+        assert_eq!(attempt(|| Ok(8)), Some(8));
+        assert!(catch_unwind(|| attempt(|| -> Result<i32, HandBack> { panic!("a bug after the first output") })).is_err());
+        assert_eq!(reported(), silent + 2, "a panic after commit is reported and not swallowed");
+        assert!(catch_unwind(|| attempt(|| Err::<i32, _>(HandBack))).is_err(), "handing back after commit is a bug");
+        assert_eq!(reported(), silent + 3);
+        std::panic::set_hook(before);
     }
 
     #[test]
