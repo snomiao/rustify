@@ -9,10 +9,12 @@
 //
 //   parity.mjs --cases parity.json --ts "bun ts/cli.ts" --rs "rs/target/release/mycli"
 //              [--filter <text>] [--show] [--keep]
-//              [--tty [stdin,stdout,stderr]] [--capture files]
+//              [--tty [stdin,stdout,stderr]] [--capture files] [--shell <path>]
 //
 // An option's value may also follow an equals sign (--tty=stdout). An option
-// the runner does not know is a mistake, not ignored.
+// the runner does not know is a mistake, not ignored. --ts and --rs are split
+// into words at spaces; a word in double quotes keeps its spaces
+// ("C:\Program Files\nodejs\node.exe" cli.mjs), and nothing else is special.
 //
 // A binary that hands some invocations back to the JavaScript passes those
 // cases by construction. To prove which cases the binary answers itself:
@@ -22,8 +24,8 @@
 //
 // runs only the binary, with a stand-in package whose JavaScript entry does
 // nothing but say it was reached, and fails unless exactly the cases marked
-// "handback" for this operating system got there (see "Platforms"). --tty
-// and --capture apply here as well.
+// "handback" for this operating system got there (see "Platforms"). --tty,
+// --capture and --shell apply here as well.
 //
 // Every case runs once per implementation, each time in its own fresh
 // directory with its own empty HOME, so nothing leaks between runs or in from
@@ -65,8 +67,12 @@
 // program looks at. The runner's own names there are cwd, home, tmp, cache
 // and runner; any other is free.
 //
-// The paths of these directories are replaced by <CWD>, <HOME> and <ROOT>
-// before comparing. Anything else that legitimately varies between two runs
+// `setup` and `after` lines are run by /bin/sh, or by the POSIX shell that
+// --shell or RUSTIFY_PARITY_SHELL names; on Windows by Git for Windows' bash
+// (see "Windows").
+//
+// The paths of these directories are replaced by <CWD>, <HOME>, <ROOT> and
+// <REPO> before comparing. Anything else that legitimately varies between two runs
 // (timestamps, random ids) needs a `normalize` rule; keep those rare, each one
 // is a hole in the proof.
 //
@@ -191,6 +197,48 @@
 // skipped on this system and why. A run in which every case was skipped ran
 // nothing: "no case ran", exit code 2.
 //
+// Windows. What is different there:
+// - `setup` and `after` lines run in a POSIX shell, not in cmd.exe: the one
+//   --shell or RUSTIFY_PARITY_SHELL names, else usr\bin\bash.exe of the Git
+//   for Windows that `git --exec-path` points into, else of the one in
+//   %ProgramFiles%\Git (or %ProgramFiles(x86)%\Git,
+//   %LOCALAPPDATA%\Programs\Git). Never a bash.exe found on PATH: Windows' own
+//   (System32\bash.exe) starts WSL, which runs the line in another operating
+//   system with other programs and other paths, and it is refused as --shell
+//   too. Where no shell can be found, a case that has such lines is BROKEN,
+//   with the reason in one line, and the other cases run.
+// - The line reaches the shell in the variable RUSTIFY_PARITY_LINE, which the
+//   shell removes before it runs the line, so the line does not see it. On
+//   its command line Git Bash would read the line by rules of its own, which
+//   make one backslash of two. The shell's own directory goes first on the
+//   line's PATH unless PATH has it ahead of System32 already: find, sort and
+//   stat are then the shell's, not Windows' own find.exe and sort.exe. In Git
+//   Bash, where the pipeline runs the parity command, PATH has it ahead.
+// - <CWD>, <HOME>, <ROOT> and <REPO> are written with forward slashes
+//   (C:/Users/…/cwd): the one spelling that the shell and Windows programs
+//   both read as that directory. A backslash is an escape to the shell.
+// - Before comparing, these directories are turned back into their names in
+//   every spelling a program may print: with backslashes, with forward
+//   slashes, with doubled backslashes as JSON writes them, as MSYS tools print
+//   them (/c/Users/…, and /tmp/rustify-parity-…/… when the runner was started
+//   from Git Bash: the shell that runs the lines then shares that Git Bash's
+//   mounts, whose /tmp is the runner's temp directory), long or in 8.3
+//   (C:\Users\RUNNER~1\…, as GitHub's runners give the temp directory), in any
+//   mix of upper and lower case. The run's directory itself is made in the
+//   long spelling. The \\?\ that Rust's std::fs::canonicalize puts in front of
+//   a path stays (\\?\<CWD>): the TypeScript does not print it, so it is a
+//   difference.
+// - Inside the shell, `pwd`, `~` and $HOME are MSYS paths (/c/Users/… or
+//   /tmp/…). A line that writes such a path into a file or a variable for the
+//   program hands it a path no Windows program reads as meant; write <CWD>,
+//   <ROOT> or <HOME> there instead of $(pwd), ~ or $HOME.
+// - A program in --ts or --rs named without .exe (rs/target/release/mycli) is
+//   started with it, also through another program (env, sh).
+// - A program also sees SystemRoot, PATHEXT, and TEMP and TMP, which are its
+//   temp directory as TMPDIR is.
+// - There is no terminal (a case with "tty" is BROKEN, see "A terminal") and
+//   no signal for a program to end by, only its exit code.
+//
 // The run's directory is <temp>/rustify-parity-XXXXXX and holds a file IN-USE
 // while the run lasts. If that directory, that file, or the <ROOT> of the case
 // that is running is removed under the runner (a clean-up of the temp
@@ -211,7 +259,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const OPTIONS = ["cases", "ts", "rs", "filter", "show", "keep", "handback", "tty", "capture"];
+const OPTIONS = ["cases", "ts", "rs", "filter", "show", "keep", "handback", "tty", "capture", "shell"];
 
 // `--name value`, `--name=value`, or `--name` alone (true).
 function parseArgs(argv) {
@@ -227,12 +275,14 @@ function parseArgs(argv) {
 
 const USAGE =
   'usage: parity.mjs --cases <file.json> --ts "<command>" --rs "<command>" [--filter <text>] [--show] [--keep]\n' +
-  "                  [--tty [stdin,stdout,stderr]] [--capture files]\n" +
+  "                  [--tty [stdin,stdout,stderr]] [--capture files] [--shell <path>]\n" +
   '       parity.mjs --cases <file.json> --rs "<command>" --handback <ROOT_ENV>=<js entry> [--filter <text>]\n' +
-  "                  [--tty [stdin,stdout,stderr]] [--capture files]\n" +
+  "                  [--tty [stdin,stdout,stderr]] [--capture files] [--shell <path>]\n" +
   "  --tty      a terminal instead of pipes, for every case that has no \"tty\" of its own (all three streams, or those named;\n" +
   "             to run a whole cases file again on a terminal, --tty stdout,stderr)\n" +
   "  --capture  files: stdout and stderr go to regular files instead of pipes, for every case that has no \"capture\"\n" +
+  "  --shell    the POSIX shell that runs \"setup\" and \"after\" lines (also RUSTIFY_PARITY_SHELL); by default /bin/sh,\n" +
+  "             and on Windows the bash of Git for Windows\n" +
   "An option's value may also follow an equals sign: --tty=stdout.\n" +
   "The cases file is described at the top of parity.mjs.";
 
@@ -267,15 +317,54 @@ try {
   mistake(`${opts.cases}: ${error.message}`);
 }
 if (!Array.isArray(spec?.cases)) mistake(`${opts.cases} has no "cases" list`);
+
+// The words of a command: split at white space, except inside double quotes,
+// which are taken out ("C:\Program Files\nodejs\node.exe" x.mjs). Nothing else
+// is special, backslashes included, so a Windows path is written as it is. A
+// command without double quotes is split as it always was.
+function words(text, where) {
+  const value = String(text);
+  if ((value.match(/"/g) || []).length % 2) mistake(`${where} has a double quote that is not closed: ${value}`);
+  return (value.match(/(?:[^\s"]+|"[^"]*")+/g) || []).map((word) => word.replace(/"/g, ""));
+}
+
 // A command is run from another directory, so anything in it that names a
-// file here has to become absolute.
-const command = (text) =>
-  String(text)
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((token) => (fs.existsSync(path.resolve(launchDir, token)) && /[\\/.]/.test(token) ? path.resolve(launchDir, token) : token));
-const impls = { ts: opts.ts ? command(opts.ts) : null, rs: command(opts.rs) };
+// file here has to become absolute. On Windows a program is often named
+// without its .exe (rs/target/release/mycli); with it, whatever starts the
+// program (env, sh) finds it too.
+const command = (text, where) =>
+  words(text, where).map((token) => {
+    if (!/[\\/.]/.test(token)) return token;
+    const file = path.resolve(launchDir, token);
+    if (fs.existsSync(file)) return file;
+    if (isWindows && fs.existsSync(`${file}.exe`)) return `${file}.exe`;
+    return token;
+  });
+const impls = { ts: opts.ts ? command(opts.ts, "--ts") : null, rs: command(opts.rs, "--rs") };
 const MARKER = "__RUSTIFY_HANDED_BACK__";
+
+// The POSIX shell named for "setup" and "after" lines, if one is: --shell,
+// else RUSTIFY_PARITY_SHELL. Without one, node's /bin/sh runs them, and on
+// Windows the bash of Git for Windows (see posixShell).
+const namedShell = (() => {
+  const [where, value] = opts.shell !== undefined ? ["--shell", opts.shell] : ["RUSTIFY_PARITY_SHELL", process.env.RUSTIFY_PARITY_SHELL || null];
+  if (value === null) return null;
+  if (value === true || value === "") mistake(`${where} needs the path of a POSIX shell, such as /bin/bash or C:/Program Files/Git/usr/bin/bash.exe`);
+  const file = path.resolve(launchDir, String(value));
+  const found = [file, ...(isWindows ? [`${file}.exe`] : [])].find((name) => fs.statSync(name, { throwIfNoEntry: false })?.isFile());
+  if (!found) mistake(`${where}: there is no file ${value}; it takes the path of a POSIX shell, such as /bin/bash or C:/Program Files/Git/usr/bin/bash.exe`);
+  if (isWindows && isWslLauncher(found)) mistake(`${where}: ${found} starts WSL, which runs the lines in another operating system, with other programs and other paths; name Git for Windows' bash instead`);
+  return found;
+})();
+
+// Windows' own bash.exe, and the launchers WindowsApps holds for WSL's
+// distributions, start a Linux system, not a shell on this one.
+function isWslLauncher(file) {
+  const lower = path.resolve(file).toLowerCase();
+  const system = path.resolve(process.env.SystemRoot || "C:\\Windows").toLowerCase();
+  if (lower.startsWith(`${system}\\`) && /\\(bash|wsl)\.exe$/.test(lower)) return true;
+  return lower.includes("\\microsoft\\windowsapps\\");
+}
 
 // The operating systems a "handback" or "skip" can name: process.platform's
 // names. Architectures are not told apart (see the header).
@@ -373,6 +462,83 @@ function terminal() {
   return terminalHelper;
 }
 
+// The shell for "setup" and "after" lines, looked for once: { path } (null
+// for node's own /bin/sh), or why a case that has such lines cannot run.
+let lineShell = null;
+function posixShell() {
+  if (lineShell) return lineShell;
+  if (namedShell || !isWindows) lineShell = { path: namedShell };
+  else {
+    const bash = gitBash();
+    lineShell = bash
+      ? { path: bash }
+      : {
+          problem:
+            'this case has "setup" or "after" lines, which a POSIX shell runs, and none was found: no bash of Git for Windows where `git --exec-path` points ' +
+            "or in %ProgramFiles%\\Git; install Git for Windows, or name a shell with --shell <path> or RUSTIFY_PARITY_SHELL",
+        };
+  }
+  if (isWindows && lineShell.path) tempSpellings.push(...shellTemp(lineShell.path));
+  return lineShell;
+}
+
+// Where the shell's /tmp is, in Windows' spellings (see tempSpellings): asked
+// once, of the shell itself, because under a Git Bash that is still running
+// it is that Git Bash's temp directory, whatever the runner's is.
+function shellTemp(shell) {
+  const temp = os.tmpdir();
+  const env = { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, TEMP: temp, TMP: temp };
+  const result = spawnSync(shell, ["-c", "cd /tmp && pwd -W"], { env, encoding: "utf8", timeout: 30_000, windowsHide: true });
+  const dir = result.status === 0 ? result.stdout.trim().replace(/\//g, "\\") : "";
+  if (!/^[A-Za-z]:\\[^\n]*$/.test(dir)) return [];
+  let long = dir;
+  try {
+    long = fs.realpathSync.native(dir);
+  } catch {}
+  return [...new Set([dir, long])].map((spelling) => spelling.replace(/\\$/, "").toLowerCase());
+}
+
+// Git for Windows' bash: usr\bin\bash.exe in the installation of the git on
+// PATH (`git --exec-path` says <Git>/mingw64/libexec/git-core, or clangarm64
+// on ARM), else in the usual places. Never a bash.exe found on PATH: that can
+// be Windows' own, which is WSL.
+function gitBash() {
+  const roots = [];
+  const exec = spawnSync("git", ["--exec-path"], { encoding: "utf8", timeout: 30_000, windowsHide: true });
+  const libexec = exec.status === 0 ? exec.stdout.trim() : "";
+  // A git of MSYS2's own says /usr/lib/git-core, which names no Windows directory.
+  if (/^[A-Za-z]:[\\/]/.test(libexec)) for (let dir = path.dirname(libexec), up = 0; up < 3; up++, dir = path.dirname(dir)) roots.push(dir);
+  for (const name of ["ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"]) if (process.env[name]) roots.push(path.join(process.env[name], "Git"));
+  if (process.env.LOCALAPPDATA) roots.push(path.join(process.env.LOCALAPPDATA, "Programs", "Git"));
+  return roots.map((root) => path.join(root, "usr", "bin", "bash.exe")).find((bash) => fs.existsSync(bash) && !isWslLauncher(bash)) ?? null;
+}
+
+// The name of the variable that carries a line to the shell on Windows.
+const LINE = "RUSTIFY_PARITY_LINE";
+
+// Runs one "setup" or "after" line in the case's directory and environment.
+function runLine(line, cwd, env) {
+  const options = { cwd, encoding: "utf8", timeout: 120_000 };
+  const shell = posixShell().path;
+  // As it always was: node's shell, /bin/sh.
+  if (!shell) return spawnSync(line, { ...options, env, shell: true });
+  if (!isWindows) return spawnSync(shell, ["-c", line], { ...options, env });
+  // On Windows a shell of the MSYS family reads its command line by rules of
+  // its own (Git Bash makes one backslash of two), so the line comes in a
+  // variable, which the shell takes out of the environment before it runs it.
+  // The shell's own directory goes first on PATH unless PATH has it ahead of
+  // System32: there are the find, sort and stat the lines mean, and System32
+  // has a find.exe and a sort.exe of its own.
+  const pathKey = Object.keys(env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
+  const entries = String(env[pathKey] ?? "").split(";").filter(Boolean);
+  const own = path.dirname(shell);
+  const at = (dir) => entries.findIndex((entry) => path.resolve(entry).toLowerCase() === dir.toLowerCase());
+  const [ownAt, systemAt] = [at(own), at(path.join(process.env.SystemRoot || "C:\\Windows", "System32"))];
+  const ahead = ownAt >= 0 && (systemAt < 0 || ownAt < systemAt);
+  const lineEnv = { ...env, [pathKey]: ahead ? env[pathKey] : [own, ...entries].join(";"), [LINE]: line };
+  return spawnSync(shell, ["-c", `eval "unset ${LINE}; $${LINE}"`], { ...options, env: lineEnv, windowsHide: true });
+}
+
 // The first [wait, text] that terminal.py did not type, because the terminal
 // never showed its wait: the same search terminal.py makes, on the whole
 // transcript.
@@ -460,7 +626,62 @@ function visible(text) {
   return text.replace(/[\u{dc80}-\u{dcff}]/gu, (unit) => `\\x${(unit.charCodeAt(0) - 0xdc00).toString(16)}`);
 }
 
-const work = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "rustify-parity-"));
+// On Windows the temp directory is often given in its 8.3 spelling
+// (C:\Users\RUNNER~1\…); the native realpath spells it out, so the programs
+// are handed one spelling, the long one.
+const work = fs.mkdtempSync(path.join((isWindows ? fs.realpathSync.native : fs.realpathSync)(os.tmpdir()), "rustify-parity-"));
+
+// Other spellings of a directory on Windows, each as [prefix, another
+// spelling of that prefix]: the 8.3 one of the run's directory, the long and
+// 8.3 ones of <REPO>. A program can still come upon them.
+const otherSpellings = [];
+// The directory that MSYS tools call /tmp, in every spelling: the runner's
+// temp directory, and the one the shell for the lines says (shellTemp).
+// Started from Git Bash, that shell shares the mounts of the Git Bash that is
+// still running, whose /tmp is its temp directory, usually the runner's too,
+// so its tools print the run's directories as /tmp/rustify-parity-…
+const tempSpellings = [];
+if (isWindows) {
+  for (const dir of [work, launchDir]) {
+    let long = dir;
+    try {
+      long = fs.realpathSync.native(dir);
+    } catch {}
+    for (const other of new Set([long, shortName(long)])) if (other && other !== dir) otherSpellings.push([dir, other]);
+  }
+  const temp = os.tmpdir();
+  const longTemp = fs.realpathSync.native(temp);
+  for (const spelling of new Set([temp, longTemp, shortName(longTemp)])) if (spelling) tempSpellings.push(spelling.toLowerCase());
+}
+
+// The 8.3 spelling of a directory, as cmd gives it, or null.
+function shortName(dir) {
+  const cmd = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "cmd.exe");
+  const result = spawnSync(cmd, ["/d", "/c", `for %I in ("${dir}") do @echo %~sI`], { encoding: "utf8", windowsVerbatimArguments: true, windowsHide: true, timeout: 30_000 });
+  const short = result.status === 0 ? result.stdout.trim() : "";
+  return /^[A-Za-z]:\\/.test(short) && !short.includes("\n") ? short : null;
+}
+
+// Every spelling of a directory that clean() turns back into its placeholder:
+// as given, and on Windows also the other spellings above, each with forward
+// slashes (C:/Users/…, as git and placeholders write it), with doubled
+// backslashes (C:\\Users\\…, as JSON writes it) and as MSYS tools print it
+// (/c/Users/…, or /tmp/… under the runner's temp directory). Longest first,
+// so that no spelling takes part of another.
+function spellingsOf(dir) {
+  if (!isWindows) return [dir];
+  const forms = new Set([dir]);
+  for (const [prefix, other] of otherSpellings) if (dir === prefix || dir.startsWith(`${prefix}\\`)) forms.add(other + dir.slice(prefix.length));
+  for (const form of [...forms]) {
+    const slashed = form.replace(/\\/g, "/");
+    forms.add(slashed);
+    forms.add(form.replace(/\\/g, "\\\\"));
+    const drive = /^([A-Za-z]):\//.exec(slashed);
+    if (drive) forms.add(`/${drive[1].toLowerCase()}${slashed.slice(2)}`);
+    for (const temp of tempSpellings) if (form.toLowerCase().startsWith(`${temp}\\`)) forms.add(`/tmp${slashed.slice(temp.length)}`);
+  }
+  return [...forms].sort((a, b) => b.length - a.length);
+}
 // Tells whoever finds the directory whose it is. It is also how the runner
 // notices that the directory was emptied under it: a clean-up that races the
 // run can fail to remove the directory itself and still take this file.
@@ -481,6 +702,7 @@ function stillThere(...more) {
 
 function runCase(testCase, impl, index, plan, extraEnv = {}) {
   if (plan.terminals.length && terminal().problem) return { broken: terminal().problem };
+  if ((testCase.setup?.length || testCase.after?.length) && posixShell().problem) return { broken: posixShell().problem };
   const root = path.join(work, `${index}-${impl}`);
   stillThere();
   let run;
@@ -504,8 +726,12 @@ function runIn(root, testCase, impl, plan, extraEnv) {
   // One level at a time: making the missing parents too would quietly put
   // back a run directory that somebody removed.
   for (const dir of [root, cwd, home, tmp]) fs.mkdirSync(dir);
-  // <CWD>, <HOME> and <ROOT> in what a case says stand for this run's directories.
-  const here = (text) => String(text).split("<CWD>").join(cwd).split("<HOME>").join(home).split("<ROOT>").join(root).split("<REPO>").join(launchDir);
+  // <CWD>, <HOME> and <ROOT> in what a case says stand for this run's
+  // directories. On Windows with forward slashes, C:/Users/…: the one spelling
+  // that both a POSIX shell and Windows programs read as that directory.
+  const spelt = (dir) => (isWindows ? dir.replace(/\\/g, "/") : dir);
+  const here = (text) =>
+    String(text).split("<CWD>").join(spelt(cwd)).split("<HOME>").join(spelt(home)).split("<ROOT>").join(spelt(root)).split("<REPO>").join(spelt(launchDir));
   for (const [file, content] of Object.entries(testCase.files || {})) {
     const target = path.join(cwd, file);
     fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -535,9 +761,11 @@ function runIn(root, testCase, impl, plan, extraEnv) {
     }
   }
   Object.assign(env, extraEnv);
-  const shell = (line) => spawnSync(here(line), { cwd, env, shell: true, encoding: "utf8", timeout: 120_000 });
+  const shell = (line) => runLine(here(line), cwd, env);
   for (const line of testCase.setup || []) {
     const result = shell(line);
+    // The shell could not be started (a timeout is reported as before, below).
+    if (result.error && result.error.code !== "ETIMEDOUT") return { broken: `setup \`${line}\` could not be run: ${result.error.message}` };
     if (result.status !== 0) {
       return { broken: `setup \`${line}\` exited ${result.status}: ${result.stderr || result.stdout}` };
     }
@@ -596,12 +824,15 @@ function runIn(root, testCase, impl, plan, extraEnv) {
     return { broken: lastLine(written("stderr")) || `the terminal helper ended with ${result.status} and without a transcript` };
   }
   const rules = [...(spec.normalize || []), ...(testCase.normalize || [])].map(([pattern, to]) => [new RegExp(pattern, "g"), to]);
+  // Every spelling of each directory (see spellingsOf); on Windows whatever
+  // the letters' case, as Windows reads a path.
+  const places = [[cwd, "<CWD>"], [home, "<HOME>"], [root, "<ROOT>"], [launchDir, "<REPO>"]].map(([dir, name]) => [
+    new RegExp(spellingsOf(dir).map(escapeRegExp).join("|"), isWindows ? "gi" : "g"),
+    name,
+  ]);
   const clean = (text) => {
     let out = String(text ?? "");
-    for (const [dir, name] of [[cwd, "<CWD>"], [home, "<HOME>"], [root, "<ROOT>"], [launchDir, "<REPO>"]]) {
-      out = out.replace(new RegExp(escapeRegExp(dir), "g"), name);
-      if (isWindows) out = out.replace(new RegExp(escapeRegExp(dir.replace(/\\/g, "/")), "g"), name);
-    }
+    for (const [spellings, name] of places) out = out.replace(spellings, name);
     for (const [pattern, to] of rules) out = out.replace(pattern, to);
     return out;
   };

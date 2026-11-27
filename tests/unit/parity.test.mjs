@@ -11,6 +11,9 @@ import { fileURLToPath } from "node:url";
 const RUNNER = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../templates/parity/parity.mjs");
 const TERMINAL_PY = path.join(path.dirname(RUNNER), "terminal.py");
 const isWindows = process.platform === "win32";
+// The runtime that runs the tests, as the runner's --ts and --rs take it: in
+// double quotes when its path has a space (C:\Program Files\nodejs\node.exe).
+const RUNTIME = /\s/.test(process.execPath) ? `"${process.execPath}"` : process.execPath;
 
 // The tests that run a program on a terminal need python3 and a
 // pseudo-terminal. Where there is none they are skipped, and say so.
@@ -56,6 +59,15 @@ function setup(rsBody) {
     if (cmd === "inuse") console.log(fs.readFileSync(require("path").resolve(process.env.TMPDIR, "../../IN-USE"), "utf8"));
     if (cmd === "die") process.kill(process.pid, rest[0]);
     if (cmd === "bytes") process.stdout.write(Buffer.from(rest[0], "hex"));
+    if (cmd === "json") console.log(JSON.stringify({ cwd: process.cwd(), home: process.env.HOME }));
+    // The working directory in the spellings a program on Windows may come upon.
+    if (cmd === "spellings") {
+      const cwd = process.cwd();
+      const slashed = cwd.replace(/\\\\/g, "/");
+      const cmdExe = require("path").join(process.env.SystemRoot, "System32", "cmd.exe");
+      const short = require("child_process").spawnSync(cmdExe, ["/d", "/c", "for %I in (.) do @echo %~sI"], { encoding: "utf8", windowsVerbatimArguments: true }).stdout.trim();
+      console.log([cwd, slashed, slashed[0].toLowerCase() + slashed.slice(1), "/" + slashed[0].toLowerCase() + slashed.slice(2), JSON.stringify(cwd), short].join("\\n"));
+    }
     // Asks for a password; hidden: echo is off before the question appears.
     function password(hidden) {
       if (hidden) process.stdin.setRawMode(true);
@@ -77,7 +89,7 @@ function setup(rsBody) {
 
 function run(dir, cases, extra = [], env = process.env) {
   fs.writeFileSync(path.join(dir, "parity.json"), JSON.stringify(cases));
-  return spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--ts", `${process.execPath} ts.cjs`, "--rs", `${process.execPath} rs.cjs`, ...extra], {
+  return spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--ts", `${RUNTIME} ts.cjs`, "--rs", `${RUNTIME} rs.cjs`, ...extra], {
     cwd: dir,
     encoding: "utf8",
     env,
@@ -173,7 +185,7 @@ test("a --handback that is not ROOT_ENV=entry stops the run before its directory
   try {
     fs.writeFileSync(path.join(dir, "parity.json"), JSON.stringify({ cases: [{ name: "one", args: ["echo", "x"] }] }));
     for (const value of ["NOEQUALS", "=dist/cli.js", "DEMO_ROOT="]) {
-      const r = spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--rs", `${process.execPath} rs.cjs`, "--handback", value], {
+      const r = spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--rs", `${RUNTIME} rs.cjs`, "--handback", value], {
         cwd: dir,
         encoding: "utf8",
         env: { ...process.env, TMPDIR: tmp, TEMP: tmp, TMP: tmp },
@@ -297,7 +309,7 @@ test("--handback tells the cases the binary answers from the ones it hands back"
   `);
   const handback = (cases) => {
     fs.writeFileSync(path.join(dir, "parity.json"), JSON.stringify({ cases }));
-    return spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--rs", `${process.execPath} rs.cjs`, "--handback", "DEMO_ROOT=dist/cli.js"], { cwd: dir, encoding: "utf8" });
+    return spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--rs", `${RUNTIME} rs.cjs`, "--handback", "DEMO_ROOT=dist/cli.js"], { cwd: dir, encoding: "utf8" });
   };
   try {
     const good = handback([
@@ -401,7 +413,7 @@ test("a run whose directory is removed under it stops with one message and exit 
     // --handback: the same, and also when only the stand-in package goes.
     const handback = (target) => {
       fs.writeFileSync(path.join(dir, "parity.json"), JSON.stringify(cases(target)));
-      return spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--rs", `${process.execPath} rs.cjs`, "--handback", "DEMO_ROOT=dist/cli.js"], { cwd: dir, encoding: "utf8" });
+      return spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--rs", `${RUNTIME} rs.cjs`, "--handback", "DEMO_ROOT=dist/cli.js"], { cwd: dir, encoding: "utf8" });
     };
     for (const [target, gone] of [...targets, ["../../stand-in", /rustify-parity-\w+[\\/]stand-in[\\/]dist[\\/]cli\.js/]]) {
       const r = handback(target);
@@ -751,7 +763,7 @@ test("tty: --handback finds the stand-in's word on the terminal", { skip: noTerm
   `);
   const handback = (cases, extra = []) => {
     fs.writeFileSync(path.join(dir, "parity.json"), JSON.stringify({ cases }));
-    return spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--rs", `${process.execPath} rs.cjs`, "--handback", "DEMO_ROOT=dist/cli.js", ...extra], { cwd: dir, encoding: "utf8" });
+    return spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--rs", `${RUNTIME} rs.cjs`, "--handback", "DEMO_ROOT=dist/cli.js", ...extra], { cwd: dir, encoding: "utf8" });
   };
   try {
     const cases = [
@@ -775,7 +787,7 @@ test("tty: a program that cannot be started, or does not end, is broken and says
   const dir = setup();
   try {
     fs.writeFileSync(path.join(dir, "parity.json"), JSON.stringify({ cases: [{ name: "nothing to run", args: [], tty: true }] }));
-    const missing = spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--ts", "no-such-program-anywhere", "--rs", `${process.execPath} rs.cjs`], { cwd: dir, encoding: "utf8" });
+    const missing = spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--ts", "no-such-program-anywhere", "--rs", `${RUNTIME} rs.cjs`], { cwd: dir, encoding: "utf8" });
     assert.equal(missing.status, 1, missing.stdout + missing.stderr);
     assert.match(missing.stdout, /BROKEN {2}nothing to run\n\s+could not run no-such-program-anywhere: /);
 
@@ -871,7 +883,7 @@ const HANDS_BACK = `
 `;
 function handbackRun(dir, cases, extra = []) {
   fs.writeFileSync(path.join(dir, "parity.json"), JSON.stringify({ cases }));
-  return spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--rs", `${process.execPath} rs.cjs`, "--handback", "DEMO_ROOT=dist/cli.js", ...extra], { cwd: dir, encoding: "utf8" });
+  return spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--rs", `${RUNTIME} rs.cjs`, "--handback", "DEMO_ROOT=dist/cli.js", ...extra], { cwd: dir, encoding: "utf8" });
 }
 
 test('"handback" keyed by operating system holds on the systems it names, and only there', () => {
@@ -962,6 +974,189 @@ test('a mistake in "handback" or "skip" stops the run before any case, with exit
     // A case that --filter leaves out is not looked at.
     const r = run(dir, { cases: [{ name: "good", args: ["echo", "x"] }, { name: "bad", args: ["echo"], skip: "nowhere" }] }, ["--filter", "good"]);
     assert.equal(r.status, 0, r.stdout + r.stderr);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("setup and after lines reach the shell as written, and the run's directories come back as placeholders", () => {
+  const dir = setup();
+  try {
+    const r = run(dir, {
+      cases: [
+        // Git Bash reads its command line by rules of its own, which make one backslash of two.
+        { name: "backslashes", args: ["echo", "x"], setup: [String.raw`printf '%s\n' 'a\\b' "c\\d" > lines.txt`], after: ["cat lines.txt"] },
+        { name: "where the lines run", args: ["json"], after: ["pwd", "cd .. && pwd", 'echo "$HOME"', "echo '<CWD>' '<ROOT>' '<HOME>'"] },
+        { name: "the line is not in the environment", args: ["echo", "x"], after: ["env | grep -c RUSTIFY_PARITY_LINE"] },
+      ],
+    }, ["--show"]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.ok(shown(r.stdout, "backslashes").includes(String.raw`after: cat lines.txt:
+        a\\b
+        c\d
+        [exit 0]`), r.stdout);
+    const where = shown(r.stdout, "where the lines run");
+    assert.match(where, /stdout:\n\s+\{"cwd":"<CWD>","home":"<HOME>"\}\n/);
+    assert.match(where, /after: pwd:\n\s+<CWD>\n\s+\[exit 0\]\n/);
+    assert.match(where, /after: cd \.\. && pwd:\n\s+<ROOT>\n\s+\[exit 0\]\n/);
+    assert.match(where, /after: echo "\$HOME":\n\s+<HOME>\n\s+\[exit 0\]\n/);
+    assert.match(where, /after: echo '<CWD>' '<ROOT>' '<HOME>':\n\s+<CWD> <ROOT> <HOME>\n\s+\[exit 0\]$/);
+    assert.match(shown(r.stdout, "the line is not in the environment"), /after: env \| grep -c RUSTIFY_PARITY_LINE:\n\s+0\n\s+\[exit 1\]$/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("--shell, or RUSTIFY_PARITY_SHELL, names the shell for setup and after lines", { skip: isWindows && "the shell here is a shell script, which Windows does not start" }, () => {
+  const dir = setup();
+  try {
+    const shell = path.join(dir, "my shell");
+    fs.writeFileSync(shell, '#!/bin/sh\necho "through my shell: $1"\nexec /bin/sh "$@"\n', { mode: 0o755 });
+    const cases = { cases: [{ name: "a line", args: ["echo", "x"], setup: ["true"], after: ["echo hi"] }] };
+    const through = /after: echo hi:\n\s+through my shell: -c\n\s+hi\n\s+\[exit 0\]\n/;
+    const named = run(dir, cases, ["--show", "--shell", shell]);
+    assert.equal(named.status, 0, named.stdout + named.stderr);
+    assert.match(named.stdout, through);
+    const fromEnv = run(dir, cases, ["--show"], { ...process.env, RUSTIFY_PARITY_SHELL: shell });
+    assert.match(fromEnv.stdout, through);
+    // --shell comes first.
+    const both = run(dir, cases, ["--show", "--shell=/bin/sh"], { ...process.env, RUSTIFY_PARITY_SHELL: shell });
+    assert.equal(both.status, 0, both.stdout + both.stderr);
+    assert.doesNotMatch(both.stdout, /through my shell/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a --shell that names no file, or WSL, stops the run before any case, with exit code 2", () => {
+  const dir = setup();
+  try {
+    const cases = { cases: [{ name: "a line", args: ["echo", "x"], after: ["echo hi"] }] };
+    const bad = (extra, env = process.env) => {
+      const r = run(dir, cases, extra, env);
+      assert.equal(r.status, 2, r.stdout + r.stderr);
+      assert.equal(r.stdout, "");
+      return r.stderr;
+    };
+    assert.match(bad(["--shell", "no/such/shell"]), /^parity: --shell: there is no file no\/such\/shell; it takes the path of a POSIX shell, such as /);
+    assert.match(bad(["--shell"]), /^parity: --shell needs the path of a POSIX shell/);
+    assert.match(bad([], { ...process.env, RUSTIFY_PARITY_SHELL: "no/such/shell" }), /^parity: RUSTIFY_PARITY_SHELL: there is no file no\/such\/shell; /);
+    const wsl = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "bash.exe");
+    if (isWindows && fs.existsSync(wsl)) assert.match(bad(["--shell", wsl]), /^parity: --shell: .*bash\.exe starts WSL, which runs the lines in another operating system/i);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("--ts and --rs take a word in double quotes, and a quote that is not closed is a mistake", () => {
+  const dir = setup();
+  try {
+    fs.mkdirSync(path.join(dir, "a b"));
+    fs.copyFileSync(path.join(dir, "rs.cjs"), path.join(dir, "a b", "rs.cjs"));
+    fs.writeFileSync(path.join(dir, "parity.json"), JSON.stringify({ cases: [{ name: "one", args: ["echo", "x"] }] }));
+    const runner = (ts, rs) => spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--ts", ts, "--rs", rs], { cwd: dir, encoding: "utf8" });
+    const quoted = runner(`"${process.execPath}" ts.cjs`, `"${process.execPath}" "a b/rs.cjs"`);
+    assert.equal(quoted.status, 0, quoted.stdout + quoted.stderr);
+    assert.match(quoted.stdout, /all 1 case\(s\) behave the same/);
+    const open = runner(`${RUNTIME} ts.cjs`, `"${process.execPath} rs.cjs`);
+    assert.equal(open.status, 2, open.stdout + open.stderr);
+    assert.match(open.stderr, /^parity: --rs has a double quote that is not closed: /);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Windows: lines run in Git for Windows' bash, before Windows' own find and sort", { skip: !isWindows && "this is about Windows" }, () => {
+  const dir = setup();
+  try {
+    const cases = { cases: [{ name: "the shell", args: ["echo", "x"], after: ["echo ${BASH_VERSION%%.*}", "command -v find sort stat", "uname -o"] }] };
+    // PATH as it is here; and with System32 ahead of Git's usr\bin, as a PATH set for the whole machine can have it.
+    const usrBin = path.resolve(spawnSync("git", ["--exec-path"], { encoding: "utf8" }).stdout.trim(), "..", "..", "..", "usr", "bin");
+    const behind = `${path.join(process.env.SystemRoot, "System32")};${usrBin};${process.env.PATH}`;
+    // Without the variable's other spelling (Path), which would be a second PATH.
+    const systemFirst = Object.fromEntries([...Object.entries(process.env).filter(([name]) => name.toUpperCase() !== "PATH"), ["PATH", behind]]);
+    for (const env of [process.env, systemFirst]) {
+      const r = run(dir, cases, ["--show"], env);
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      const the = shown(r.stdout, "the shell");
+      assert.match(the, /after: echo \$\{BASH_VERSION%%\.\*\}:\n\s+\d+\n/);
+      assert.match(the, /after: command -v find sort stat:\n\s+\/usr\/bin\/find\n\s+\/usr\/bin\/sort\n\s+\/usr\/bin\/stat\n/);
+      assert.match(the, /after: uname -o:\n\s+Msys\n/);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Windows: every spelling of a directory comes back as its placeholder, the 8.3 one too", { skip: !isWindows && "this is about Windows" }, () => {
+  const dir = setup();
+  try {
+    // As on GitHub's runners, the temp directory comes in its 8.3 spelling (C:\Users\RUNNER~1\…).
+    const long = path.join(dir, "a long temp directory");
+    fs.mkdirSync(long);
+    const cmd = path.join(process.env.SystemRoot, "System32", "cmd.exe");
+    const short = spawnSync(cmd, ["/d", "/c", `for %I in ("${long}") do @echo %~sI`], { encoding: "utf8", windowsVerbatimArguments: true }).stdout.trim();
+    const env = { ...process.env, TEMP: short, TMP: short };
+    const r = run(dir, { cases: [{ name: "spellings", args: ["spellings"], after: ["pwd", "cygpath -aw .", "cygpath -am .", "cygpath -ad ."] }, { name: "where", args: ["where"] }] }, ["--show"], env);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const spellings = shown(r.stdout, "spellings");
+    // As node gives it, with forward slashes, a lower-case drive letter, as MSYS prints it, as JSON writes it, and in 8.3.
+    assert.match(spellings, /stdout:\n\s+<CWD>\n\s+<CWD>\n\s+<CWD>\n\s+<CWD>\n\s+"<CWD>"\n\s+<CWD>\n/);
+    for (const line of ["pwd", "cygpath -aw .", "cygpath -am .", "cygpath -ad ."]) assert.match(spellings, new RegExp(`after: ${line.replace(".", "\\.")}:\\n\\s+<CWD>\\n`));
+    assert.match(shown(r.stdout, "where"), /cwd=<CWD> home=<HOME>\n/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Windows: started from Git Bash, as the pipeline starts it, the run's directories under /tmp come back as placeholders", { skip: !isWindows && "this is about Windows" }, () => {
+  const dir = setup();
+  try {
+    // Git Bash shares its mount table with the shell that runs the lines, and its /tmp is the runner's temp directory.
+    const gitBash = path.resolve(spawnSync("git", ["--exec-path"], { encoding: "utf8" }).stdout.trim(), "..", "..", "..", "bin", "bash.exe");
+    fs.writeFileSync(path.join(dir, "parity.json"), JSON.stringify({ cases: [{ name: "where the lines run", args: ["json"], after: ["pwd", "cd .. && pwd", 'echo "$HOME"'] }] }));
+    // The values go in variables: on its command line Git Bash would read their backslashes by its own rules.
+    const env = { ...process.env, PARITY_NODE: process.execPath, PARITY_RUNNER: RUNNER, PARITY_TS: `${RUNTIME} ts.cjs`, PARITY_RS: `${RUNTIME} rs.cjs` };
+    const r = spawnSync(gitBash, ["--noprofile", "--norc", "-c", '"$PARITY_NODE" "$PARITY_RUNNER" --cases parity.json --ts "$PARITY_TS" --rs "$PARITY_RS" --show'], { cwd: dir, env, encoding: "utf8" });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const where = shown(r.stdout, "where the lines run");
+    assert.match(where, /stdout:\n\s+\{"cwd":"<CWD>","home":"<HOME>"\}\n/);
+    assert.match(where, /after: pwd:\n\s+<CWD>\n/);
+    assert.match(where, /after: cd \.\. && pwd:\n\s+<ROOT>\n/);
+    assert.match(where, /after: echo "\$HOME":\n\s+<HOME>\n/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Windows: a program named without .exe starts, also through env", { skip: !isWindows && "this is about Windows" }, () => {
+  const dir = setup();
+  try {
+    fs.mkdirSync(path.join(dir, "bin"));
+    fs.copyFileSync(process.execPath, path.join(dir, "bin", "runtime.exe"));
+    fs.writeFileSync(path.join(dir, "parity.json"), JSON.stringify({ cases: [{ name: "one", args: ["echo", "x"] }] }));
+    const r = spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--ts", "bin/runtime ts.cjs", "--rs", "env GREETING=hi bin/runtime rs.cjs"], { cwd: dir, encoding: "utf8" });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /all 1 case\(s\) behave the same/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Windows: without a POSIX shell a case with setup or after lines is broken, in one line", { skip: !isWindows && "this is about Windows" }, () => {
+  const dir = setup();
+  try {
+    // Nowhere to find Git: no git on PATH, and the usual places empty.
+    const empty = path.join(dir, "empty");
+    fs.mkdirSync(empty);
+    const env = { SystemRoot: process.env.SystemRoot, TEMP: process.env.TEMP, TMP: process.env.TMP, PATH: empty, ProgramFiles: empty, ProgramW6432: empty, "ProgramFiles(x86)": empty, LOCALAPPDATA: empty };
+    const r = run(dir, { cases: [{ name: "has lines", args: ["echo", "x"], after: ["echo hi"] }, { name: "has none", args: ["echo", "y"] }] }, [], env);
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.equal(
+      r.stdout,
+      '  BROKEN  has lines\n      this case has "setup" or "after" lines, which a POSIX shell runs, and none was found: no bash of Git for Windows where `git --exec-path` points ' +
+        "or in %ProgramFiles%\\Git; install Git for Windows, or name a shell with --shell <path> or RUSTIFY_PARITY_SHELL\n  same    has none\n1 of 2 case(s) differ\n",
+    );
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
