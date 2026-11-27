@@ -11,6 +11,9 @@
 //              [--filter <text>] [--show] [--keep]
 //              [--tty [stdin,stdout,stderr]] [--capture files]
 //
+// An option's value may also follow an equals sign (--tty=stdout). An option
+// the runner does not know is a mistake, not ignored.
+//
 // A binary that hands some invocations back to the JavaScript passes those
 // cases by construction. To prove which cases the binary answers itself:
 //
@@ -144,8 +147,9 @@
 // path.
 //
 // Exit code: 0 all the same; 1 some case differs, is broken or went the wrong
-// way; 2 nothing could be run (usage, a mistake in the cases file, no case
-// selected); 3 the run's directory disappeared.
+// way; 2 nothing could be run (usage, an option the runner does not know, a
+// mistake in the cases file, no case selected); 3 the run's directory
+// disappeared.
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -153,31 +157,52 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+const OPTIONS = ["cases", "ts", "rs", "filter", "show", "keep", "handback", "tty", "capture"];
+
+// `--name value`, `--name=value`, or `--name` alone (true).
 function parseArgs(argv) {
   const out = {};
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i].startsWith("--")) out[argv[i].slice(2)] = argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : true;
+    if (!argv[i].startsWith("--")) continue;
+    const eq = argv[i].indexOf("=");
+    if (eq > 2) out[argv[i].slice(2, eq)] = argv[i].slice(eq + 1);
+    else out[argv[i].slice(2)] = argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : true;
   }
   return out;
 }
 
-const opts = parseArgs(process.argv.slice(2));
-if (!opts.cases || !opts.rs || (!opts.ts && !opts.handback)) {
-  console.error(
-    'usage: parity.mjs --cases <file.json> --ts "<command>" --rs "<command>" [--filter <text>] [--show] [--keep]\n' +
-      "                  [--tty [stdin,stdout,stderr]] [--capture files]\n" +
-      '       parity.mjs --cases <file.json> --rs "<command>" --handback <ROOT_ENV>=<js entry> [--filter <text>]\n' +
-      "                  [--tty [stdin,stdout,stderr]] [--capture files]\n" +
-      "  --tty      a terminal instead of pipes, for every case that has no \"tty\" of its own (all three streams, or those named)\n" +
-      "  --capture  files: stdout and stderr go to regular files instead of pipes, for every case that has no \"capture\"\n" +
-      "The cases file is described at the top of parity.mjs.",
-  );
-  process.exit(2);
-}
+const USAGE =
+  'usage: parity.mjs --cases <file.json> --ts "<command>" --rs "<command>" [--filter <text>] [--show] [--keep]\n' +
+  "                  [--tty [stdin,stdout,stderr]] [--capture files]\n" +
+  '       parity.mjs --cases <file.json> --rs "<command>" --handback <ROOT_ENV>=<js entry> [--filter <text>]\n' +
+  "                  [--tty [stdin,stdout,stderr]] [--capture files]\n" +
+  "  --tty      a terminal instead of pipes, for every case that has no \"tty\" of its own (all three streams, or those named;\n" +
+  "             to run a whole cases file again on a terminal, --tty stdout,stderr)\n" +
+  "  --capture  files: stdout and stderr go to regular files instead of pipes, for every case that has no \"capture\"\n" +
+  "An option's value may also follow an equals sign: --tty=stdout.\n" +
+  "The cases file is described at the top of parity.mjs.";
+
 // A mistake in the command line or the cases file: nothing is run.
 function mistake(text) {
   console.error(`parity: ${text}`);
   process.exit(2);
+}
+
+const opts = parseArgs(process.argv.slice(2));
+// An option the runner does not know would otherwise be ignored, and a
+// misspelt --tty would pass on pipes.
+for (const name of Object.keys(opts)) if (!OPTIONS.includes(name)) mistake(`--${name} is not an option of the runner\n${USAGE}`);
+if (!opts.cases || !opts.rs || (!opts.ts && !opts.handback)) {
+  console.error(USAGE);
+  process.exit(2);
+}
+// --handback ROOT_ENV=entry, checked before the run's directory is made.
+let handback = null;
+if (opts.handback) {
+  const value = String(opts.handback);
+  const eq = value.indexOf("=");
+  if (eq < 1 || eq === value.length - 1) mistake("--handback needs <ROOT_ENV>=<js entry>, e.g. MYCLI_PACKAGE_ROOT=dist/cli.js");
+  handback = { rootEnv: value.slice(0, eq), entry: value.slice(eq + 1) };
 }
 const isWindows = process.platform === "win32";
 const launchDir = process.cwd();
@@ -210,6 +235,8 @@ function streamsOf(value, where) {
   const names = (Array.isArray(value) ? value : String(value).split(",")).map((name) => String(name).trim()).filter(Boolean);
   const unknown = names.filter((name) => !STREAMS.includes(name));
   if (unknown.length) mistake(`${where} takes true, false, or some of stdin, stdout and stderr; it has ${unknown.join(", ")}`);
+  // `--tty=` or "tty": "" names no stream; false is the way to say pipes.
+  if (!names.length) mistake(`${where} names no stream; it takes true, false, or some of stdin, stdout and stderr`);
   return STREAMS.filter((name) => names.includes(name));
 }
 
@@ -457,12 +484,7 @@ let ran = 0;
 
 // --handback ROOT_ENV=entry: which cases does the binary answer itself?
 function handbackCheck() {
-  const eq = String(opts.handback).indexOf("=");
-  if (eq < 1) {
-    console.error("--handback needs <ROOT_ENV>=<js entry>, e.g. MYCLI_PACKAGE_ROOT=dist/cli.js");
-    process.exit(2);
-  }
-  const [rootEnv, entry] = [opts.handback.slice(0, eq), opts.handback.slice(eq + 1)];
+  const { rootEnv, entry } = handback;
   const standIn = path.join(work, "stand-in");
   fs.mkdirSync(path.dirname(path.join(standIn, entry)), { recursive: true });
   fs.writeFileSync(path.join(standIn, "package.json"), JSON.stringify({ name: "stand-in", version: "0.0.0" }));
@@ -525,7 +547,7 @@ function compareAll() {
 
 let gone = null;
 try {
-  if (opts.handback) handbackCheck();
+  if (handback) handbackCheck();
   else compareAll();
   // Once more at the end: the last case may have run while the directory was being removed.
   stillThere();
@@ -550,7 +572,7 @@ if (!ran) {
   console.log("no case ran");
   process.exit(2);
 }
-if (opts.handback) {
+if (handback) {
   if (failed) console.log(`${failed} of ${ran} case(s) went the wrong way`);
 } else {
   console.log(failed ? `${failed} of ${ran} case(s) differ` : `all ${ran} case(s) behave the same`);

@@ -131,6 +131,47 @@ test("--filter runs a subset, and a filter that matches nothing is an error", ()
   }
 });
 
+test("an option's value may follow an equals sign, and an option the runner does not know stops it", () => {
+  const dir = setup();
+  try {
+    const cases = { cases: [{ name: "pipes or files", args: ["kind"] }, { name: "another", args: ["echo", "x"] }] };
+    const r = run(dir, cases, ["--show", "--capture=files", "--filter=pipes or files"]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(shown(r.stdout, "pipes or files"), /stdout is a file, stderr is a file\n/);
+    assert.match(r.stdout, /all 1 case\(s\) behave the same/);
+
+    for (const extra of [["--tyy", "stdout"], ["--capture-files"], ["--Show"]]) {
+      const wrong = run(dir, cases, extra);
+      assert.equal(wrong.status, 2, wrong.stdout + wrong.stderr);
+      assert.equal(wrong.stdout, "");
+      assert.match(wrong.stderr, new RegExp(`^parity: ${extra[0]} is not an option of the runner\nusage: `));
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a --handback that is not ROOT_ENV=entry stops the run before its directory is made", () => {
+  const dir = setup();
+  const tmp = path.join(dir, "tmp");
+  fs.mkdirSync(tmp);
+  try {
+    fs.writeFileSync(path.join(dir, "parity.json"), JSON.stringify({ cases: [{ name: "one", args: ["echo", "x"] }] }));
+    for (const value of ["NOEQUALS", "=dist/cli.js", "DEMO_ROOT="]) {
+      const r = spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--rs", `${process.execPath} rs.cjs`, "--handback", value], {
+        cwd: dir,
+        encoding: "utf8",
+        env: { ...process.env, TMPDIR: tmp, TEMP: tmp, TMP: tmp },
+      });
+      assert.equal(r.status, 2, r.stdout + r.stderr);
+      assert.equal(r.stderr, "parity: --handback needs <ROOT_ENV>=<js entry>, e.g. MYCLI_PACKAGE_ROOT=dist/cli.js\n");
+      assert.deepEqual(fs.readdirSync(tmp), [], `${value} left a directory behind`);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a failing setup command is reported as broken, not as a pass", () => {
   const dir = setup();
   try {
@@ -444,6 +485,10 @@ test("tty: a case says which of stdin, stdout and stderr are a terminal; --tty s
 
     const all = run(dir, TTY_CASES, ["--tty", "--show", "--filter", "what the command line says"]);
     assert.match(shown(all.stdout, "what the command line says"), /terminal:\n\s+in=true out=true err=true\\r\n/);
+
+    const equals = run(dir, TTY_CASES, ["--tty=stdout", "--show", "--filter=what the command line says"]);
+    assert.equal(equals.status, 0, equals.stdout + equals.stderr);
+    assert.match(shown(equals.stdout, "what the command line says"), /terminal:\n\s+in=false out=true err=false\\r\n/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -627,6 +672,8 @@ test("a mistake in tty or a typed stdin stops the run before any case, with exit
     };
     assert.match(bad([{ name: "a", args: ["echo"], tty: "stdout,sterr" }]), /^parity: case "a": "tty" takes true, false, or some of stdin, stdout and stderr; it has sterr\n$/);
     assert.match(bad([{ name: "a", args: ["echo"] }], ["--tty", "out"]), /^parity: --tty takes .* it has out\n$/);
+    assert.match(bad([{ name: "a", args: ["echo"] }], ["--tty="]), /^parity: --tty names no stream; it takes true, false, or some of stdin, stdout and stderr\n$/);
+    assert.match(bad([{ name: "a", args: ["echo"], tty: [] }]), /^parity: case "a": "tty" names no stream; /);
     assert.match(bad([{ name: "a", args: ["ask"], stdin: [["[y/N] ", "y\n"]] }]), /^parity: case "a": "stdin" as a list is typed at a terminal, and stdin is not one here; say "tty" in the case\n$/);
     assert.match(bad([{ name: "a", args: ["ask"], tty: true, stdin: ["y\n"] }]), /^parity: case "a": "stdin" as a list takes pairs of text, \[what to wait for, what to type\]\n$/);
     // A case that --filter leaves out is not looked at.
