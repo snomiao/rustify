@@ -451,18 +451,15 @@ fn audit_project(project: &Project, home: &Path, root: &Path, offline: bool, her
             ts_src.iter().filter(|f| !rust_keys.contains(&module_key(&f.path))).collect();
         unmatched.sort_by(|a, b| b.lines.cmp(&a.lines));
         let unmatched_lines: usize = unmatched.iter().map(|f| f.lines).sum();
+        let largest: Vec<String> =
+            unmatched.iter().take(8).map(|f| format!("`{}` ({})", f.path, thousands(f.lines))).collect();
         s.info(format!(
             "by file name, {} of {} TypeScript modules have no Rust module of the same name ({} lines). \
-             A rough signal only: Rust code is often organised differently. Largest: {}",
+             A rough signal only: Rust code is often organised differently.{}",
             unmatched.len(),
             ts_src.len(),
             thousands(unmatched_lines),
-            unmatched
-                .iter()
-                .take(8)
-                .map(|f| format!("`{}` ({})", f.path, thousands(f.lines)))
-                .collect::<Vec<_>>()
-                .join(", ")
+            if largest.is_empty() { String::new() } else { format!(" Largest: {}", largest.join(", ")) }
         ));
     }
 
@@ -1509,5 +1506,19 @@ mod tests {
         let counted: Vec<String> = sources(&lib, |path| p.replaces(path)).into_iter().map(|f| f.path).collect();
         assert_eq!(counted, ["added.tsx", "untouched.ts"]);
         assert_eq!(changed_typescript(&p, &lib, &reconciled).unwrap(), ["added.tsx", "deleted.ts", "moved.ts"]);
+    }
+
+    #[test]
+    fn no_largest_module_is_named_when_every_module_has_a_namesake() {
+        let (repo, _) = ported_repository();
+        let home = Scratch::new();
+        let audit = |block: &str| audit_project(&project(block), &home.dir, &home.dir, true, Some(&repo.dir)).body;
+        // dede.ts has rs/src/dede.rs; the notes file has no namesake.
+        let body = audit(PORTED_PROJECT);
+        assert!(body.contains("1 of 2 TypeScript modules have no Rust module of the same name"), "{body}");
+        assert!(body.contains("organised differently. Largest: `备注 notes.ts` (2)\n"), "{body}");
+        let body = audit(&PORTED_PROJECT.replace("\"skills\"", "\"skills\", \"备注 notes.ts\""));
+        assert!(body.contains("0 of 1 TypeScript modules have no Rust module of the same name"), "{body}");
+        assert!(body.contains("organised differently.\n"), "{body}");
     }
 }
