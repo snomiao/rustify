@@ -9,7 +9,7 @@
 | codehost | 7 verified, 0 ported, 15 partial, 178 missing of 200 | JavaScript | port the missing features |
 | fbi-proxy | started, not measured | JavaScript | write the parity ledger |
 | onenote-cli | 6 verified, 0 ported, 3 partial, 48 missing of 57 | JavaScript | port the missing features |
-| dotenvdotenc | 21 verified, 1 ported, 1 partial, 13 missing of 36 | JavaScript | port the missing features |
+| dotenvdotenc | 22 verified, 0 ported, 1 partial, 13 missing of 36 | JavaScript | port the missing features |
 | qqdocs | 20 verified, 1 ported, 2 partial, 28 missing of 51 | JavaScript | port the missing features |
 | winrpc | 0 verified, 0 ported, 0 partial, 37 missing of 37 | nothing (not on npm) | port the missing features |
 | chatwork-cli | not started | nothing (not on npm) | write the parity ledger |
@@ -383,7 +383,7 @@
 - `warn` `PCM hooks of the in-page bridge (used by `rech audio stream`): startPcm, feedPcm, endPcmInput, readPcm`: ts path `audio-bridge-browser.ts` does not exist
 - `warn` `PCM hooks of the in-page bridge (used by `rech audio stream`): startPcm, feedPcm, endPcmInput, readPcm`: ts path `audio-stream-server.ts` does not exist
 - `warn` `Windows: warning when serve runs outside the user's active desktop session`: ts path `docs/windows-sessions.md` does not exist
-- `todo` 16 file(s) of the TypeScript changed since the ledger was reconciled at `c4ef27e`: `audio-bridge-browser.ts`, `audio-bridge-client.ts`, `audio-bridge-files.ts`, `audio-bridge-server.ts`, `audio-bridge.ts`, `audio-stream-client.ts`, `audio-stream-server.ts`, `audio-stream.ts`, `daemon-manager.ts`, `rechrome.ts`
+- `todo` 21 TypeScript file(s) changed since the ledger was reconciled at `c4ef27e`: `.github/workflows/rust-npm-release.yml`, `.gitignore`, `README.md`, `audio-bridge-browser.ts`, `audio-bridge-client.ts`, `audio-bridge-files.ts`, `audio-bridge-server.ts`, `audio-bridge.ts`, `audio-stream-client.ts`, `audio-stream-server.ts`
 - `todo` 328 feature(s) not fully ported
 - `todo` no Rust port exists yet
 
@@ -597,7 +597,7 @@
 
 **Parity ledger**
 
-- `info` 36 features: 21 verified, 1 ported but unproven, 1 partial, 13 missing, 0 dropped
+- `info` 36 features: 22 verified, 0 ported but unproven, 1 partial, 13 missing, 0 dropped
 - `warn` `get NAME [file…]`: proof `rs/parity.json` does not exist
 - `warn` `get NAME [file…]`: proof `rs/cross-compat.sh` does not exist
 - `warn` `get NAME [file…]`: proof `rs/tty-compat.py` does not exist
@@ -707,6 +707,7 @@
 - `warn` `invocations whose arguments, directory or environment are not plain text, or have no HOME`: rs path `rs/src/main.rs` does not exist
 - `warn` `invocations whose arguments, directory or environment are not plain text, or have no HOME`: rs path `rs/src/cli.rs` does not exist
 - `warn` `invocations whose arguments, directory or environment are not plain text, or have no HOME`: rs path `rs/src/env.rs` does not exist
+- `warn` `macOS`: proof `rs/parity/proof.sh` does not exist
 - `warn` `macOS`: rs path `rs/src` does not exist
 - `ok  ` ledger is current (reconciled at `18f80ca`, no TypeScript changed since)
 - `todo` 14 feature(s) not fully ported
