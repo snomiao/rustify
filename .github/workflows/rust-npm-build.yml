@@ -287,9 +287,12 @@ jobs:
       - name: Build JavaScript (hybrid mode)
         if: inputs.js-build != ''
         run: ${{ inputs.js-build }}
+      # The manifest tells the packer where the crate is: a package without a
+      # `files` list ships its whole directory, and the crate is left out of it.
       - name: Pack
         run: |
           node .rustify/templates/npm/pack.mjs pack --package "${{ inputs.package }}" \
+            --manifest "${{ inputs.manifest }}" \
             --artifacts .rustify-native --version "${{ steps.version.outputs.version }}" \
             --tag "${{ inputs.npm-tag }}" --out npm-dist
       - uses: actions/upload-artifact@v4
