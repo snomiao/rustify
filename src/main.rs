@@ -1010,50 +1010,55 @@ fn entry_code(entries: &[(String, String)]) -> (String, String) {
     (code, "js_entry(&command())".to_string())
 }
 
-/// A crate's `.gitignore`: what the file already says, and `/target`. A crate
-/// at the repository root shares that file with the rest of the project.
-fn ignoring_target(existing: &str) -> String {
-    if existing.lines().any(|line| matches!(line.trim(), "target" | "/target" | "target/" | "/target/")) {
-        return existing.to_string();
+/// A crate's `.gitignore`: what the file already says, byte for byte, and
+/// `/target` on a line of its own, ended the way the file ends its lines. A
+/// crate at the repository root shares that file with the rest of the
+/// project. `None` for a file with NUL bytes in it (UTF-16, which Windows
+/// PowerShell 5 writes with `>`): appending to it would garble it, so it is
+/// left as it is.
+fn ignoring_target(existing: &[u8]) -> Option<Vec<u8>> {
+    if existing.contains(&0) {
+        return None;
     }
-    let gap = if existing.is_empty() || existing.ends_with('\n') { "" } else { "\n" };
-    format!("{existing}{gap}/target\n")
+    let ignores = existing
+        .split(|byte| *byte == b'\n')
+        .any(|line| matches!(line.trim_ascii(), b"target" | b"/target" | b"target/" | b"/target/"));
+    let mut text = existing.to_vec();
+    if !ignores {
+        let newline: &[u8] = if existing.windows(2).any(|pair| pair == b"\r\n") { b"\r\n" } else { b"\n" };
+        if !text.is_empty() && !text.ends_with(b"\n") {
+            text.extend_from_slice(newline);
+        }
+        text.extend_from_slice(b"/target");
+        text.extend_from_slice(newline);
+    }
+    Some(text)
 }
 
-fn scaffold(args: &[String]) -> i32 {
-    let dry = args.iter().any(|a| a == "--dry-run");
-    let names = positional(args);
-    let Some(name) = names.first().copied() else {
-        eprintln!("usage: rustify scaffold <project> [--at <checkout>] [--dry-run]");
-        return 2;
-    };
-    let home = home();
-    let registry = load_registry(&home);
-    let Some(project) = registry.project.iter().find(|p| &p.name == name) else {
-        eprintln!("rustify: no project named {name} in projects.toml");
-        return 2;
-    };
-    let Some(dir) = at(args).filter(|d| d.is_dir()).or_else(|| locate(project, &checkout_root(&home))) else {
-        eprintln!("rustify: no checkout of {name} found");
-        return 1;
-    };
+/// What `rustify scaffold` writes into a checkout, and what it tells the
+/// user afterwards.
+struct CratePlan {
+    files: Vec<(PathBuf, Vec<u8>)>,
+    /// A `.gitignore` that is left as it is, though it does not ignore
+    /// `/target`.
+    kept: Option<PathBuf>,
+    next: String,
+}
+
+fn plan_crate(project: &Project, home: &Path, dir: &Path) -> Result<CratePlan, String> {
+    let name = &project.name;
     let manifest = project.manifest.clone().unwrap_or_else(|| "rs/Cargo.toml".to_string());
-    let crate_dir = dir.join(&manifest).parent().map(Path::to_path_buf).unwrap_or_else(|| dir.clone());
+    let crate_dir = dir.join(&manifest).parent().map(Path::to_path_buf).unwrap_or_else(|| dir.to_path_buf());
     if dir.join(&manifest).exists() {
-        eprintln!("rustify: {} already exists — nothing to scaffold", dir.join(&manifest).display());
-        return 1;
+        return Err(format!("{} already exists — nothing to scaffold", dir.join(&manifest).display()));
     }
-    let package: Json = match fs::read_to_string(dir.join("package.json")).ok().and_then(|t| serde_json::from_str(&t).ok()) {
-        Some(package) => package,
-        None => {
-            eprintln!("rustify: {name} has no readable package.json");
-            return 1;
-        }
-    };
+    let package: Json = fs::read_to_string(dir.join("package.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .ok_or_else(|| format!("{name} has no readable package.json"))?;
     let entries = js_entries(&package);
     if entries.is_empty() {
-        eprintln!("rustify: package.json of {name} has no `bin`, so there is no command to take over");
-        return 1;
+        return Err(format!("package.json of {name} has no `bin`, so there is no command to take over"));
     }
     let (entry_definition, entry_expression) = entry_code(&entries);
     let entry = if entry_expression == "JS_ENTRY" {
@@ -1082,26 +1087,71 @@ fn scaffold(args: &[String]) -> i32 {
     let fallback = fs::read_to_string(templates.join("js_fallback.rs"))
         .expect("templates/rust/js_fallback.rs")
         .replace("\"RUSTIFY_PACKAGE_ROOT\"", &format!("\"{root_env}\""));
-    let gitignore = crate_dir.join(".gitignore");
-    let ignored = ignoring_target(&fs::read_to_string(&gitignore).unwrap_or_default());
-    let files = [
-        (crate_dir.join("Cargo.toml"), cargo_toml),
-        (crate_dir.join("src/main.rs"), main_rs),
-        (crate_dir.join("src/js_fallback.rs"), fallback),
-        (gitignore, ignored),
+    let mut files = vec![
+        (crate_dir.join("Cargo.toml"), cargo_toml.into_bytes()),
+        (crate_dir.join("src/main.rs"), main_rs.into_bytes()),
+        (crate_dir.join("src/js_fallback.rs"), fallback.into_bytes()),
     ];
-    for (file, content) in &files {
+    let gitignore = crate_dir.join(".gitignore");
+    let ignored = match fs::read(&gitignore) {
+        Ok(existing) => ignoring_target(&existing),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => ignoring_target(b""),
+        Err(_) => None,
+    };
+    let kept = match ignored {
+        Some(text) => {
+            files.push((gitignore, text));
+            None
+        }
+        None => Some(gitignore),
+    };
+    let bins: Vec<String> = commands.iter().map(|c| format!("\"{c}\": \"{crate_name}\"")).collect();
+    let next = format!(
+        "\nThe binary hands every command to {entry}, so nothing changes for users yet.\n\nNext:\n  1. add to package.json:\n       \"rustify\": {{ \"mode\": \"hybrid\", \"bins\": {{ {} }}, \"rootEnv\": \"{root_env}\" }}\n  2. set `manifest = \"{manifest}\"` and `rust = [...]` for {name} in projects.toml\n  3. `rustify vendor {name}` adds the release workflow\n  4. build it (`cargo build --release --manifest-path {manifest}`) and commit Cargo.lock\nNothing was committed.",
+        bins.join(", ")
+    );
+    Ok(CratePlan { files, kept, next })
+}
+
+fn scaffold(args: &[String]) -> i32 {
+    let dry = args.iter().any(|a| a == "--dry-run");
+    let names = positional(args);
+    let Some(name) = names.first().copied() else {
+        eprintln!("usage: rustify scaffold <project> [--at <checkout>] [--dry-run]");
+        return 2;
+    };
+    let home = home();
+    let registry = load_registry(&home);
+    let Some(project) = registry.project.iter().find(|p| &p.name == name) else {
+        eprintln!("rustify: no project named {name} in projects.toml");
+        return 2;
+    };
+    let Some(dir) = at(args).filter(|d| d.is_dir()).or_else(|| locate(project, &checkout_root(&home))) else {
+        eprintln!("rustify: no checkout of {name} found");
+        return 1;
+    };
+    let plan = match plan_crate(project, &home, &dir) {
+        Ok(plan) => plan,
+        Err(e) => {
+            eprintln!("rustify: {e}");
+            return 1;
+        }
+    };
+    for (file, content) in &plan.files {
         if !dry {
             fs::create_dir_all(file.parent().unwrap()).expect("create crate directory");
             fs::write(file, content).expect("write crate file");
         }
         say!("{} {}", if dry { "would write" } else { "wrote      " }, file.display());
     }
-    let bins: Vec<String> = commands.iter().map(|c| format!("\"{c}\": \"{crate_name}\"")).collect();
-    say!(
-        "\nThe binary hands every command to {entry}, so nothing changes for users yet.\n\nNext:\n  1. add to package.json:\n       \"rustify\": {{ \"mode\": \"hybrid\", \"bins\": {{ {} }}, \"rootEnv\": \"{root_env}\" }}\n  2. set `manifest = \"{manifest}\"` and `rust = [...]` for {name} in projects.toml\n  3. `rustify vendor {name}` adds the release workflow\n  4. build it (`cargo build --release --manifest-path {manifest}`) and commit Cargo.lock\nNothing was committed.",
-        bins.join(", ")
-    );
+    if let Some(file) = &plan.kept {
+        say!(
+            "{} {} — it cannot be added to safely (UTF-16, or unreadable): make it ignore /target yourself",
+            if dry { "would keep " } else { "kept       " },
+            file.display()
+        );
+    }
+    say!("{}", plan.next);
     0
 }
 
@@ -1272,9 +1322,44 @@ mod tests {
 
     #[test]
     fn scaffolding_adds_to_a_gitignore_that_is_already_there() {
-        assert_eq!(ignoring_target(""), "/target\n");
-        assert_eq!(ignoring_target("node_modules\n.env"), "node_modules\n.env\n/target\n");
-        assert_eq!(ignoring_target("node_modules\n/target/\n.env\n"), "node_modules\n/target/\n.env\n");
+        let merged = |existing: &[u8]| ignoring_target(existing).map(|text| String::from_utf8_lossy(&text).into_owned());
+        assert_eq!(merged(b"").unwrap(), "/target\n");
+        assert_eq!(merged(b"node_modules\n.env").unwrap(), "node_modules\n.env\n/target\n");
+        assert_eq!(merged(b"node_modules\n/target/\n.env\n").unwrap(), "node_modules\n/target/\n.env\n");
+        assert_eq!(merged(b"node_modules\r\n/target\r\n").unwrap(), "node_modules\r\n/target\r\n");
+        // In the file's own line ending.
+        assert_eq!(merged(b"node_modules\r\n.env").unwrap(), "node_modules\r\n.env\r\n/target\r\n");
+        // Bytes that are not UTF-8 (a Latin-1 comment) are kept as they are.
+        assert_eq!(ignoring_target(b"# caf\xe9\ndist\n").unwrap(), b"# caf\xe9\ndist\n/target\n");
+        // UTF-16 is left alone.
+        let utf16: Vec<u8> = "\u{feff}node_modules\r\n".encode_utf16().flat_map(u16::to_le_bytes).collect();
+        assert_eq!(ignoring_target(&utf16), None);
+    }
+
+    #[test]
+    fn scaffolding_writes_the_project_gitignore_with_its_own_lines_kept() {
+        let checkout = Scratch::new();
+        checkout.write("package.json", "{ \"name\": \"w\", \"bin\": { \"w\": \"cli.ts\" } }\n");
+        let home = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let written = |block: &str, file: &str| -> Option<Vec<u8>> {
+            let plan = plan_crate(&project(block), home, &checkout.dir).expect("a plan");
+            assert!(plan.files.iter().any(|(path, _)| path.ends_with("src/main.rs")));
+            plan.files.into_iter().find(|(path, _)| *path == checkout.dir.join(file)).map(|(_, text)| text)
+        };
+
+        // A crate at the repository root shares the project's .gitignore.
+        fs::write(checkout.dir.join(".gitignore"), b"node_modules\n# caf\xe9\ndist\n.env\n").unwrap();
+        let root = "name = \"w\"\nmanifest = \"Cargo.toml\"";
+        assert_eq!(written(root, ".gitignore").unwrap(), b"node_modules\n# caf\xe9\ndist\n.env\n/target\n");
+        let utf16: Vec<u8> = "\u{feff}node_modules\r\n".encode_utf16().flat_map(u16::to_le_bytes).collect();
+        fs::write(checkout.dir.join(".gitignore"), &utf16).unwrap();
+        assert_eq!(written(root, ".gitignore"), None);
+        let plan = plan_crate(&project(root), home, &checkout.dir).unwrap();
+        assert_eq!(plan.kept, Some(checkout.dir.join(".gitignore")));
+
+        // A crate in a directory of its own gets a .gitignore of its own.
+        assert_eq!(written("name = \"w\"", "rs/.gitignore").unwrap(), b"/target\n");
+        assert_eq!(written("name = \"w\"", ".gitignore"), None);
     }
 
     #[test]
