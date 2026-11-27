@@ -505,6 +505,25 @@ fn locations(value: &str) -> impl Iterator<Item = &str> {
         .map(|(_, file)| file)
 }
 
+/// The TypeScript sources that differ between `commit` and HEAD: the files
+/// the "Code" section counts as TypeScript to replace, tests aside, and the
+/// ones that were such files at `commit` and have been deleted or moved away
+/// since. `None` when the checkout does not have the commit.
+fn changed_typescript(project: &Project, dir: &Path, commit: &str) -> Option<Vec<String>> {
+    // --no-renames lists a moved file under its old name as well, which is
+    // where the ledger still points. --relative and -z give the paths the way
+    // `git ls-files -z` does for the counts.
+    let range = format!("{commit}..HEAD");
+    let listed = git(dir, &["diff", "--name-only", "--no-renames", "--relative", "-z", &range])?;
+    Some(
+        listed
+            .split('\0')
+            .filter(|path| project.replaces(path) && !is_test_path(path))
+            .map(String::from)
+            .collect(),
+    )
+}
+
 fn audit_ledger(s: &mut Section, project: &Project, dir: &Path, path: &Path) {
     let ledger: Ledger = match fs::read_to_string(path).map_err(|e| e.to_string()).and_then(|t| {
         toml::from_str(&t).map_err(|e| e.to_string())
@@ -575,32 +594,20 @@ fn audit_ledger(s: &mut Section, project: &Project, dir: &Path, path: &Path) {
     // Has the TypeScript moved since the ledger was last checked against it?
     match &ledger.reconciled {
         None => s.todo("the ledger does not say which commit it was checked against (`reconciled`)", "reconcile the parity ledger"),
-        Some(commit) => {
-            let mut args = vec!["diff".to_string(), "--name-only".into(), format!("{commit}..HEAD"), "--".into()];
-            args.extend(project.ts.iter().cloned());
-            let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-            match git(dir, &refs) {
-                None => s.warn(format!("ledger was reconciled at `{commit}`, which this checkout does not have")),
-                Some(changed) => {
-                    let changed: Vec<&str> = changed
-                        .lines()
-                        .filter(|p| !is_test_path(p) && !project.ignore.iter().any(|i| is_under(p, i)))
-                        .collect();
-                    if changed.is_empty() {
-                        s.ok(format!("ledger is current (reconciled at `{commit}`, no TypeScript changed since)"));
-                    } else {
-                        s.todo(
-                            format!(
-                                "{} TypeScript file(s) changed since the ledger was reconciled at `{commit}`: {}",
-                                changed.len(),
-                                changed.iter().take(10).map(|p| format!("`{p}`")).collect::<Vec<_>>().join(", ")
-                            ),
-                            "reconcile the parity ledger",
-                        );
-                    }
-                }
+        Some(commit) => match changed_typescript(project, dir, commit) {
+            None => s.warn(format!("ledger was reconciled at `{commit}`, which this checkout does not have")),
+            Some(changed) if changed.is_empty() => {
+                s.ok(format!("ledger is current (reconciled at `{commit}`, no TypeScript changed since)"));
             }
-        }
+            Some(changed) => s.todo(
+                format!(
+                    "{} TypeScript file(s) changed since the ledger was reconciled at `{commit}`: {}",
+                    changed.len(),
+                    changed.iter().take(10).map(|p| format!("`{p}`")).collect::<Vec<_>>().join(", ")
+                ),
+                "reconcile the parity ledger",
+            ),
+        },
     }
     if get("missing") + get("partial") > 0 {
         s.todo(
@@ -1418,5 +1425,89 @@ mod tests {
         assert!(body.contains("Rust: 4 lines in 2 files, 1 tests"), "{body}");
         assert!(!body.contains("no Rust port exists yet"), "{body}");
         assert_eq!(section.port, "1 verified, 0 ported, 0 partial, 0 missing of 1");
+    }
+
+    #[test]
+    fn a_port_branch_that_left_the_typescript_alone_keeps_the_ledger_current() {
+        // package.json, the workflow, the README and the port's own scripts
+        // changed after the ledger was reconciled; no TypeScript did.
+        let (section, first) = audit_of_ported_repository();
+        let body = &section.body;
+        assert!(
+            body.contains(&format!("ledger is current (reconciled at `{first}`, no TypeScript changed since)")),
+            "{body}"
+        );
+        assert!(!body.contains("`warn`"), "{body}");
+        assert_ne!(section.next.as_deref(), Some("reconcile the parity ledger"));
+    }
+
+    #[test]
+    fn only_typescript_sources_count_as_changed_since_the_ledger() {
+        let repo = Scratch::new();
+        repo.git(&["init", "--quiet"]);
+        let files = [
+            "cli.ts",
+            "cli.test.ts",
+            "types.d.ts",
+            "lib/moved.ts",
+            "lib/deleted.ts",
+            "lib/untouched.ts",
+            "备注 notes.ts",
+            "extension/background.js",
+            "vendor/dep.js",
+            "package.json",
+        ];
+        for file in files {
+            repo.write(file, &format!("// {file}\nexport const first = 1;\nexport const second = 2;\n"));
+        }
+        let reconciled = repo.commit("the TypeScript");
+        let edited =
+            ["cli.ts", "cli.test.ts", "types.d.ts", "备注 notes.ts", "extension/background.js", "vendor/dep.js", "package.json"];
+        for file in edited {
+            repo.write(file, &format!("// {file}, edited\n"));
+        }
+        // Moved into an ignored directory with its content unchanged, which
+        // git would otherwise report as a rename, under the new name only.
+        repo.git(&["mv", "lib/moved.ts", "vendor/moved.ts"]);
+        repo.git(&["rm", "--quiet", "lib/deleted.ts"]);
+        repo.write("lib/added.tsx", "export {};\n");
+        repo.write("README.md", "# x\n");
+        repo.write(".github/workflows/ci.yml", "name: ci\n");
+        repo.write("rs/Cargo.toml", "[package]\nname = \"x\"\n");
+        repo.write("rs/src/main.rs", "fn main() {}\n");
+        repo.write("rs/src/vectors.mjs", "export {};\n");
+        repo.write("rs/parity.gen.mjs", "export {};\n");
+        repo.commit("the port, and some TypeScript");
+
+        let p = project(
+            r#"
+            name = "x"
+            ts = ["."]
+            rust = ["rs/src"]
+            ignore = ["rs", "vendor"]
+            keep_ts = { "extension" = "runs in the browser" }
+            "#,
+        );
+        assert_eq!(
+            changed_typescript(&p, &repo.dir, &reconciled).unwrap(),
+            ["cli.ts", "lib/added.tsx", "lib/deleted.ts", "lib/moved.ts", "备注 notes.ts"]
+        );
+        assert!(changed_typescript(&p, &repo.dir, "HEAD").unwrap().is_empty());
+        assert!(changed_typescript(&p, &repo.dir, "no-such-commit").is_none());
+
+        // The same files the count is made of, whatever the layout.
+        let p = project("name = \"x\"\nts = [\"lib\"]\nrust = [\".\"]");
+        assert_eq!(
+            changed_typescript(&p, &repo.dir, &reconciled).unwrap(),
+            ["lib/added.tsx", "lib/deleted.ts", "lib/moved.ts"]
+        );
+
+        // A checkout that is a directory inside a repository: both lists are
+        // of its own files, by their paths below it.
+        let lib = repo.dir.join("lib");
+        let p = project("name = \"x\"\nts = [\".\"]");
+        let counted: Vec<String> = sources(&lib, |path| p.replaces(path)).into_iter().map(|f| f.path).collect();
+        assert_eq!(counted, ["added.tsx", "untouched.ts"]);
+        assert_eq!(changed_typescript(&p, &lib, &reconciled).unwrap(), ["added.tsx", "deleted.ts", "moved.ts"]);
     }
 }
