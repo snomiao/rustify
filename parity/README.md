@@ -91,6 +91,19 @@ configuration it does not read yet). Record that as it is:
   formatted) is `verified` only as far as the proving cases exercise it; say
   in the `note` which command's cases those are.
 
+A command can also be native on some operating systems and handed back on
+others (answered on Linux and macOS, handed back on Windows; or native on
+Linux only). That is one more situation that goes back: give it its own
+entry, `missing` or `partial`, named for the systems (`search on macOS and
+Windows`). Its cases carry `"handback": { "win32": "<why>" }`, keyed by
+operating system as node's `process.platform` names it, so that `--handback`
+proves on each system which cases reach the JavaScript there. A case that
+cannot mean the same thing on a system (a POSIX file mode, a signal, a GNU
+tool) carries `"skip": { "win32": "<why>" }` and proves nothing there; say in
+the `note` which cases are skipped where. A `verified` holds for the systems
+the parity job runs the cases on (`parity-platforms`); where the binary
+answers natively on a system the job does not run on, the `note` says so.
+
 ## Keeping it current
 
 `reconciled` is the short commit of the project the ledger was checked

@@ -9,10 +9,12 @@
 //
 //   parity.mjs --cases parity.json --ts "bun ts/cli.ts" --rs "rs/target/release/mycli"
 //              [--filter <text>] [--show] [--keep]
-//              [--tty [stdin,stdout,stderr]] [--capture files]
+//              [--tty [stdin,stdout,stderr]] [--capture files] [--shell <path>]
 //
 // An option's value may also follow an equals sign (--tty=stdout). An option
-// the runner does not know is a mistake, not ignored.
+// the runner does not know is a mistake, not ignored. --ts and --rs are split
+// into words at spaces; a word in double quotes keeps its spaces
+// ("C:\Program Files\nodejs\node.exe" cli.mjs), and nothing else is special.
 //
 // A binary that hands some invocations back to the JavaScript passes those
 // cases by construction. To prove which cases the binary answers itself:
@@ -22,7 +24,8 @@
 //
 // runs only the binary, with a stand-in package whose JavaScript entry does
 // nothing but say it was reached, and fails unless exactly the cases marked
-// "handback" got there. --tty and --capture apply here as well.
+// "handback" for this operating system got there (see "Platforms"). --tty,
+// --capture and --shell apply here as well.
 //
 // Every case runs once per implementation, each time in its own fresh
 // directory with its own empty HOME, so nothing leaks between runs or in from
@@ -46,8 +49,11 @@
 //         "timeout": 30,                         // optional, in seconds (120)
 //         "tty": true,                           // optional, see "A terminal"
 //         "capture": "files",                    // optional, see "Regular files"
-//         "handback": "usage errors belong to yargs"  // optional: this case is
-//                                  // MEANT to reach the JavaScript, and why
+//         "handback": "usage errors belong to yargs", // optional: this case is
+//                                  // MEANT to reach the JavaScript, and why;
+//                                  // also per system, see "Platforms"
+//         "skip": { "win32": "needs a POSIX file mode" } // optional: not run
+//                                  // on these systems, and why ("Platforms")
 //       }
 //     ]
 //   }
@@ -61,8 +67,16 @@
 // program looks at. The runner's own names there are cwd, home, tmp, cache
 // and runner; any other is free.
 //
-// The paths of these directories are replaced by <CWD>, <HOME> and <ROOT>
-// before comparing. Anything else that legitimately varies between two runs
+// `setup` and `after` lines are run by /bin/sh, or by the POSIX shell that
+// --shell or RUSTIFY_PARITY_SHELL names; on Windows by Git for Windows' bash
+// (see "Windows"). A --shell that names no shell stops every run;
+// RUSTIFY_PARITY_SHELL is looked at only when a case that runs has such lines.
+// A line whose shell cannot be started makes its case BROKEN.
+//
+// The paths of these directories are replaced by <CWD>, <HOME>, <ROOT> and
+// <REPO> before comparing (on Windows, a spelling other than the one the
+// runner hands out gets a tag, <CWD:json>: see "Windows"). Anything else that
+// legitimately varies between two runs
 // (timestamps, random ids) needs a `normalize` rule; keep those rare, each one
 // is a hole in the proof.
 //
@@ -160,6 +174,123 @@
 // pipe, and what a process it left behind writes later is not seen, hence
 // not the default.
 //
+// Platforms. The same cases run on Linux, macOS and Windows, and a port may
+// answer a command itself on some of them and hand it back on others. A
+// "handback" given as text holds on every system, as it always has. Given as
+// an object, it holds on the systems it names, each with its reason, and the
+// case is meant to be answered by the binary everywhere else:
+//
+//     "handback": { "win32": "node's path rules are not ported" }
+//
+// "skip" names the systems where a case is not run at all, because it cannot
+// mean the same thing there (a file mode, a signal, a GNU tool):
+//
+//     "skip": { "win32": "needs a POSIX file mode", "darwin": "GNU stat" }
+//
+// Systems are named as node's process.platform names them: linux, darwin,
+// win32 (and the others node knows, such as freebsd). There is no name for an
+// architecture (darwin-arm64, as the pipeline's platform keys are written):
+// a port's code differs by operating system, not by processor, and the node
+// that runs the runner can be of another architecture than the binary (x64
+// under emulation on an ARM machine), so such a mark could hold for the wrong
+// one. A name the runner does not know is a mistake that stops the run, so
+// a misspelt one (windows, macos) cannot quietly hold on no system at all.
+//
+// A skipped case shows as "skip" where it would have been compared, and at
+// the end of every run, in both modes, the runner says how many cases were
+// skipped on this system and why. A run in which every case was skipped ran
+// nothing: "no case ran", exit code 2.
+//
+// Windows. What is different there:
+// - `setup` and `after` lines run in a POSIX shell, not in cmd.exe: the one
+//   --shell or RUSTIFY_PARITY_SHELL names, else usr\bin\bash.exe of the Git
+//   for Windows that `git --exec-path` points into, else of the one in
+//   %ProgramFiles%\Git (or %ProgramFiles(x86)%\Git,
+//   %LOCALAPPDATA%\Programs\Git). Never a bash.exe found on PATH: Windows' own
+//   (System32\bash.exe) starts WSL, which runs the line in another operating
+//   system with other programs and other paths, and it is refused as --shell
+//   too. Where no shell can be found, a case that has such lines is BROKEN,
+//   with the reason in one line, and the other cases run.
+// - The line reaches the shell in the variable RUSTIFY_PARITY_LINE, which the
+//   shell removes before it runs the line, so the line does not see it. On
+//   its command line Git Bash would read the line by rules of its own, which
+//   make one backslash of two. The shell's own directory goes first on the
+//   line's PATH unless PATH has it ahead of System32 already: find, sort and
+//   stat are then the shell's, not Windows' own find.exe and sort.exe. In Git
+//   Bash, where the pipeline runs the parity command, PATH has it ahead.
+// - <CWD>, <HOME>, <ROOT> and <REPO> are written with forward slashes
+//   (C:/Users/…/cwd): the one spelling that the shell and Windows programs
+//   both read as that directory. A backslash is an escape to the shell.
+// - Before comparing, these directories are turned back into their names in
+//   every spelling a program or a tool may print, and a spelling other than
+//   the ones the runner hands out keeps a tag that says which it was. So a
+//   port that prints a directory in another spelling than its TypeScript
+//   still differs, and one that prints it the same way compares the same:
+//     <CWD>        C:\Users\…\cwd as Windows gives it, or C:/Users/…/cwd as the
+//                  placeholders are written; for <REPO> also the long
+//                  spelling of the directory the runner was started in
+//     <CWD:json>   C:\\Users\\…, with doubled backslashes, as JSON and Rust's
+//                  {:?} write it
+//     <CWD:msys>   /c/Users/…/cwd as MSYS tools print it, or /tmp/rustify-
+//                  parity-…/0-ts/cwd: the shell that runs the lines shares the
+//                  mounts of a Git Bash that is still running (the runner was
+//                  started from it), whose /tmp is that Git Bash's temp
+//                  directory, so the runner asks the shell once where its
+//                  /tmp is
+//     <CWD:8.3>    C:\Users\RUNNER~1\…, the short spelling, as GitHub's runners
+//                  give the temp directory (also <CWD:8.3:json>, <CWD:8.3:msys>)
+//     <CWD:case>   any of these in other letters, which Windows takes for the
+//                  same directory (c:\users\…); <CWD:json:case>, …
+//   The pwd of a line is therefore <CWD:msys> on Windows where it is <CWD>
+//   elsewhere, the same for both sides. The run's directory is made in the
+//   long spelling. The \\?\ that Rust's std::fs::canonicalize puts in front of
+//   a path stays (\\?\<CWD>): the TypeScript does not print it, so it is a
+//   difference.
+// - Inside the shell, `pwd`, `~` and $HOME are MSYS paths (/c/Users/… or
+//   /tmp/…). A line that writes such a path into a file or a variable for the
+//   program hands it a path no Windows program reads as meant; write <CWD>,
+//   <ROOT> or <HOME> there instead of $(pwd), ~ or $HOME.
+// - A program in --ts or --rs named without .exe (rs/target/release/mycli) is
+//   started with it, also behind another program (env, sh).
+// - A leading `env NAME=value …` in --ts or --rs is done by the runner itself:
+//   it starts the program with those variables, the values as written. The
+//   env on Windows is MSYS's, which would give the program TERM=xterm-256color
+//   and rewrite its arguments. It also turned a value that looks like a POSIX
+//   path into a Windows one, and the runner does not: write a Windows path
+//   ($GITHUB_WORKSPACE, or $(pwd -W) in Git Bash), not $PWD, which Git Bash
+//   spells /c/… or /tmp/….
+// - Any other program of the MSYS family in front of the program (sh
+//   rs/parity/run.sh, or an env behind a wrapper) reads its command line by
+//   rules of its own: it globs * ? [ against the case's files, expands ~ and
+//   {a,b}, reads a file for @name, and turns what looks like a POSIX path into
+//   a Windows one when it starts a Windows program (/ into C:/Program
+//   Files/Git/, x=/tmp/y into x=C:/…/tmp/y). So the runner puts an argument
+//   with a space or any of " ' * ? [ ] { } ~ @ in double quotes, where MSYS
+//   does none of that and Windows programs read it the same; and when the
+//   program it starts is of the MSYS family (msys-2.0.dll beside it), it
+//   gives that one MSYS2_ARG_CONV_EXCL=* and MSYS_NO_PATHCONV=1, which stop
+//   the conversion. What it starts inherits them, so an MSYS program further
+//   down (git's own sh, which runs git-receive-pack for a push to a local
+//   store; a hook) converts nothing either. A program the runner starts
+//   itself does not get them: in genvx's cases that hid 13 differences. One
+//   difference is left: in double quotes MSYS makes one backslash of two, so
+//   an argument that is quoted and has two backslashes in a row
+//   (\\server\share x) arrives with one. Such a program also gives what it
+//   starts a TERM, and a wrapper script that starts a Windows program with a
+//   POSIX path of its own converts that path itself (cygpath -w). The lines
+//   do not get the two variables: they need the conversion (git -C "$(pwd)").
+//   A case can set them, or take them out with null, in its `env`; the lines
+//   then get what it says. (MSYS=noglob is no help: with it, MSYS reads no
+//   quotes, and an argument with a space arrives in pieces.)
+// - A program also sees SystemRoot, PATHEXT, TEMP and TMP (its temp directory,
+//   as TMPDIR is), and behind an MSYS program the two variables above. node
+//   itself adds HOMEDRIVE, HOMEPATH, LOGONSERVER, SYSTEMDRIVE, USERDOMAIN,
+//   USERNAME and WINDIR from the runner's own environment where the
+//   program's lacks them, so null cannot take these out, and HOMEDRIVE with
+//   HOMEPATH names the real home directory.
+// - There is no terminal (a case with "tty" is BROKEN, see "A terminal") and
+//   no signal for a program to end by, only its exit code.
+//
 // The run's directory is <temp>/rustify-parity-XXXXXX and holds a file IN-USE
 // while the run lasts. If that directory, that file, or the <ROOT> of the case
 // that is running is removed under the runner (a clean-up of the temp
@@ -180,7 +311,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const OPTIONS = ["cases", "ts", "rs", "filter", "show", "keep", "handback", "tty", "capture"];
+const OPTIONS = ["cases", "ts", "rs", "filter", "show", "keep", "handback", "tty", "capture", "shell"];
 
 // `--name value`, `--name=value`, or `--name` alone (true).
 function parseArgs(argv) {
@@ -196,12 +327,14 @@ function parseArgs(argv) {
 
 const USAGE =
   'usage: parity.mjs --cases <file.json> --ts "<command>" --rs "<command>" [--filter <text>] [--show] [--keep]\n' +
-  "                  [--tty [stdin,stdout,stderr]] [--capture files]\n" +
+  "                  [--tty [stdin,stdout,stderr]] [--capture files] [--shell <path>]\n" +
   '       parity.mjs --cases <file.json> --rs "<command>" --handback <ROOT_ENV>=<js entry> [--filter <text>]\n' +
-  "                  [--tty [stdin,stdout,stderr]] [--capture files]\n" +
+  "                  [--tty [stdin,stdout,stderr]] [--capture files] [--shell <path>]\n" +
   "  --tty      a terminal instead of pipes, for every case that has no \"tty\" of its own (all three streams, or those named;\n" +
   "             to run a whole cases file again on a terminal, --tty stdout,stderr)\n" +
   "  --capture  files: stdout and stderr go to regular files instead of pipes, for every case that has no \"capture\"\n" +
+  "  --shell    the POSIX shell that runs \"setup\" and \"after\" lines (also RUSTIFY_PARITY_SHELL); by default /bin/sh,\n" +
+  "             and on Windows the bash of Git for Windows\n" +
   "An option's value may also follow an equals sign: --tty=stdout.\n" +
   "The cases file is described at the top of parity.mjs.";
 
@@ -236,15 +369,90 @@ try {
   mistake(`${opts.cases}: ${error.message}`);
 }
 if (!Array.isArray(spec?.cases)) mistake(`${opts.cases} has no "cases" list`);
+
+// The words of a command: split at white space, except inside double quotes,
+// which are taken out ("C:\Program Files\nodejs\node.exe" x.mjs). Nothing else
+// is special, backslashes included, so a Windows path is written as it is. A
+// command without double quotes is split as it always was.
+function words(text, where) {
+  const value = String(text);
+  if ((value.match(/"/g) || []).length % 2) mistake(`${where} has a double quote that is not closed: ${value}`);
+  return (value.match(/(?:[^\s"]+|"[^"]*")+/g) || []).map((word) => word.replace(/"/g, ""));
+}
+
 // A command is run from another directory, so anything in it that names a
-// file here has to become absolute.
-const command = (text) =>
-  String(text)
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((token) => (fs.existsSync(path.resolve(launchDir, token)) && /[\\/.]/.test(token) ? path.resolve(launchDir, token) : token));
-const impls = { ts: opts.ts ? command(opts.ts) : null, rs: command(opts.rs) };
+// file here has to become absolute. On Windows a program is often named
+// without its .exe (rs/target/release/mycli); with it, whatever starts the
+// program (sh, a wrapper) finds it too.
+//
+// On Windows a leading `env NAME=value …` is done by the runner itself: the
+// program is started with those variables, and no env.exe stands in between.
+// The env there is MSYS's (Git's or MSYS2's usr\bin), which gives the program
+// a TERM it would not have and rewrites its arguments (see "Windows"). An env
+// with options of its own (-u, -i) or without a program is left to env.
+function command(text, where) {
+  let tokens = words(text, where);
+  const vars = {};
+  if (isWindows && /^env(\.exe)?$/i.test(tokens[0] ?? "")) {
+    let at = 1;
+    while (at < tokens.length && /^[^=-][^=]*=/.test(tokens[at])) at++;
+    if (at < tokens.length && !tokens[at].startsWith("-")) {
+      for (const assignment of tokens.slice(1, at)) {
+        const eq = assignment.indexOf("=");
+        setVariable(vars, assignment.slice(0, eq), assignment.slice(eq + 1));
+      }
+      tokens = tokens.slice(at);
+    }
+  }
+  const argv = tokens.map((token) => {
+    if (!/[\\/.]/.test(token)) return token;
+    const file = path.resolve(launchDir, token);
+    if (fs.existsSync(file)) return file;
+    if (isWindows && fs.existsSync(`${file}.exe`)) return `${file}.exe`;
+    return token;
+  });
+  return { argv, vars };
+}
+
+// Sets a variable in an environment; on Windows, where Path and PATH are one
+// variable, in place of the one it has in any other letter case.
+function setVariable(env, name, value) {
+  if (isWindows) for (const key of Object.keys(env)) if (key !== name && key.toUpperCase() === name.toUpperCase()) delete env[key];
+  env[name] = value;
+}
+
+const impls = { ts: opts.ts ? command(opts.ts, "--ts") : null, rs: command(opts.rs, "--rs") };
 const MARKER = "__RUSTIFY_HANDED_BACK__";
+
+// Windows' own bash.exe, and the launchers WindowsApps holds for WSL's
+// distributions, start a Linux system, not a shell on this one.
+function isWslLauncher(file) {
+  const lower = path.resolve(file).toLowerCase();
+  const system = path.resolve(process.env.SystemRoot || "C:\\Windows").toLowerCase();
+  if (lower.startsWith(`${system}\\`) && /\\(bash|wsl)\.exe$/.test(lower)) return true;
+  return lower.includes("\\microsoft\\windowsapps\\");
+}
+
+// The operating systems a "handback" or "skip" can name: process.platform's
+// names. Architectures are not told apart (see the header).
+const SYSTEMS = ["linux", "darwin", "win32", "freebsd", "openbsd", "netbsd", "sunos", "aix", "android", "cygwin"];
+
+// A mark keyed by operating system, { "win32": "why" }: the reason it gives
+// for this one, or null. A mistake in it stops the run.
+function forThisSystem(marks, key, where) {
+  const shape = `"${key}" takes an object keyed by operating system, as node names it, with the reason as text: { "win32": "why" }`;
+  if (marks === null || typeof marks !== "object" || Array.isArray(marks)) mistake(`${where}: ${shape}; it has ${JSON.stringify(marks)}`);
+  for (const [system, reason] of Object.entries(marks)) {
+    if (!SYSTEMS.includes(system) && system !== process.platform) {
+      // darwin-arm64, as the pipeline's platform keys are written.
+      const [name] = system.split("-");
+      if (SYSTEMS.includes(name)) mistake(`${where}: "${key}" names ${JSON.stringify(system)}: the runner tells operating systems apart, not architectures; say ${JSON.stringify(name)}`);
+      mistake(`${where}: "${key}" names ${JSON.stringify(system)}, which is not an operating system as process.platform names it (linux, darwin, win32, …)`);
+    }
+    if (typeof reason !== "string" || !reason.trim()) mistake(`${where}: "${key}" needs a reason for ${system}, as text`);
+  }
+  return Object.hasOwn(marks, process.platform) ? marks[process.platform] : null;
+}
 
 const STREAMS = ["stdin", "stdout", "stderr"];
 const TERMINAL_PY = path.join(path.dirname(fileURLToPath(import.meta.url)), "terminal.py");
@@ -284,13 +492,39 @@ function planOf(testCase) {
   } else if (terminals.includes("stdin") && String(stdin) !== "") {
     typed = [["", String(stdin)]];
   }
-  return { terminals, files: capture === "files", typed, piped: terminals.includes("stdin") || Array.isArray(stdin) ? "" : stdin };
+  // "handback" as text (or anything else that is true) holds everywhere, as it
+  // always has; as an object, on the systems it names. "skip" is always an
+  // object. Each comes down to this system's reason, or null.
+  const marked = testCase.handback !== null && typeof testCase.handback === "object";
+  const handback = marked ? forThisSystem(testCase.handback, "handback", where) : testCase.handback ? String(testCase.handback) : null;
+  const skip = testCase.skip == null ? null : forThisSystem(testCase.skip, "skip", where);
+  // For a case handed back elsewhere only: where, to say so when it is handed back here.
+  const handbackElsewhere = marked && handback === null ? Object.keys(testCase.handback) : [];
+  return { terminals, files: capture === "files", typed, piped: terminals.includes("stdin") || Array.isArray(stdin) ? "" : stdin, handback, handbackElsewhere, skip };
 }
 
 const selected = spec.cases
   .map((testCase, index) => ({ testCase, index, plan: null }))
   .filter(({ testCase }) => typeof opts.filter !== "string" || testCase.name.includes(opts.filter));
 for (const entry of selected) entry.plan = planOf(entry.testCase);
+
+// The POSIX shell named for "setup" and "after" lines, if one is: --shell,
+// else RUSTIFY_PARITY_SHELL. Without one, node's /bin/sh runs them, and on
+// Windows the bash of Git for Windows (see posixShell). A mistake in --shell
+// stops every run, as one in any other option does. The variable is looked
+// at only when a case that runs here has lines: it may be set for a whole
+// machine, and a run without lines never needs it.
+const namedShell = (() => {
+  const hasLines = selected.some(({ testCase, plan }) => plan.skip === null && (testCase.setup?.length || testCase.after?.length));
+  const [where, value] = opts.shell !== undefined ? ["--shell", opts.shell] : ["RUSTIFY_PARITY_SHELL", (hasLines && process.env.RUSTIFY_PARITY_SHELL) || null];
+  if (value === null) return null;
+  if (value === true || value === "") mistake(`${where} needs the path of a POSIX shell, such as /bin/bash or C:/Program Files/Git/usr/bin/bash.exe`);
+  const file = path.resolve(launchDir, String(value));
+  const found = [file, ...(isWindows ? [`${file}.exe`] : [])].find((name) => fs.statSync(name, { throwIfNoEntry: false })?.isFile());
+  if (!found) mistake(`${where}: there is no file ${value}; it takes the path of a POSIX shell, such as /bin/bash or C:/Program Files/Git/usr/bin/bash.exe`);
+  if (isWindows && isWslLauncher(found)) mistake(`${where}: ${found} starts WSL, which runs the lines in another operating system, with other programs and other paths; name Git for Windows' bash instead`);
+  return found;
+})();
 
 // The terminal helper, looked for once: the interpreter to start it with, or
 // why a case that asks for a terminal cannot have one here.
@@ -311,6 +545,132 @@ function terminal() {
   }
   terminalHelper = { problem, python };
   return terminalHelper;
+}
+
+// The shell for "setup" and "after" lines, looked for once: { path } (null
+// for node's own /bin/sh), or why a case that has such lines cannot run.
+let lineShell = null;
+function posixShell() {
+  if (lineShell) return lineShell;
+  if (namedShell || !isWindows) lineShell = { path: namedShell };
+  else {
+    const bash = gitBash();
+    lineShell = bash
+      ? { path: bash }
+      : {
+          problem:
+            'this case has "setup" or "after" lines, which a POSIX shell runs, and none was found: no bash of Git for Windows where `git --exec-path` points ' +
+            "or in %ProgramFiles%\\Git; install Git for Windows, or name a shell with --shell <path> or RUSTIFY_PARITY_SHELL",
+        };
+  }
+  if (isWindows && lineShell.path) tempSpellings.push(...shellTemp(lineShell.path));
+  return lineShell;
+}
+
+// Where the shell's /tmp is, in Windows' spellings (see tempSpellings): asked
+// once, of the shell itself, because under a Git Bash that is still running
+// it is that Git Bash's temp directory, whatever the runner's is.
+function shellTemp(shell) {
+  const temp = os.tmpdir();
+  const env = { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, TEMP: temp, TMP: temp };
+  const result = spawnSync(shell, ["-c", "cd /tmp && pwd -W"], { env, encoding: "utf8", timeout: 30_000, windowsHide: true });
+  const dir = result.status === 0 ? result.stdout.trim().replace(/\//g, "\\") : "";
+  if (!/^[A-Za-z]:\\[^\n]*$/.test(dir)) return [];
+  let long = dir;
+  try {
+    long = fs.realpathSync.native(dir);
+  } catch {}
+  return [...new Set([dir, long])].map((spelling) => spelling.replace(/\\$/, "").toLowerCase());
+}
+
+// Git for Windows' bash: usr\bin\bash.exe in the installation of the git on
+// PATH (`git --exec-path` says <Git>/mingw64/libexec/git-core, or clangarm64
+// on ARM), else in the usual places. Never a bash.exe found on PATH: that can
+// be Windows' own, which is WSL.
+function gitBash() {
+  const roots = [];
+  const exec = spawnSync("git", ["--exec-path"], { encoding: "utf8", timeout: 30_000, windowsHide: true });
+  const libexec = exec.status === 0 ? exec.stdout.trim() : "";
+  // A git of MSYS2's own says /usr/lib/git-core, which names no Windows directory.
+  if (/^[A-Za-z]:[\\/]/.test(libexec)) for (let dir = path.dirname(libexec), up = 0; up < 3; up++, dir = path.dirname(dir)) roots.push(dir);
+  for (const name of ["ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"]) if (process.env[name]) roots.push(path.join(process.env[name], "Git"));
+  if (process.env.LOCALAPPDATA) roots.push(path.join(process.env.LOCALAPPDATA, "Programs", "Git"));
+  return roots.map((root) => path.join(root, "usr", "bin", "bash.exe")).find((bash) => fs.existsSync(bash) && !isWslLauncher(bash)) ?? null;
+}
+
+// The name of the variable that carries a line to the shell on Windows.
+const LINE = "RUSTIFY_PARITY_LINE";
+
+// On Windows, what a program of the MSYS family that the runner starts (sh
+// with a wrapper script) needs to pass the case's arguments on to the program
+// behind it without turning what looks like a POSIX path into a Windows one:
+// MSYS2's variable, and Git for Windows' own. Only such a program gets them.
+// Whatever it starts inherits them, and an MSYS program further down then
+// converts nothing either: git's own sh, which runs git-receive-pack for a
+// push to a local store, would hand it /tmp/… as it is. Given to every
+// program, they did that in genvx's cases and hid 13 differences. Not given
+// to the lines either, which need the conversion: git -C "$(pwd)" hands
+// git.exe a Windows path only because of it. (MSYS=noglob is not among them:
+// with it, MSYS reads no quotes on its command line, and an argument with a
+// space arrives in pieces. windowsArgument() keeps MSYS from globbing.)
+const AS_WRITTEN = { MSYS2_ARG_CONV_EXCL: "*", MSYS_NO_PATHCONV: "1" };
+
+// Whether the program the runner starts is of the MSYS family: its directory
+// holds msys-2.0.dll (Git's and MSYS2's usr\bin), or it is Git's bin\bash.exe
+// or bin\sh.exe, which start those of usr\bin. A program named without a
+// directory is looked for as Windows looks for it, on the PATH it is started
+// with, also with .exe and .com.
+function isMsysProgram(program, env) {
+  const pathKey = Object.keys(env).find((key) => key.toUpperCase() === "PATH");
+  const dirs = path.isAbsolute(program) || /[\\/]/.test(program) ? [""] : String(env[pathKey] ?? "").split(";").filter(Boolean);
+  for (const dir of dirs) {
+    for (const extension of ["", ".exe", ".com"]) {
+      const file = path.resolve(dir, program + extension);
+      if (!fs.statSync(file, { throwIfNoEntry: false })?.isFile()) continue;
+      const own = path.dirname(file);
+      if (fs.existsSync(path.join(own, "msys-2.0.dll"))) return true;
+      return /^(ba)?sh\.exe$/i.test(path.basename(file)) && fs.existsSync(path.join(own, "..", "usr", "bin", "msys-2.0.dll"));
+    }
+  }
+  return false;
+}
+
+// On Windows a program gets its arguments as one command line, which it
+// splits by rules of its own. Windows programs (node, bun, Rust's std) follow
+// the MSVC runtime, which node writes the line for. A program of the MSYS
+// family also globs an argument there, expands ~ and {a,b}, and reads a file
+// for @file, unless the argument is in double quotes, where it reads \" as
+// the MSVC runtime does. So an argument with a space or one of those
+// characters goes in double quotes, which a Windows program reads the same.
+// (In double quotes MSYS also makes one backslash of two, where the MSVC
+// runtime keeps both; outside them both keep them, so an argument with
+// nothing else to quote stays as it is.)
+function windowsArgument(arg) {
+  if (arg !== "" && !/[\s"'*?[\]{}~@]/.test(arg)) return arg;
+  return `"${arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, "$1$1")}"`;
+}
+
+// Runs one "setup" or "after" line in the case's directory and environment.
+function runLine(line, cwd, env) {
+  const options = { cwd, encoding: "utf8", timeout: 120_000 };
+  const shell = posixShell().path;
+  // As it always was: node's shell, /bin/sh.
+  if (!shell) return spawnSync(line, { ...options, env, shell: true });
+  if (!isWindows) return spawnSync(shell, ["-c", line], { ...options, env });
+  // On Windows a shell of the MSYS family reads its command line by rules of
+  // its own (Git Bash makes one backslash of two), so the line comes in a
+  // variable, which the shell takes out of the environment before it runs it.
+  // The shell's own directory goes first on PATH unless PATH has it ahead of
+  // System32: there are the find, sort and stat the lines mean, and System32
+  // has a find.exe and a sort.exe of its own.
+  const pathKey = Object.keys(env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
+  const entries = String(env[pathKey] ?? "").split(";").filter(Boolean);
+  const own = path.dirname(shell);
+  const at = (dir) => entries.findIndex((entry) => path.resolve(entry).toLowerCase() === dir.toLowerCase());
+  const [ownAt, systemAt] = [at(own), at(path.join(process.env.SystemRoot || "C:\\Windows", "System32"))];
+  const ahead = ownAt >= 0 && (systemAt < 0 || ownAt < systemAt);
+  const lineEnv = { ...env, [pathKey]: ahead ? env[pathKey] : [own, ...entries].join(";"), [LINE]: line };
+  return spawnSync(shell, ["-c", `eval "unset ${LINE}; $${LINE}"`], { ...options, env: lineEnv, windowsHide: true });
 }
 
 // The first [wait, text] that terminal.py did not type, because the terminal
@@ -400,7 +760,92 @@ function visible(text) {
   return text.replace(/[\u{dc80}-\u{dcff}]/gu, (unit) => `\\x${(unit.charCodeAt(0) - 0xdc00).toString(16)}`);
 }
 
-const work = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "rustify-parity-"));
+// On Windows the temp directory is often given in its 8.3 spelling
+// (C:\Users\RUNNER~1\…); the native realpath spells it out, so the programs
+// are handed one spelling, the long one.
+const work = fs.mkdtempSync(path.join((isWindows ? fs.realpathSync.native : fs.realpathSync)(os.tmpdir()), "rustify-parity-"));
+
+// Other spellings of a directory on Windows, each as [prefix, another
+// spelling of that prefix, its tag]: the 8.3 one of the run's directory
+// ("8.3"), the long ("") and 8.3 ones of <REPO>. A program can still come upon
+// them. The long spelling of <REPO> has no tag: the runner was started in
+// <REPO> as given, and Windows gives back the long one for it.
+const otherSpellings = [];
+// The directory that MSYS tools call /tmp, in every spelling: the runner's
+// temp directory, and the one the shell for the lines says (shellTemp).
+// Started from Git Bash, that shell shares the mounts of the Git Bash that is
+// still running, whose /tmp is its temp directory, usually the runner's too,
+// so its tools print the run's directories as /tmp/rustify-parity-…
+const tempSpellings = [];
+if (isWindows) {
+  for (const dir of [work, launchDir]) {
+    let long = dir;
+    try {
+      long = fs.realpathSync.native(dir);
+    } catch {}
+    const short = shortName(long);
+    if (long !== dir) otherSpellings.push([dir, long, ""]);
+    if (short && short !== dir && short !== long) otherSpellings.push([dir, short, "8.3"]);
+  }
+  const temp = os.tmpdir();
+  const longTemp = fs.realpathSync.native(temp);
+  for (const spelling of new Set([temp, longTemp, shortName(longTemp)])) if (spelling) tempSpellings.push(spelling.toLowerCase());
+}
+
+// The 8.3 spelling of a directory, as cmd gives it, or null.
+function shortName(dir) {
+  const cmd = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "cmd.exe");
+  const result = spawnSync(cmd, ["/d", "/c", `for %I in ("${dir}") do @echo %~sI`], { encoding: "utf8", windowsVerbatimArguments: true, windowsHide: true, timeout: 30_000 });
+  const short = result.status === 0 ? result.stdout.trim() : "";
+  return /^[A-Za-z]:\\/.test(short) && !short.includes("\n") ? short : null;
+}
+
+// Every spelling of a directory that clean() turns back into its placeholder,
+// each as [spelling, tags]: what sets it apart from the spellings the runner
+// hands out. On Linux and macOS that is the directory as it is. On Windows the
+// runner hands out the directory as given and with forward slashes (C:/Users/…,
+// as the placeholders are written), and those have no tag. The others do:
+// "8.3" for the short spelling (above), "json" with doubled backslashes
+// (C:\\Users\\…, as JSON and Rust's {:?} write it), "msys" as MSYS tools print
+// it (/c/Users/…, or /tmp/… under the shell's temp directory). So two programs
+// that print a directory in different spellings still differ. Longest first,
+// so that no spelling takes part of another.
+function spellingsOf(dir) {
+  if (!isWindows) return [[dir, []]];
+  const bases = [[dir, []]];
+  for (const [prefix, other, tag] of otherSpellings) {
+    if (dir === prefix || dir.startsWith(`${prefix}\\`)) bases.push([other + dir.slice(prefix.length), tag ? [tag] : []]);
+  }
+  // The first tags given to a spelling hold.
+  const forms = new Map();
+  const add = (spelling, tags) => forms.has(spelling) || forms.set(spelling, tags);
+  for (const [base, tags] of bases) {
+    const slashed = base.replace(/\\/g, "/");
+    add(base, tags);
+    add(slashed, tags);
+    add(base.replace(/\\/g, "\\\\"), [...tags, "json"]);
+    const drive = /^([A-Za-z]):\//.exec(slashed);
+    if (drive) add(`/${drive[1].toLowerCase()}${slashed.slice(2)}`, [...tags, "msys"]);
+    for (const temp of tempSpellings) if (base.toLowerCase().startsWith(`${temp}\\`)) add(`/tmp${slashed.slice(temp.length)}`, [...tags, "msys"]);
+  }
+  return [...forms].sort(([a], [b]) => b.length - a.length);
+}
+
+// What clean() does for one directory: its spellings as they are, and on
+// Windows also in any other letter case, which Windows takes for the same
+// directory and which is then told apart by the tag "case".
+function placeOf(dir, name) {
+  const forms = spellingsOf(dir);
+  const pattern = forms.map(([spelling]) => escapeRegExp(spelling)).join("|");
+  const exact = new Map(forms);
+  const anyCase = new Map();
+  for (const [spelling, tags] of forms) if (!anyCase.has(spelling.toLowerCase())) anyCase.set(spelling.toLowerCase(), [...tags, "case"]);
+  const placeholder = (tags) => `<${[name, ...tags].join(":")}>`;
+  return (text) => {
+    const out = text.replace(new RegExp(pattern, "g"), (found) => placeholder(exact.get(found)));
+    return isWindows ? out.replace(new RegExp(pattern, "gi"), (found) => placeholder(anyCase.get(found.toLowerCase()))) : out;
+  };
+}
 // Tells whoever finds the directory whose it is. It is also how the runner
 // notices that the directory was emptied under it: a clean-up that races the
 // run can fail to remove the directory itself and still take this file.
@@ -421,6 +866,7 @@ function stillThere(...more) {
 
 function runCase(testCase, impl, index, plan, extraEnv = {}) {
   if (plan.terminals.length && terminal().problem) return { broken: terminal().problem };
+  if ((testCase.setup?.length || testCase.after?.length) && posixShell().problem) return { broken: posixShell().problem };
   const root = path.join(work, `${index}-${impl}`);
   stillThere();
   let run;
@@ -444,8 +890,12 @@ function runIn(root, testCase, impl, plan, extraEnv) {
   // One level at a time: making the missing parents too would quietly put
   // back a run directory that somebody removed.
   for (const dir of [root, cwd, home, tmp]) fs.mkdirSync(dir);
-  // <CWD>, <HOME> and <ROOT> in what a case says stand for this run's directories.
-  const here = (text) => String(text).split("<CWD>").join(cwd).split("<HOME>").join(home).split("<ROOT>").join(root).split("<REPO>").join(launchDir);
+  // <CWD>, <HOME> and <ROOT> in what a case says stand for this run's
+  // directories. On Windows with forward slashes, C:/Users/…: the one spelling
+  // that both a POSIX shell and Windows programs read as that directory.
+  const spelt = (dir) => (isWindows ? dir.replace(/\\/g, "/") : dir);
+  const here = (text) =>
+    String(text).split("<CWD>").join(spelt(cwd)).split("<HOME>").join(spelt(home)).split("<ROOT>").join(spelt(root)).split("<REPO>").join(spelt(launchDir));
   for (const [file, content] of Object.entries(testCase.files || {})) {
     const target = path.join(cwd, file);
     fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -466,26 +916,40 @@ function runIn(root, testCase, impl, plan, extraEnv) {
     // On a terminal there is always a TERM, and programs choose their colours by it.
     ...(terminals.length ? { TERM: "xterm-256color" } : {}),
   };
-  // The cases file's variables, then the case's. null takes a variable out
-  // (on Windows in any spelling: Path and PATH are one variable there).
+  // The cases file's variables, then the case's. A value replaces the
+  // variable, and null takes it out, on Windows in any spelling: Path and PATH
+  // are one variable there.
+  const named = new Set();
   for (const variables of [spec.env, testCase.env]) {
     for (const [name, value] of Object.entries(variables || {})) {
-      if (value !== null) env[name] = here(value);
+      named.add(isWindows ? name.toUpperCase() : name);
+      if (value !== null) setVariable(env, name, here(value));
       else for (const key of Object.keys(env)) if (key === name || (isWindows && key.toUpperCase() === name.toUpperCase())) delete env[key];
     }
   }
   Object.assign(env, extraEnv);
-  const shell = (line) => spawnSync(here(line), { cwd, env, shell: true, encoding: "utf8", timeout: 120_000 });
+  const shell = (line) => runLine(here(line), cwd, env);
   for (const line of testCase.setup || []) {
     const result = shell(line);
+    // The shell could not be started (no process: a timeout, or output past
+    // spawnSync's limit, is reported as before, below).
+    if (result.error && !result.pid) return { broken: `setup \`${line}\` could not be run: ${result.error.message}` };
     if (result.status !== 0) {
       return { broken: `setup \`${line}\` exited ${result.status}: ${result.stderr || result.stdout}` };
     }
   }
-  const [program, ...baseArgs] = impls[impl];
+  const [program, ...baseArgs] = impls[impl].argv;
   const args = [...baseArgs, ...(testCase.args || []).map(here)];
+  // What a leading `env NAME=value` in --ts or --rs sets, on Windows (see
+  // command()); and for a program of the MSYS family, AS_WRITTEN, where the
+  // cases do not say otherwise.
+  const programEnv = { ...env };
+  for (const [name, value] of Object.entries(impls[impl].vars)) setVariable(programEnv, name, value);
+  if (isWindows && isMsysProgram(program, programEnv)) {
+    for (const [name, value] of Object.entries(AS_WRITTEN)) if (!named.has(name) && !Object.hasOwn(impls[impl].vars, name)) programEnv[name] = value;
+  }
   const seconds = testCase.timeout || 120;
-  const options = { cwd, env, input: here(plan.piped), encoding: "utf8", timeout: seconds * 1000 };
+  const options = { cwd, env: programEnv, input: here(plan.piped), encoding: "utf8", timeout: seconds * 1000 };
   // The runner's own files of this run: what the program wrote, when that
   // goes to files, and what the terminal was sent.
   const own = path.join(root, "runner");
@@ -504,6 +968,9 @@ function runIn(root, testCase, impl, plan, extraEnv) {
     const request = path.join(own, "terminal.json");
     fs.writeFileSync(request, JSON.stringify({ terminals, type: plan.typed.map((step) => step.map(here)), transcript, ...WINDOW }));
     result = spawnSync(terminal().python, ["-I", TERMINAL_PY, request, program, ...args], options);
+  } else if (isWindows) {
+    // The command line as windowsArgument() writes it, the program's own path first.
+    result = spawnSync(program, args.map(windowsArgument), { ...options, windowsVerbatimArguments: true, argv0: windowsArgument(program) });
   } else {
     result = spawnSync(program, args, options);
   }
@@ -536,12 +1003,11 @@ function runIn(root, testCase, impl, plan, extraEnv) {
     return { broken: lastLine(written("stderr")) || `the terminal helper ended with ${result.status} and without a transcript` };
   }
   const rules = [...(spec.normalize || []), ...(testCase.normalize || [])].map(([pattern, to]) => [new RegExp(pattern, "g"), to]);
+  // Every spelling of each directory (see spellingsOf and placeOf).
+  const places = [[cwd, "CWD"], [home, "HOME"], [root, "ROOT"], [launchDir, "REPO"]].map(([dir, name]) => placeOf(dir, name));
   const clean = (text) => {
     let out = String(text ?? "");
-    for (const [dir, name] of [[cwd, "<CWD>"], [home, "<HOME>"], [root, "<ROOT>"], [launchDir, "<REPO>"]]) {
-      out = out.replace(new RegExp(escapeRegExp(dir), "g"), name);
-      if (isWindows) out = out.replace(new RegExp(escapeRegExp(dir.replace(/\\/g, "/")), "g"), name);
-    }
+    for (const place of places) out = place(out);
     for (const [pattern, to] of rules) out = out.replace(pattern, to);
     return out;
   };
@@ -553,6 +1019,8 @@ function runIn(root, testCase, impl, plan, extraEnv) {
   if (terminals.length) observed.terminal = clean(onTerminal);
   for (const line of testCase.after || []) {
     const probe = shell(line);
+    // As for setup: otherwise both sides would show the same nothing.
+    if (probe.error && !probe.pid) return { broken: `after \`${line}\` could not be run: ${probe.error.message}` };
     observed[`after: ${line}`] = clean(`${probe.stdout}${probe.stderr}[exit ${probe.status}]`);
   }
   return { observed };
@@ -568,6 +1036,23 @@ function show(label, text, spell) {
 let failed = 0;
 let ran = 0;
 
+// The cases a "skip" keeps from running on this system, by reason.
+const skipped = new Map();
+function skips(testCase, plan) {
+  if (plan.skip === null) return false;
+  if (!skipped.has(plan.skip)) skipped.set(plan.skip, []);
+  skipped.get(plan.skip).push(testCase.name);
+  return true;
+}
+
+// How many cases did not run here, and why: at the end of every run.
+function skipReport() {
+  if (!skipped.size) return;
+  const count = [...skipped.values()].reduce((sum, names) => sum + names.length, 0);
+  console.log(`${count} case(s) skipped on ${process.platform}, as the cases say:`);
+  for (const [reason, names] of skipped) console.log(`  ${String(names.length).padStart(4)}  ${reason}`);
+}
+
 // --handback ROOT_ENV=entry: which cases does the binary answer itself?
 function handbackCheck() {
   const { rootEnv, entry } = handback;
@@ -580,6 +1065,7 @@ function handbackCheck() {
   let native = 0;
   let back = 0;
   for (const { testCase, index, plan } of selected) {
+    if (skips(testCase, plan)) continue;
     ran++;
     const run = runCase(testCase, "rs", index, plan, { [rootEnv]: standIn });
     if (run.broken) {
@@ -591,19 +1077,24 @@ function handbackCheck() {
     const reached = `${run.observed.stdout ?? ""}${run.observed.terminal ?? ""}`.includes(MARKER);
     if (reached) back++;
     else native++;
-    if (reached === Boolean(testCase.handback)) continue;
+    if (reached === (plan.handback !== null)) continue;
     failed++;
-    console.log(
-      reached
-        ? `  WRONG   ${testCase.name}\n      reached the JavaScript, but the case does not say "handback"`
-        : `  WRONG   ${testCase.name}\n      was answered by the binary, but the case says it is handed back (${testCase.handback})`,
-    );
+    const system = typeof testCase.handback === "object" ? `on ${process.platform}: ` : "";
+    let why;
+    if (!reached) why = `was answered by the binary, but the case says it is handed back (${system}${plan.handback})`;
+    else if (plan.handbackElsewhere.length) why = `reached the JavaScript on ${process.platform}, but the case says "handback" only on ${plan.handbackElsewhere.join(", ")}`;
+    else why = 'reached the JavaScript, but the case does not say "handback"';
+    console.log(`  WRONG   ${testCase.name}\n      ${why}`);
   }
   if (ran && !failed) console.log(`${native} case(s) answered by the binary, ${back} handed back to the JavaScript, as the cases say`);
 }
 
 function compareAll() {
   for (const { testCase, index, plan } of selected) {
+    if (skips(testCase, plan)) {
+      console.log(`  skip    ${testCase.name}`);
+      continue;
+    }
     ran++;
     const ts = runCase(testCase, "ts", index, plan);
     const rs = runCase(testCase, "rs", index, plan);
@@ -654,6 +1145,7 @@ try {
   } else fs.rmSync(work, { recursive: true, force: true, maxRetries: 3 });
 }
 if (gone) process.exit(3);
+skipReport();
 if (!ran) {
   console.log("no case ran");
   process.exit(2);

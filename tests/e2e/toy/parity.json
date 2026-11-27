@@ -1,6 +1,12 @@
 {
   "cases": [
     { "name": "exit code is compared", "args": ["exit", "5"] },
-    { "name": "arguments are passed through", "args": ["one", "two words"] }
+    { "name": "arguments are passed through", "args": ["one", "two words"] },
+    {
+      "name": "setup and after lines run in a POSIX shell, on Windows too",
+      "args": ["<CWD>/in.txt"],
+      "setup": ["printf '%s\\n' 'a\\\\b' > in.txt"],
+      "after": ["cat in.txt", "pwd", "test -d '<HOME>' && echo the home is there", "echo <CWD> <HOME>"]
+    }
   ]
 }
