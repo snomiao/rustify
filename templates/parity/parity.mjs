@@ -253,10 +253,12 @@
 // - A program in --ts or --rs named without .exe (rs/target/release/mycli) is
 //   started with it, also behind another program (env, sh).
 // - A leading `env NAME=value …` in --ts or --rs is done by the runner itself:
-//   it starts the program with those variables, the values as written (a
-//   Windows path: $GITHUB_WORKSPACE, or $(pwd -W) in Git Bash, not $PWD). The
+//   it starts the program with those variables, the values as written. The
 //   env on Windows is MSYS's, which would give the program TERM=xterm-256color
-//   and rewrite its arguments.
+//   and rewrite its arguments. It also turned a value that looks like a POSIX
+//   path into a Windows one, and the runner does not: write a Windows path
+//   ($GITHUB_WORKSPACE, or $(pwd -W) in Git Bash), not $PWD, which Git Bash
+//   spells /c/… or /tmp/….
 // - Any other program of the MSYS family in front of the program (sh
 //   rs/parity/run.sh, or an env behind a wrapper) reads its command line by
 //   rules of its own: it globs * ? [ against the case's files, expands ~ and
