@@ -98,11 +98,15 @@ from a job in the project's own workflow. Projects never list platforms.
    `.github/workflows/rust-npm-release.yml` filled in from the project's
    Cargo.toml and package.json. Check the values under `with:` (`pre-build`
    for steps cargo needs first, `js-build` in hybrid mode, `smoke-extra` for
-   commands that are still JavaScript or handed back to it — one line each,
-   `<command> [args] => <text it must print>`). If the project's build needs
-   its own runners or steps, keep its build jobs, have them upload
-   `native-<platform key>` artifacts, and pass `prebuilt: true`; if it cannot
-   build all six platforms, list the ones it ships in `rustify.platforms`.
+   commands that are still JavaScript or handed back to it, and for ported
+   ones — one line each, `<command> [args] => <text it must print>`, with
+   `[native]` or `[handback]` in front to say who must answer it, which needs
+   the hand-back helper v5 in the crate). The smoke commands run with an
+   empty home directory of their own; `[real-home]` on a line gives the real
+   one. If the project's build needs its own runners or steps, keep its
+   build jobs, have them upload `native-<platform key>` artifacts, and pass
+   `prebuilt: true`; if it cannot build all six platforms, list the ones it
+   ships in `rustify.platforms`.
 2. Add `rustify` to the project's `package.json`:
    - `bins`: each npm command → the cargo bin that implements it.
    - `mode`: `native` when the package needs no JavaScript at all; `hybrid`
@@ -152,11 +156,17 @@ move. The procedure is `docs/porting.md`; follow it exactly. In short:
    starts one whose binary hands every command back to the JavaScript.
 2. One command at a time: write its parity cases first and make them pass
    TypeScript against TypeScript, then port until they pass against Rust
-   (`templates/parity/parity.mjs`), then switch the command over in `main.rs`.
+   (`templates/parity/parity.mjs`, v4: a case can run on a terminal with
+   `"tty"`, unset a variable with `null`, and write to files with
+   `"capture": "files"`), then switch the command over in `main.rs`.
    Rust takes only the situations it implements exactly and hands back the
-   rest; `--handback` proves which cases it really answers itself.
-3. Pass the test to the pipeline with `parity:` so CI holds the line, and set
-   the ledger entry to `verified` with the cases file as `proof`.
+   rest, through `js_fallback::attempt` (helper v5); `--handback` proves which
+   cases it really answers itself.
+3. Pass the test to the pipeline with `parity:` so CI holds the line, and
+   name in `parity-platforms` every platform where the binary answers
+   natively, or hand that platform back. Add a `smoke-extra` line for the
+   command marked `[native]`. Set the ledger entry to `verified` with the
+   cases file as `proof`.
 
 Each project is a large, self-contained job that needs its whole codebase in
 view. Give it to its own agent — or to the lane that already owns the project
