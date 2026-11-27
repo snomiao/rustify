@@ -11,12 +11,17 @@ fn main() {
     //   toy answer      works out its answer, which is then printed
     //   toy decline     does not implement the invocation: the JavaScript answers
     //   toy panic       has a bug: the JavaScript answers and nothing else shows
+    //   toy panic-thread  has a bug in a worker thread it started, and declines
+    //                   when the thread fails: the same
     //   toy panic-late  has a bug after it began to print: nothing can answer in its place
-    if let Some(command @ ("answer" | "decline" | "panic" | "panic-late")) = std::env::args().nth(1).as_deref() {
+    if let Some(command @ ("answer" | "decline" | "panic" | "panic-thread" | "panic-late")) = std::env::args().nth(1).as_deref() {
         let answer = js_fallback::attempt(|| match command {
             "answer" => Ok("toy answers natively"),
             "decline" => Err(js_fallback::HandBack),
             "panic" => panic!("a bug in a ported command"),
+            "panic-thread" => std::thread::spawn(|| -> &'static str { panic!("a bug in a worker thread") })
+                .join()
+                .map_err(|_| js_fallback::HandBack),
             _ => {
                 js_fallback::commit();
                 println!("toy began to answer");

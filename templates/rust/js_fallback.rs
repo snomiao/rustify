@@ -40,7 +40,10 @@
 //! JavaScript` to stderr, a panic that `attempt` swallowed is reported before
 //! that line, and a native answer looks as it always does.
 //!
-//! Delete this file when nothing falls back any more.
+//! Delete this file when nothing falls back any more, and take the `[native]`
+//! and `[handback]` markers off the project's smoke lines with it: the install
+//! smoke test finds out whether a binary can say who answered by looking for
+//! that line's text in it, and fails a marked line when the text is missing.
 
 use std::cell::Cell;
 use std::io::Write;
@@ -147,12 +150,18 @@ pub fn run(entry: &str) -> ! {
 pub struct HandBack;
 
 thread_local! {
+    /// Set while an attempt runs on this thread.
+    static IN_ATTEMPT: Cell<bool> = const { Cell::new(false) };
     /// Set by `commit`, for the attempt running on this thread.
     static COMMITTED: Cell<bool> = const { Cell::new(false) };
 }
 
+// Both are asked by the panic hook, which can run while the thread is ending.
+fn in_attempt() -> bool {
+    IN_ATTEMPT.try_with(Cell::get).unwrap_or(false)
+}
+
 fn committed() -> bool {
-    // Asked by the panic hook, which can run while the thread is ending.
     COMMITTED.try_with(Cell::get).unwrap_or(true)
 }
 
@@ -183,11 +192,17 @@ pub fn commit() {
 /// is itself a bug and panics.
 ///
 /// The panic hook (what prints "thread 'main' panicked at …") belongs to the
-/// whole process. While any attempt runs, a panic on any thread says nothing,
-/// unless it happens on the thread of an attempt that has committed or the
-/// trace is on; when the last attempt returns, the hook that was there
-/// before is put back. Attempts may run on several threads at once, as tests
-/// do, but should not be nested.
+/// whole process. While attempts run, a quieter one is in its place, and the
+/// hook that was there before is put back when the last of them returns. In
+/// the program, the quiet hook silences a panic on any thread, so a worker
+/// thread the command started says nothing either. In the crate's own tests
+/// (`cfg(test)`) it silences only the threads that run an attempt, so that a
+/// test failing beside them keeps its message; there a worker thread started
+/// inside an attempt is reported. Either way, a panic is reported on the
+/// thread of an attempt that has committed, and everywhere when the trace is
+/// on. Attempts may run on several threads at once and inside one another.
+/// A test that puts a panic hook of its own in place should not run beside
+/// tests that call `attempt`.
 ///
 /// This relies on unwinding. A crate built with `panic = "abort"` cannot
 /// catch anything: there a panic ends the process at once, with its usual
@@ -196,7 +211,10 @@ pub fn commit() {
 #[allow(dead_code)]
 pub fn attempt<T>(command: impl FnOnce() -> Result<T, HandBack>) -> Option<T> {
     use std::panic;
-    COMMITTED.with(|flag| flag.set(false));
+    // An attempt inside another starts afresh as well. When it returns, the
+    // outer one is as it was, except that what the inner one committed stays
+    // committed: it may have printed.
+    let outer = (IN_ATTEMPT.replace(true), COMMITTED.replace(false));
     let outcome = if cfg!(panic = "unwind") {
         quiet_panics(true);
         let outcome = panic::catch_unwind(panic::AssertUnwindSafe(command));
@@ -205,10 +223,13 @@ pub fn attempt<T>(command: impl FnOnce() -> Result<T, HandBack>) -> Option<T> {
     } else {
         Ok(command())
     };
+    let committed = committed();
+    IN_ATTEMPT.set(outer.0);
+    COMMITTED.set(outer.1 || committed);
     match outcome {
         Ok(Ok(answer)) => Some(answer),
-        Ok(Err(HandBack)) if committed() => panic!("a ported command handed back after js_fallback::commit()"),
-        Err(payload) if committed() => panic::resume_unwind(payload),
+        Ok(Err(HandBack)) if committed => panic!("a ported command handed back after js_fallback::commit()"),
+        Err(payload) if committed => panic::resume_unwind(payload),
         Ok(Err(HandBack)) | Err(_) => None,
     }
 }
@@ -232,7 +253,7 @@ fn quiet_panics(on: bool) {
             let earlier: Arc<PanicHook> = Arc::new(panic::take_hook());
             let report = Arc::clone(&earlier);
             panic::set_hook(Box::new(move |info| {
-                if committed() || tracing() {
+                if committed() || tracing() || (cfg!(test) && !in_attempt()) {
                     report(info);
                 }
             }));
@@ -348,62 +369,139 @@ mod tests {
         assert_eq!(interpreter(""), None);
     }
 
-    /// One test for all of `attempt`, in this order. The panic hook belongs to
-    /// the whole process and the crate's other tests run beside this one, so
-    /// the hook put in place here counts the panics of this thread only and
-    /// passes those of every other thread on to the hook that was there.
+    /// Whether the test `test` of this module is to run in this process. The
+    /// panic hook belongs to the whole process, and the crate's other tests
+    /// may call `attempt`, put a hook in place or panic while a test watches
+    /// it. So such a test runs again, alone, in a process of its own, once
+    /// with the trace off and once with it on: `alone` returns true there.
+    /// Anywhere else it starts those two runs, fails unless the test passed
+    /// in both, and returns false.
+    fn alone(test: &str) -> bool {
+        const ALONE: &str = "RUSTIFY_FALLBACK_TEST_ALONE";
+        if std::env::var_os(ALONE).is_some() {
+            return true;
+        }
+        // The test binary names a test by its path without the crate's name.
+        let module = module_path!().split_once("::").map_or(module_path!(), |(_, path)| path);
+        let name = format!("{module}::{test}");
+        for trace in [false, true] {
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command.args([name.as_str(), "--exact", "--test-threads=1"]).env(ALONE, "1");
+            if trace {
+                command.env(TRACE_ENV, "1");
+            } else {
+                command.env_remove(TRACE_ENV);
+            }
+            let run = command.output().unwrap();
+            let output = format!("{}{}", String::from_utf8_lossy(&run.stdout), String::from_utf8_lossy(&run.stderr));
+            assert!(
+                run.status.success() && output.contains("1 passed"),
+                "{name}, run alone with the trace {}:\n{output}",
+                if trace { "on" } else { "off" }
+            );
+        }
+        false
+    }
+
+    /// One test for all of `attempt`, in this order.
     #[test]
     fn attempt_answers_declines_and_hands_back_a_panic_until_commit() {
         use std::panic::catch_unwind;
-        use std::sync::Arc;
-        thread_local! {
-            static REPORTED: Cell<Option<usize>> = const { Cell::new(None) };
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        if !alone("attempt_answers_declines_and_hands_back_a_panic_until_commit") {
+            return;
         }
-        let reported = || REPORTED.with(Cell::get).unwrap_or(0);
-        REPORTED.with(|count| count.set(Some(0)));
-        let before = Arc::new(std::panic::take_hook());
-        let others = Arc::clone(&before);
-        std::panic::set_hook(Box::new(move |info| match REPORTED.with(Cell::get) {
-            Some(count) => REPORTED.with(|counter| counter.set(Some(count + 1))),
-            None => others(info),
+        // Counts the panics that reach the hook that was there before, on any
+        // thread, and passes them on, so that a failing assertion shows.
+        static REPORTED: AtomicUsize = AtomicUsize::new(0);
+        let reported = || REPORTED.load(SeqCst);
+        let before = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            REPORTED.fetch_add(1, SeqCst);
+            before(info);
         }));
-        // A swallowed panic is reported when whoever runs the tests has
-        // switched the trace on.
+        // With the trace on, a swallowed panic is reported too.
         let traced = usize::from(tracing());
+        let mut expected = 0;
         let bug = || -> Result<i32, HandBack> { panic!("a bug in a ported command") };
 
         assert_eq!(attempt(|| Ok(7)), Some(7));
         assert_eq!(attempt(|| Err::<i32, _>(HandBack)), None);
         assert_eq!(attempt(bug), None);
-        assert_eq!(reported(), traced, "a panic before commit is not reported");
+        expected += traced;
+        assert_eq!(reported(), expected, "a panic before commit is not reported");
         assert!(catch_unwind(|| panic!("outside attempt")).is_err());
-        assert_eq!(reported(), traced + 1, "the hook that was there before is back");
+        expected += 1;
+        assert_eq!(reported(), expected, "the hook that was there before is back");
 
         // Attempts on several threads at once leave that hook in place too.
         let threads: Vec<_> = (0..4)
             .map(|_| std::thread::spawn(move || (0..50).filter(|_| attempt(bug).is_none()).count()))
             .collect();
         assert!(threads.into_iter().all(|thread| thread.join().unwrap() == 50));
+        expected += 200 * traced;
         assert!(catch_unwind(|| panic!("after the threads")).is_err());
-        assert_eq!(reported(), traced + 2, "the hook is back after attempts on several threads");
+        expected += 1;
+        assert_eq!(reported(), expected, "the hook is back after attempts on several threads");
+
+        // In a test build, a panic on a thread that runs no attempt is
+        // reported while another thread runs one.
+        let (started, running) = std::sync::mpsc::channel();
+        let (finish, finished) = std::sync::mpsc::channel::<()>();
+        let beside = std::thread::spawn(move || {
+            attempt(|| {
+                started.send(()).unwrap();
+                finished.recv().unwrap();
+                Ok(())
+            })
+        });
+        running.recv().unwrap();
+        assert!(catch_unwind(|| panic!("a test failing beside an attempt")).is_err());
+        expected += 1;
+        assert_eq!(reported(), expected, "a panic beside an attempt is reported");
+        finish.send(()).unwrap();
+        assert_eq!(beside.join().unwrap(), Some(()));
 
         let late = || -> Result<i32, HandBack> {
             commit();
             panic!("a bug after the first output")
         };
         assert!(catch_unwind(|| attempt(late)).is_err(), "a panic after commit is not swallowed");
-        assert_eq!(reported(), traced + 3, "and it is reported");
+        expected += 1;
+        assert_eq!(reported(), expected, "and it is reported");
         let late_hand_back = || -> Result<i32, HandBack> {
             commit();
             Err(HandBack)
         };
         assert!(catch_unwind(|| attempt(late_hand_back)).is_err(), "handing back after commit is a bug");
-        assert_eq!(reported(), traced + 4);
+        expected += 1;
+        assert_eq!(reported(), expected);
         assert_eq!(attempt(|| Err::<i32, _>(HandBack)), None, "the next attempt starts afresh");
 
-        REPORTED.with(|count| count.set(None));
-        drop(std::panic::take_hook());
-        std::panic::set_hook(Arc::try_unwrap(before).unwrap_or_else(|shared| Box::new(move |info| shared(info))));
+        // Attempts inside one another.
+        let outer = || -> Result<i32, HandBack> {
+            assert_eq!(attempt(|| Err::<i32, _>(HandBack)), None);
+            Ok(1)
+        };
+        assert_eq!(attempt(outer), Some(1), "an inner attempt that declines leaves the outer one going");
+        let outer_bug = || -> Result<i32, HandBack> {
+            assert_eq!(attempt(|| Ok(2)), Some(2));
+            panic!("a bug after an inner attempt")
+        };
+        assert_eq!(attempt(outer_bug), None);
+        expected += traced;
+        assert_eq!(reported(), expected, "after an inner attempt, the outer one is still quiet");
+        let inner_commit = || -> Result<i32, HandBack> {
+            commit();
+            Ok(3)
+        };
+        let outer_after_commit = || -> Result<i32, HandBack> {
+            assert_eq!(attempt(inner_commit), Some(3));
+            Err(HandBack)
+        };
+        assert!(catch_unwind(|| attempt(outer_after_commit)).is_err(), "what an inner attempt committed stays committed");
+        expected += 1;
+        assert_eq!(reported(), expected);
     }
 
     #[test]
