@@ -100,6 +100,8 @@ jobs:
       # and runs, and so is the parity runner, on every system a project may
       # ask for (Git Bash on Windows).
       parity-platforms: '["linux-x64", "linux-arm64", "darwin-arm64", "darwin-x64", "win32-x64", "win32-arm64"]'
+      # Taken as given: a project with a long comparison asks for more.
+      parity-timeout-minutes: 15
       parity: |
         "$RUSTIFY_BIN_DIR/toy" --version | grep -q "version=0.0.0-ci."
         node "$RUSTIFY_PARITY" --cases tests/e2e/toy/parity.json --ts "$RUSTIFY_BIN_DIR/toy" --rs "$RUSTIFY_BIN_DIR/toy"

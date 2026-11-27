@@ -80,6 +80,11 @@ on:
         required: false
         default: ""
         type: string
+      parity-timeout-minutes:
+        description: "Minutes the parity job may take on each platform before it is stopped. Default 30; a project with many cases, or slow ones, can ask for more."
+        required: false
+        default: 30
+        type: number
       parity-platforms:
         description: "Platforms the parity command runs on, as a JSON list of platform keys: linux-x64, linux-arm64, darwin-arm64, darwin-x64, win32-x64, win32-arm64. Each runs on a runner of that platform, with its binaries in $RUSTIFY_BIN_DIR and its key in $RUSTIFY_PLATFORM, in bash (Git Bash on Windows). Default: [\"linux-x64\"]. A binary that answers a command natively on a platform should be proven there; until it is, it should hand that platform back."
         required: false
@@ -209,7 +214,7 @@ jobs:
     # `build` is skipped for prebuilt binaries; that must not skip this job.
     if: ${{ !cancelled() && inputs.parity != '' && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
     runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest","linux-arm64":"ubuntu-24.04-arm","darwin-arm64":"macos-latest","darwin-x64":"macos-15-intel","win32-x64":"windows-latest","win32-arm64":"windows-11-arm"}')[matrix.key] || 'ubuntu-latest' }}
-    timeout-minutes: 30
+    timeout-minutes: ${{ inputs.parity-timeout-minutes }}
     strategy:
       fail-fast: false
       matrix:
