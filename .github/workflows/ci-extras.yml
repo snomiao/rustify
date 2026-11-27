@@ -22,7 +22,9 @@ jobs:
   pipeline:
     uses: ./.github/workflows/rust-npm-build.yml
     with:
-      manifest: tests/e2e/toy/Cargo.toml
+      # The toy's sources, as a crate inside the package's directory. The
+      # package has no `files` list, so the packer must leave the crate out.
+      manifest: tests/e2e/toy-extras/rs/Cargo.toml
       # toy-helper is built everywhere and shipped on Windows only
       # (extraPlatforms in the fixture's package.json).
       bins: toy toy-helper
@@ -32,9 +34,17 @@ jobs:
       smoke: toyjs --version
       # Starts with `--` on purpose: such a text has to survive as well.
       smoke-expect: --version"]
-      # The toy echoes this variable, and never prints the forbidden text.
+      # The toy echoes the first variable, and never prints the forbidden
+      # text. The second is one the smoke test removes when it gives the
+      # commands a home directory of their own: set here, it has to win.
       smoke-env: |
         RUSTIFY_PACKAGE_ROOT=from-smoke-env
+        XDG_STATE_HOME=from-smoke-env
+      # `package-files` lists what was installed as the package: no crate.
+      # `where` says which variables hold the given text.
       smoke-extra: |
         toyjs probe => root=from-smoke-env !> no native binary
         [7] toyjs exit 7 => args=["exit", "7"]
+        toyjs package-files => cli.mjs !> Cargo
+        toyjs where rustify-smoke- HOME USERPROFILE => HOME:inside USERPROFILE:inside
+        toyjs where from-smoke-env XDG_STATE_HOME XDG_DATA_HOME => XDG_STATE_HOME:inside XDG_DATA_HOME:unset

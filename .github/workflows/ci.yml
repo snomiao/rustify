@@ -64,10 +64,32 @@ jobs:
       version: 0.0.0-ci.${{ github.run_number }}
       # The toy package is hybrid: `legacy` is still JavaScript, and `toy js`
       # stands for a command the binary hands back to it.
+      #
+      # The marked lines ask who answered. `toy check` and `answer` are the
+      # binary's own; `toy js` and `decline` go to the JavaScript; so does a
+      # panic, without a word, and with its report where the trace is on
+      # (a marked line switches it on). A panic after commit() ends the
+      # command with Rust's exit code 101.
+      #
+      # `toy where` shows which variables point into the home directory the
+      # test hands out: every one that is set, on every system. The JavaScript
+      # sees the same directory, whether the binary or the package manager's
+      # own shim starts it. `[real-home]` gives the runner's home back.
       smoke-extra: |
         toy-alias check => toy-alias
         legacy hello => js cli: hello
-        toy js handed back => js cli: js handed back
+        [handback] toy js handed back => js cli: js handed back
+        [native] toy check => args=["check"]
+        [native] toy-alias answer => toy answers natively
+        [native:linux,darwin,win32] toy answer => toy answers natively
+        [handback] toy decline politely => js cli: decline politely
+        toy panic quietly => js cli: panic quietly !> panicked
+        [handback] toy panic loudly => a bug in a ported command
+        [101] toy panic-late => a bug after the first output !> js cli
+        toy where rustify-smoke- HOME USERPROFILE APPDATA LOCALAPPDATA XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME => HOME:inside USERPROFILE:inside !> :outside
+        toy js homedir => rustify-smoke-
+        legacy homedir => rustify-smoke-
+        [real-home] toy where rustify-smoke- HOME USERPROFILE => HOME: !> :inside
       package: tests/e2e/toy/package.json
       # Stands for a project's parity tests: the freshly built binary is there
       # and runs, and so is the parity runner.
@@ -105,4 +127,5 @@ jobs:
       - name: Install from that registry and run
         run: |
           node templates/npm/smoke.mjs --dist npm-dist --run "toy --version" --registry "$REGISTRY" \
-            --also "legacy hello => js cli: hello" --also "toy js handed back => js cli: js handed back"
+            --also "legacy hello => js cli: hello" --also "[handback] toy js handed back => js cli: js handed back" \
+            --also "[native] toy answer => toy answers natively"
