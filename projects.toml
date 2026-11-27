@@ -146,7 +146,9 @@ name = "gchat-cli"
 repo = "snomiao/gchat-cli"
 npm = "gchat-cli"
 crate = "gchat-cli"
+manifest = "rs/Cargo.toml"
 ts = ["ts", "tests"]
+rust = ["rs/src"]
 
 [[project]]
 name = "Comfy-AI"

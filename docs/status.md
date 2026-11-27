@@ -3,7 +3,7 @@
 | Project | Port | `bun i -g` gives | Next step |
 |---|---|---|---|
 | agent-yes | 1 verified, 8 ported, 125 partial, 201 missing of 335 | JavaScript | port the missing features |
-| slack-hub | 5 verified, 0 ported, 14 partial, 133 missing of 152 | JavaScript | port the missing features |
+| slack-hub | 6 verified, 0 ported, 14 partial, 132 missing of 152 | JavaScript | port the missing features |
 | rechrome | not started | JavaScript | write the parity ledger |
 | otoji | started, not measured | JavaScript | write the parity ledger |
 | codehost | not started | JavaScript | write the parity ledger |
@@ -16,7 +16,7 @@
 | genvx | 18 verified, 1 ported, 4 partial, 4 missing of 27 | JavaScript | port the missing features |
 | rustdesk.skill | unknown | unknown | clone the repository |
 | wtx | unknown | unknown | clone the repository |
-| gchat-cli | not started | JavaScript | write the parity ledger |
+| gchat-cli | 12 verified, 1 ported, 1 partial, 2 missing of 16 | JavaScript | reconcile the parity ledger |
 | Comfy-AI | not started | JavaScript | write the parity ledger |
 | bunto | unknown | unknown | clone the repository |
 | snocommit | not started | JavaScript | write the parity ledger |
@@ -101,7 +101,10 @@
 
 **Parity ledger**
 
-- `info` 152 features: 5 verified, 0 ported but unproven, 14 partial, 133 missing, 0 dropped
+- `info` 152 features: 6 verified, 0 ported but unproven, 14 partial, 132 missing, 0 dropped
+- `warn` `news`: rs path `rs/src/news.rs` does not exist
+- `warn` `news`: rs path `rs/src/msgfmt.rs` does not exist
+- `warn` `news`: rs path `rs/src/cli.rs` does not exist
 - `warn` `search <query>`: rs path `rs/src/search.rs` does not exist
 - `warn` `search <query>`: rs path `rs/src/msgfmt.rs` does not exist
 - `warn` `search <query>`: rs path `rs/src/config.rs` does not exist
@@ -130,12 +133,13 @@
 - `warn` `lookup cache (~/.config/slack-cli/cache.json; --no-cache on todo / mytodo)`: rs path `rs/src/cache.rs` does not exist
 - `warn` `legacy slack-term names still read (SLACK_TERM_* variables, .slack-term/ and slack-term config dirs)`: rs path `rs/src/config.rs` does not exist
 - `ok  ` ledger is current (reconciled at `e315b19`, no TypeScript changed since)
-- `todo` 147 feature(s) not fully ported
+- `todo` 146 feature(s) not fully ported
 
 **Delivery**
 
 - `info` crate `slack-cli` 0.2.0 builds: `slack`
 - `todo` crate is named `slack-cli`; it should be `slack-hub`
+- `warn` `publishConfig.bin` differs from `bin`, and npm does not apply it when publishing: the published command is what `bin` names. The hand-back must go there too
 - `todo` no workflow uses the shared build pipeline (`snomiao/rustify/.github/workflows/rust-npm-build.yml`)
 - `todo` `package.json` has no `rustify.bins` (which npm command runs which cargo bin)
 - `info` crate `slack-hub` is not on crates.io (the name is free)
@@ -445,11 +449,49 @@
 
 **Parity ledger**
 
-- `todo` no ledger at `parity/gchat-cli.toml`, so progress cannot be measured
+- `info` 16 features: 12 verified, 1 ported but unproven, 1 partial, 2 missing, 0 dropped
+- `warn` `spaces / rooms / ls`: proof `rs/parity.json` does not exist
+- `warn` `spaces / rooms / ls`: rs path `rs/src/commands/spaces.rs` does not exist
+- `warn` `read <space>`: proof `rs/parity.json` does not exist
+- `warn` `read <space>`: rs path `rs/src/commands/read.rs` does not exist
+- `warn` `send <space[:thread]> <message> (first call: context, confirm code, pending file)`: proof `rs/parity.json` does not exist
+- `warn` `send <space[:thread]> <message> (first call: context, confirm code, pending file)`: rs path `rs/src/commands/send.rs` does not exist
+- `warn` `send --code (second call: post, --dry-run, refusals)`: proof `rs/parity.json` does not exist
+- `warn` `send --code (second call: post, --dry-run, refusals)`: rs path `rs/src/commands/send.rs` does not exist
+- `warn` `send --code (second call: post, --dry-run, refusals)`: rs path `rs/src/gws.rs` does not exist
+- `warn` `tail <space> (backlog, then polling)`: proof `rs/parity.json` does not exist
+- `warn` `tail <space> (backlog, then polling)`: rs path `rs/src/commands/tail.rs` does not exist
+- `warn` `tail --exit-on-message / --timeout (wait for a reply)`: proof `rs/parity.json` does not exist
+- `warn` `tail --exit-on-message / --timeout (wait for a reply)`: rs path `rs/src/commands/tail.rs` does not exist
+- `warn` `tail --exit-on-message / --timeout (wait for a reply)`: rs path `rs/src/gws.rs` does not exist
+- `warn` `watch <spaces..>`: proof `rs/parity.json` does not exist
+- `warn` `watch <spaces..>`: rs path `rs/src/commands/watch.rs` does not exist
+- `warn` `watch <spaces..>`: rs path `rs/src/rt.rs` does not exist
+- `warn` `auth`: proof `rs/parity.json` does not exist
+- `warn` `auth`: rs path `rs/src/commands/auth.rs` does not exist
+- `warn` `gws backend: GCHAT_GWS_BIN / PATH, arguments, results and errors`: proof `rs/parity.json` does not exist
+- `warn` `gws backend: GCHAT_GWS_BIN / PATH, arguments, results and errors`: rs path `rs/src/gws.rs` does not exist
+- `warn` `gws backend: GCHAT_GWS_BIN / PATH, arguments, results and errors`: rs path `rs/src/rt.rs` does not exist
+- `warn` `a gws that cannot be started`: rs path `rs/src/gws.rs` does not exist
+- `warn` `gws on Windows (.exe or .cmd), TEMP and USERPROFILE`: rs path `rs/src/gws.rs` does not exist
+- `warn` `gws on Windows (.exe or .cmd), TEMP and USERPROFILE`: rs path `rs/src/config.rs` does not exist
+- `warn` `space arguments (id, spaces/<id>, display name) and the space cache`: proof `rs/parity.json` does not exist
+- `warn` `space arguments (id, spaces/<id>, display name) and the space cache`: rs path `rs/src/resolver.rs` does not exist
+- `warn` `space arguments (id, spaces/<id>, display name) and the space cache`: rs path `rs/src/config.rs` does not exist
+- `warn` `message and table rendering`: proof `rs/parity.json` does not exist
+- `warn` `message and table rendering`: rs path `rs/src/format.rs` does not exist
+- `warn` `--format json output`: proof `rs/parity.json` does not exist
+- `warn` `--format json output`: rs path `rs/src/json.rs` does not exist
+- `warn` `answers from gws the TypeScript was not written for`: rs path `rs/src/rt.rs` does not exist
+- `warn` `answers from gws the TypeScript was not written for`: rs path `rs/src/format.rs` does not exist
+- `todo` 3 TypeScript file(s) changed since the ledger was reconciled at `4ced1d2`: `ts/cli.ts`, `ts/commands/tail.ts`, `ts/gws.ts`
+- `todo` 3 feature(s) not fully ported
 - `todo` no Rust port exists yet
 
 **Delivery**
 
+- `warn` `rs/Cargo.toml` is missing or unreadable
+- `warn` `publishConfig.bin` differs from `bin`, and npm does not apply it when publishing: the published command is what `bin` names. The hand-back must go there too
 - `info` npm has `gchat-cli` 1.2.0
 - `warn` the newest release tag in this checkout is `v1.0.0` — it is behind npm; fetch before trusting the code counts
 - `todo` `bun i -g gchat-cli` installs JavaScript, not the Rust binary (`gchat` → `ts/cli.ts`)

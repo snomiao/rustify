@@ -113,10 +113,14 @@ test("<CWD> and <HOME> in a case stand for the directories of the run", () => {
           after: ["cat ref.txt", "test -d '<HOME>' && echo home-exists"],
         },
         { name: "env placeholder reaches the program", args: ["env"], env: { GREETING: "<CWD>", TZ: "UTC" } },
+        { name: "<REPO> is where the runner was started", args: ["echo", "x"], after: ["test -f '<REPO>/parity.json' && echo found-the-cases-file"] },
+        { name: "each run has its own empty temp directory", args: ["echo", "x"], after: ["ls -A \"$TMPDIR\" | wc -l", "echo \"$TMPDIR\""] },
       ],
     }, ["--show"]);
     assert.equal(r.status, 0, r.stdout + r.stderr);
-    assert.match(r.stdout, /all 2 case\(s\) behave the same/);
+    assert.match(r.stdout, /all 4 case\(s\) behave the same/);
+    assert.match(r.stdout, /found-the-cases-file/);
+    assert.match(r.stdout, /<ROOT>\/tmp/);
     // --show prints what was compared, with the run's paths normalised again.
     assert.match(r.stdout, /<CWD>\/a <HOME>\/b/);
     assert.match(r.stdout, /home-exists/);

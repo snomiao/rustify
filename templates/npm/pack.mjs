@@ -205,7 +205,8 @@ function pack(opts) {
       delete scripts[s];
     }
     manifest.scripts = scripts;
-    const ownBin = (project.publishConfig || {}).bin || project.bin || {};
+    // `bin`, as npm publishes it. (npm does not apply publishConfig.bin.)
+    const ownBin = project.bin || {};
     manifest.bin = typeof ownBin === "string" ? { [project.name]: ownBin } : { ...ownBin };
     if (Object.keys(cfg.bins).length && Array.isArray(manifest.files) && !manifest.files.includes(LAUNCHER_DIR)) {
       manifest.files = [...manifest.files, LAUNCHER_DIR];
