@@ -1134,20 +1134,21 @@ test("a leading env in --ts or --rs sets variables for the program only, and the
   try {
     fs.writeFileSync(path.join(dir, "parity.json"), JSON.stringify({
       cases: [
-        { name: "variables", args: ["vars", "GREETING", "TERM", "HOME"], after: ['echo "${GREETING-not in the lines}"'] },
+        // A program that is not of the MSYS family gets nothing for MSYS either.
+        { name: "variables", args: ["vars", "GREETING", "TERM", "HOME", "MSYS2_ARG_CONV_EXCL", "MSYS_NO_PATHCONV"], after: ['echo "${GREETING-not in the lines}"'] },
         { name: "arguments", args: AS_WRITTEN_ARGS, files: AS_WRITTEN_FILES },
       ],
     }));
     const r = spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--ts", `env GREETING=hi ${RUNTIME} ts.cjs`, "--rs", `env GREETING=hi ${RUNTIME} rs.cjs`, "--show"], { cwd: dir, encoding: "utf8" });
     assert.equal(r.status, 0, r.stdout + r.stderr);
-    assert.match(shown(r.stdout, "variables"), /stdout:\n\s+GREETING=hi TERM=undefined HOME=<HOME>\n[^]*not in the lines\n/);
+    assert.match(shown(r.stdout, "variables"), /stdout:\n\s+GREETING=hi TERM=undefined HOME=<HOME> MSYS2_ARG_CONV_EXCL=undefined MSYS_NO_PATHCONV=undefined\n[^]*not in the lines\n/);
     assert.ok(shown(r.stdout, "arguments").includes(`stdout:\n        ${AS_WRITTEN_SHOWN}\n`), r.stdout);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("Windows: an MSYS program in front of the program passes the case's arguments on as written; the lines keep MSYS's path conversion", { skip: !isWindows && "this is about Windows" }, () => {
+test("Windows: an MSYS program the runner starts passes the case's arguments on as written; the lines keep MSYS's path conversion", { skip: !isWindows && "this is about Windows" }, () => {
   const dir = setup();
   try {
     // A wrapper script run by Git's sh, as `sh rs/parity/run.sh …` is.
@@ -1155,25 +1156,34 @@ test("Windows: an MSYS program in front of the program passes the case's argumen
     fs.writeFileSync(path.join(dir, "launch.sh"), 'exec "$@"\n');
     const variables = ["vars", "MSYS", "MSYS2_ARG_CONV_EXCL", "MSYS_NO_PATHCONV"];
     const inLines = 'echo "${MSYS-none} ${MSYS2_ARG_CONV_EXCL-none} ${MSYS_NO_PATHCONV-none}"';
-    const none = { MSYS2_ARG_CONV_EXCL: null, MSYS_NO_PATHCONV: null };
-    fs.writeFileSync(path.join(dir, "parity.json"), JSON.stringify({
-      cases: [
-        { name: "arguments", args: AS_WRITTEN_ARGS, files: AS_WRITTEN_FILES },
-        // The line hands node a POSIX path, which MSYS turns into a Windows one.
-        { name: "variables", args: variables, env: { PARITY_NODE: process.execPath }, after: [inLines, '"$PARITY_NODE" -p "process.argv[1]" /usr/x'] },
-        // Taken out by the case: then the wrapper rewrites what the Rust side gets.
-        { name: "without them", args: ["args", "/"], env: none, after: [inLines] },
-      ],
-    }));
-    const r = spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--ts", `${RUNTIME} ts.cjs`, "--rs", `"${sh}" launch.sh ${RUNTIME} rs.cjs`, "--show"], { cwd: dir, encoding: "utf8" });
-    assert.equal(r.status, 1, r.stdout + r.stderr);
-    assert.ok(shown(r.stdout, "arguments").includes(`stdout:\n        ${AS_WRITTEN_SHOWN}\n`), r.stdout);
-    const vars = shown(r.stdout, "variables");
+    const runner = (cases, ts, rs) => {
+      fs.writeFileSync(path.join(dir, "parity.json"), JSON.stringify({ cases }));
+      return spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--ts", ts, "--rs", rs, "--show"], { cwd: dir, encoding: "utf8" });
+    };
+    const behindSh = (file) => `"${sh}" launch.sh ${RUNTIME} ${file}`;
+    // Both sides behind sh.
+    const both = runner([
+      { name: "arguments", args: AS_WRITTEN_ARGS, files: AS_WRITTEN_FILES },
+      // The line hands node a POSIX path, which MSYS turns into a Windows one.
+      { name: "variables", args: variables, env: { PARITY_NODE: process.execPath }, after: [inLines, '"$PARITY_NODE" -p "process.argv[1]" /usr/x'] },
+    ], behindSh("ts.cjs"), behindSh("rs.cjs"));
+    assert.equal(both.status, 0, both.stdout + both.stderr);
+    assert.ok(shown(both.stdout, "arguments").includes(`stdout:\n        ${AS_WRITTEN_SHOWN}\n`), both.stdout);
+    const vars = shown(both.stdout, "variables");
     assert.match(vars, /stdout:\n\s+MSYS=undefined MSYS2_ARG_CONV_EXCL=\* MSYS_NO_PATHCONV=1\n/);
     assert.match(vars, /:\n\s+none none none\n\s+\[exit 0\]\n/);
     assert.match(vars, /process\.argv\[1\]" \/usr\/x:\n\s+[A-Za-z]:\/.*\/usr\/x\n\s+\[exit 0\]/);
-    assert.match(r.stdout, /DIFFER {2}without them {2}\(stdout\)\n\s+stdout\n\s+TypeScript:\n\s+\["\/"\]\n\s+\n\s+Rust:\n\s+\["[A-Za-z]:\/[^"]*\/"\]\n/);
-    assert.match(r.stdout, /1 of 3 case\(s\) differ/);
+    // The TypeScript started directly, the Rust behind sh: the same arguments
+    // arrive; and taken out by the case, the variables no longer keep sh from
+    // rewriting what the Rust side gets.
+    const one = runner([
+      { name: "arguments", args: AS_WRITTEN_ARGS, files: AS_WRITTEN_FILES },
+      { name: "without them", args: ["args", "/"], env: { MSYS2_ARG_CONV_EXCL: null, MSYS_NO_PATHCONV: null }, after: [inLines] },
+    ], `${RUNTIME} ts.cjs`, behindSh("rs.cjs"));
+    assert.equal(one.status, 1, one.stdout + one.stderr);
+    assert.ok(one.stdout.includes("  same    arguments\n"), one.stdout);
+    assert.match(one.stdout, /DIFFER {2}without them {2}\(stdout\)\n\s+stdout\n\s+TypeScript:\n\s+\["\/"\]\n\s+\n\s+Rust:\n\s+\["[A-Za-z]:\/[^"]*\/"\]\n/);
+    assert.match(one.stdout, /1 of 2 case\(s\) differ/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

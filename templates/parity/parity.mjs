@@ -266,23 +266,28 @@
 //   a Windows one when it starts a Windows program (/ into C:/Program
 //   Files/Git/, x=/tmp/y into x=C:/…/tmp/y). So the runner puts an argument
 //   with a space or any of " ' * ? [ ] { } ~ @ in double quotes, where MSYS
-//   does none of that and Windows programs read it the same, and gives the
-//   program MSYS2_ARG_CONV_EXCL=* and MSYS_NO_PATHCONV=1, which stop the
-//   conversion. One difference is left: in double quotes MSYS makes one
-//   backslash of two, so an argument that is quoted and has two backslashes
-//   in a row (\\server\share x) arrives with one. Such a program also gives
-//   what it starts a TERM, and a wrapper script that starts a Windows program
-//   with a POSIX path of its own converts that path itself (cygpath -w). The
-//   lines do not get the two variables: they need the conversion (git -C
-//   "$(pwd)"). A case can set them, or take them out with null, in its `env`;
-//   the lines then get what it says. (MSYS=noglob is no help: with it, MSYS
-//   reads no quotes, and an argument with a space arrives in pieces.)
+//   does none of that and Windows programs read it the same; and when the
+//   program it starts is of the MSYS family (msys-2.0.dll beside it), it
+//   gives that one MSYS2_ARG_CONV_EXCL=* and MSYS_NO_PATHCONV=1, which stop
+//   the conversion. What it starts inherits them, so an MSYS program further
+//   down (git's own sh, which runs git-receive-pack for a push to a local
+//   store; a hook) converts nothing either. A program the runner starts
+//   itself does not get them: in genvx's cases that hid 13 differences. One
+//   difference is left: in double quotes MSYS makes one backslash of two, so
+//   an argument that is quoted and has two backslashes in a row
+//   (\\server\share x) arrives with one. Such a program also gives what it
+//   starts a TERM, and a wrapper script that starts a Windows program with a
+//   POSIX path of its own converts that path itself (cygpath -w). The lines
+//   do not get the two variables: they need the conversion (git -C "$(pwd)").
+//   A case can set them, or take them out with null, in its `env`; the lines
+//   then get what it says. (MSYS=noglob is no help: with it, MSYS reads no
+//   quotes, and an argument with a space arrives in pieces.)
 // - A program also sees SystemRoot, PATHEXT, TEMP and TMP (its temp directory,
-//   as TMPDIR is), and the two variables above. node itself adds HOMEDRIVE,
-//   HOMEPATH, LOGONSERVER, SYSTEMDRIVE, USERDOMAIN, USERNAME and WINDIR from
-//   the runner's own environment where the program's lacks them, so null
-//   cannot take these out, and HOMEDRIVE with HOMEPATH names the real home
-//   directory.
+//   as TMPDIR is), and behind an MSYS program the two variables above. node
+//   itself adds HOMEDRIVE, HOMEPATH, LOGONSERVER, SYSTEMDRIVE, USERDOMAIN,
+//   USERNAME and WINDIR from the runner's own environment where the
+//   program's lacks them, so null cannot take these out, and HOMEDRIVE with
+//   HOMEPATH names the real home directory.
 // - There is no terminal (a case with "tty" is BROKEN, see "A terminal") and
 //   no signal for a program to end by, only its exit code.
 //
@@ -596,16 +601,39 @@ function gitBash() {
 // The name of the variable that carries a line to the shell on Windows.
 const LINE = "RUSTIFY_PARITY_LINE";
 
-// On Windows, what a program of the MSYS family between the runner and the
-// program (sh with a wrapper script, an env that is not the first word) needs
-// to pass the case's arguments on without turning what looks like a POSIX
-// path into a Windows one: MSYS2's variable, and Git for Windows' own. Given
-// to the program, not to the lines, which need that conversion: git -C
-// "$(pwd)" hands git.exe a Windows path only because of it. (MSYS=noglob is
-// not among them: with it, MSYS reads no quotes on its command line, and an
-// argument with a space arrives in pieces. windowsArgument() keeps MSYS from
-// globbing instead.)
+// On Windows, what a program of the MSYS family that the runner starts (sh
+// with a wrapper script) needs to pass the case's arguments on to the program
+// behind it without turning what looks like a POSIX path into a Windows one:
+// MSYS2's variable, and Git for Windows' own. Only such a program gets them.
+// Whatever it starts inherits them, and an MSYS program further down then
+// converts nothing either: git's own sh, which runs git-receive-pack for a
+// push to a local store, would hand it /tmp/… as it is. Given to every
+// program, they did that in genvx's cases and hid 13 differences. Not given
+// to the lines either, which need the conversion: git -C "$(pwd)" hands
+// git.exe a Windows path only because of it. (MSYS=noglob is not among them:
+// with it, MSYS reads no quotes on its command line, and an argument with a
+// space arrives in pieces. windowsArgument() keeps MSYS from globbing.)
 const AS_WRITTEN = { MSYS2_ARG_CONV_EXCL: "*", MSYS_NO_PATHCONV: "1" };
+
+// Whether the program the runner starts is of the MSYS family: its directory
+// holds msys-2.0.dll (Git's and MSYS2's usr\bin), or it is Git's bin\bash.exe
+// or bin\sh.exe, which start those of usr\bin. A program named without a
+// directory is looked for as Windows looks for it, on the PATH it is started
+// with, also with .exe and .com.
+function isMsysProgram(program, env) {
+  const pathKey = Object.keys(env).find((key) => key.toUpperCase() === "PATH");
+  const dirs = path.isAbsolute(program) || /[\\/]/.test(program) ? [""] : String(env[pathKey] ?? "").split(";").filter(Boolean);
+  for (const dir of dirs) {
+    for (const extension of ["", ".exe", ".com"]) {
+      const file = path.resolve(dir, program + extension);
+      if (!fs.statSync(file, { throwIfNoEntry: false })?.isFile()) continue;
+      const own = path.dirname(file);
+      if (fs.existsSync(path.join(own, "msys-2.0.dll"))) return true;
+      return /^(ba)?sh\.exe$/i.test(path.basename(file)) && fs.existsSync(path.join(own, "..", "usr", "bin", "msys-2.0.dll"));
+    }
+  }
+  return false;
+}
 
 // On Windows a program gets its arguments as one command line, which it
 // splits by rules of its own. Windows programs (node, bun, Rust's std) follow
@@ -884,7 +912,7 @@ function runIn(root, testCase, impl, plan, extraEnv) {
     XDG_CACHE_HOME: path.join(root, "cache"),
     // Its own: programs keep state in the temp directory too.
     TMPDIR: tmp,
-    ...(isWindows ? { SystemRoot: process.env.SystemRoot, TEMP: tmp, TMP: tmp, PATHEXT: process.env.PATHEXT, ...AS_WRITTEN } : {}),
+    ...(isWindows ? { SystemRoot: process.env.SystemRoot, TEMP: tmp, TMP: tmp, PATHEXT: process.env.PATHEXT } : {}),
     // On a terminal there is always a TERM, and programs choose their colours by it.
     ...(terminals.length ? { TERM: "xterm-256color" } : {}),
   };
@@ -900,11 +928,7 @@ function runIn(root, testCase, impl, plan, extraEnv) {
     }
   }
   Object.assign(env, extraEnv);
-  // The lines' environment: the program's, without the variables above that
-  // keep MSYS from converting paths, unless the cases themselves set them.
-  const lineEnv = { ...env };
-  for (const name of Object.keys(AS_WRITTEN)) if (isWindows && !named.has(name)) delete lineEnv[name];
-  const shell = (line) => runLine(here(line), cwd, lineEnv);
+  const shell = (line) => runLine(here(line), cwd, env);
   for (const line of testCase.setup || []) {
     const result = shell(line);
     // The shell could not be started (no process: a timeout, or output past
@@ -916,9 +940,14 @@ function runIn(root, testCase, impl, plan, extraEnv) {
   }
   const [program, ...baseArgs] = impls[impl].argv;
   const args = [...baseArgs, ...(testCase.args || []).map(here)];
-  // What a leading `env NAME=value` in --ts or --rs sets, on Windows (see command()).
+  // What a leading `env NAME=value` in --ts or --rs sets, on Windows (see
+  // command()); and for a program of the MSYS family, AS_WRITTEN, where the
+  // cases do not say otherwise.
   const programEnv = { ...env };
   for (const [name, value] of Object.entries(impls[impl].vars)) setVariable(programEnv, name, value);
+  if (isWindows && isMsysProgram(program, programEnv)) {
+    for (const [name, value] of Object.entries(AS_WRITTEN)) if (!named.has(name) && !Object.hasOwn(impls[impl].vars, name)) programEnv[name] = value;
+  }
   const seconds = testCase.timeout || 120;
   const options = { cwd, env: programEnv, input: here(plan.piped), encoding: "utf8", timeout: seconds * 1000 };
   // The runner's own files of this run: what the program wrote, when that
