@@ -7,6 +7,14 @@ Projects in scope: the owner's public command-line projects, listed in
 [`projects.toml`](../projects.toml). `agent-yes`, `rechrome`, `slack-hub` and
 `otoji` come first.
 
+**Public repositories only.** This repository is public, and so are its pull
+requests, commit messages and CI logs. It works on the owner's public
+repositories and never names a private one: not in a file here, not in a
+commit message or pull request, and not in a pull request it opens in a
+project. A project whose repository becomes private leaves `projects.toml`,
+its ledger and its pages. CI checks that every repository `projects.toml`
+lists is public, and says only the line when one is not.
+
 ## Ground rules
 
 - **Rust code stays in each project's own repo**, in an `rs/` directory beside
