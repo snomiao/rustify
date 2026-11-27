@@ -35,13 +35,18 @@
 # come within a third of where bun's scanner gives up or half of where
 # bun's upsert does (entry "values beyond bun's regular expressions").
 #
-# Proofs. All were run and seen passing on 2026-11-27, against the branch at
-# 00e176d, through rs/parity/proof.sh (the parity cases split into lanes run
-# side by side, each TypeScript against the binary and then the hand-back
-# check, beside the scripts below), on three systems, each with the bun it
-# has, with 1.4.2 (what .bun-version pins and the parity job installs,
-# through rustify's bun-pin.mjs) and with 1.4.5 (the latest, which the
-# install test takes):
+# Proofs. All were run and seen passing on 2026-11-27 through
+# rs/parity/proof.sh (the parity cases split into lanes run side by side,
+# each TypeScript against the binary and then the hand-back check, beside
+# the scripts below): on three machines against the branch at 00e176d, each
+# with the bun it has, with 1.4.2 (what .bun-version pins and the parity job
+# installs, through rustify's bun-pin.mjs) and with 1.4.5 (the latest, which
+# the install test takes); and in CI at 6a3f40c, the parity job on
+# linux-x64, darwin-arm64 and win32-x64 with bun 1.4.2 (on macOS GitHub's
+# macos-26-arm64 image, a user with sudo, Homebrew's git 2.56.1). Between
+# the two, the first CI runs on macOS called for three changes to the
+# proofs themselves, none to the binary (the skip, tty-compat and
+# perm-compat below); the counts here are those of 6a3f40c.
 # - Linux x64: bun 1.4.0, 1.4.2 and 1.4.5, git 2.47.3, node 20.19.2, as root;
 #   the glibc release binary with each, and with bun 1.4.2 also the static
 #   musl binary the pipeline ships.
@@ -71,8 +76,13 @@
 #   cases are the same too: on Linux with bun 1.4.2 (1,180), on macOS with
 #   1.4.4 (1,180), on Windows with 1.4.2 (the 1,100 that run there).
 # - the same cases with `--handback`, as the cases say for each system:
-#   Linux 999 answered by the binary, 181 handed back; macOS 997 and 183
-#   (two cases of `get` printing a value into a pipe go back there); Windows
+#   Linux 999 answered by the binary, 181 handed back; macOS 997 and 182
+#   (two cases of `get` printing a value into a pipe go back there), and 1
+#   skipped there: a 70 KB value into a socket, handed back everywhere, so
+#   both sides are dede.ts, and on macOS, where a socket takes 8,192 bytes
+#   at once, how much bun gets out before its exit depends on how fast the
+#   runner reads (CI saw the TypeScript lose the end; rs/pipe-compat.py
+#   holds that get on macOS against readers it controls); Windows
 #   all 1,100 that run handed back, 80 skipped there because they cannot
 #   mean the same (65 with a symbolic link, which Git Bash's ln -s copies;
 #   2 with a file name Windows does not keep; 11 with a PATH without git
@@ -86,7 +96,11 @@
 # - rs/tty-compat.py (Linux, macOS): 53 scenes on a pseudo-terminal, under
 #   several TERM, COLORTERM, CI, NO_COLOR and FORCE_COLOR values; a run with
 #   a stand-in package checks that each is handed back, or answered, as it
-#   says (on macOS the scene of get into a pipe goes back).
+#   says (on macOS the scene of get into a pipe goes back). It keeps its own
+#   handle on each terminal until the command has been read: the terminal is
+#   not the command's controlling terminal, and macOS drops what is unread
+#   in such a terminal when the command exits and nothing else holds it (CI
+#   on macOS lost 6 scenes' output so before 6a3f40c).
 # - rs/pipe-compat.py (Linux, macOS): 18 scenes of `dede get` into a pipe or
 #   a socket that is read only once the command has exited (empty, partly
 #   filled, full, larger, left non-blocking, shared with standard error),
@@ -98,7 +112,9 @@
 #   own file or directory without the permission (where the others make it
 #   root's), the 5 that need a file of another user not run. In CI it runs
 #   all 24 on Linux and macOS as the runner's user, with sudo making what
-#   belongs to root; that has not been seen on macOS yet.
+#   belongs to root: seen on macOS in CI at 6a3f40c, all 24 the same, once
+#   the script took its work directory's real path (TMPDIR is under /var
+#   there, a link to /private/var, which bun's error reports name).
 # - `cargo test` in rs/: scan, upsert and remove on 340 dotenv sources, keys
 #   and ciphertexts, node:path, UTF-8, hex and base64 decoding, globs, dates,
 #   all against values recorded from bun and @dotenvx/primitives
@@ -414,8 +430,8 @@ name = "macOS"
 status = "verified"
 ts = "dede.ts"
 rs = "rs/src"
-proof = "rs/parity/proof.sh on macOS 27 arm64 with bun 1.4.4, 1.4.2 and 1.4.5 (the parity job runs it on darwin-arm64): rs/parity.json (997 answered by the binary, 183 handed back, as the cases say), rs/cross-compat.sh, rs/tty-compat.py, rs/pipe-compat.py, rs/perm-compat.sh (19 of 24 scenes, without sudo), cargo test"
-note = "On macOS the binary answers every command natively, as on Linux (rs/src/cli.rs platform_is_proven is cfg!(unix)), and hands back the same situations, and one more: a `get` that prints into a pipe or a socket (entry `get … into a pipe or a socket`). On the first runs there every case and scene behaved the same, apart from that get (93 cases went back where they said native, 6 of them asking git twice; the get cases now print into files) and apart from the proofs' own tools: GNU stat, sha256sum and sed -i in the cases had been replaced beforehand (rs/parity/files.mjs, sed -i.bak), and the runs showed node -e arguments read differently where node is bun (8 key-tree cases could not be set up), node:path's vectors taken against /tmp, which is /private/tmp there, and dotenvx trying to keep a throwaway key in the Keychain (it failed; cross-compat.sh now sets DOTENVX_NO_NATIVE=true). Apple's git, the case-insensitive file system and BSD file semantics showed no difference in these cases; no case was written for case-insensitive names in particular, and every case runs git with GIT_CONFIG_NOSYSTEM=1, so Apple's system configuration (which setup's pre-read looks for in Apple's places) is not exercised. Not run on a Mac: the 5 perm-compat scenes that need a file of another user (CI runs them with sudo, not yet seen), and darwin-x64, where the same code answers natively without a proof of its own."
+proof = "rs/parity/proof.sh on macOS 27 arm64 with bun 1.4.4, 1.4.2 and 1.4.5 (the parity job runs it on darwin-arm64): rs/parity.json (997 answered by the binary, 182 handed back, as the cases say, 1 skipped there), rs/cross-compat.sh, rs/tty-compat.py, rs/pipe-compat.py, rs/perm-compat.sh (19 of 24 scenes without sudo on the Mac, all 24 with sudo in CI), cargo test; and the parity job on darwin-arm64 at 6a3f40c, all of it passing"
+note = "On macOS the binary answers every command natively, as on Linux (rs/src/cli.rs platform_is_proven is cfg!(unix)), and hands back the same situations, and one more: a `get` that prints into a pipe or a socket (entry `get … into a pipe or a socket`). On the first runs there every case and scene behaved the same, apart from that get (93 cases went back where they said native, 6 of them asking git twice; the get cases now print into files) and apart from the proofs' own tools: GNU stat, sha256sum and sed -i in the cases had been replaced beforehand (rs/parity/files.mjs, sed -i.bak), and the runs showed node -e arguments read differently where node is bun (8 key-tree cases could not be set up), node:path's vectors taken against /tmp, which is /private/tmp there, and dotenvx trying to keep a throwaway key in the Keychain (it failed; cross-compat.sh now sets DOTENVX_NO_NATIVE=true). Apple's git, the case-insensitive file system and BSD file semantics showed no difference in these cases; no case was written for case-insensitive names in particular, and every case runs git with GIT_CONFIG_NOSYSTEM=1, so Apple's system configuration (which setup's pre-read looks for in Apple's places) is not exercised. The first CI runs on macOS showed three things the Mac had not: perm-compat's scenes differed in their own directory's name (/var against /private/var), the 70 KB get into a socket came out of bun in parts of varying size, and tty-compat lost a scene's output when it was read late (see the header); none was a difference of the binary. Not proven: darwin-x64, where the same code answers natively without a proof of its own."
 
 [[feature]]
 name = "Windows"
