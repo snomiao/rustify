@@ -27,19 +27,25 @@
 //! ```ignore
 //! "status" => {
 //!     if let Some(text) = js_fallback::attempt(|| status::answer(&args[1..])) {
-//!         print!("{text}");
+//!         // A reader that has gone away (`| head`) is not an error.
+//!         let _ = std::io::Write::write_all(&mut std::io::stdout(), text.as_bytes());
 //!         return;
 //!     }
 //!     js_fallback::run("dist/cli.js")
 //! }
 //! ```
 //!
+//! Who answered can be seen from outside: with `RUSTIFY_HANDBACK_TRACE=1` in
+//! the environment, `run` first writes `rustify: handed back to the
+//! JavaScript` to stderr, a panic that `attempt` swallowed is reported before
+//! that line, and a native answer looks as it always does.
+//!
 //! Delete this file when nothing falls back any more.
 
+use std::cell::Cell;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Environment variable the npm launcher sets to the package directory when
 /// the binary runs from the platform package. Use the same name as
@@ -53,7 +59,8 @@ pub const ROOT_ENV: &str = "RUSTIFY_PACKAGE_ROOT";
 /// sets it for a line marked `[native]` or `[handback]`, and it finds out
 /// whether a binary is able to say the line by looking for the text in the
 /// file. So the name and the line are the same in every project: do not
-/// change them. Whatever the command starts inherits the variable.
+/// change them. The JavaScript is started without the variable, so that a
+/// tool it starts in turn cannot write the line in this binary's name.
 pub const TRACE_ENV: &str = "RUSTIFY_HANDBACK_TRACE";
 pub const TRACE_LINE: &str = "rustify: handed back to the JavaScript";
 
@@ -105,7 +112,7 @@ pub fn run(entry: &str) -> ! {
     let mut last_error = None;
     for runtime in &candidates {
         let mut command = program(&runtime[0]);
-        command.args(&runtime[1..]).arg(&script).args(&args);
+        command.args(&runtime[1..]).arg(&script).args(&args).env_remove(TRACE_ENV);
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
@@ -139,16 +146,25 @@ pub fn run(entry: &str) -> ! {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HandBack;
 
-/// Set by `commit`.
-static COMMITTED: AtomicBool = AtomicBool::new(false);
+thread_local! {
+    /// Set by `commit`, for the attempt running on this thread.
+    static COMMITTED: Cell<bool> = const { Cell::new(false) };
+}
+
+fn committed() -> bool {
+    // Asked by the panic hook, which can run while the thread is ending.
+    COMMITTED.try_with(Cell::get).unwrap_or(true)
+}
 
 /// Says that the command is about to print or change something, so the
 /// invocation can no longer be handed back. Only a command that prints or
 /// writes inside `attempt` needs this (one that reports progress while it
-/// works, say); a command that returns its whole answer does not.
+/// works, say); a command that returns its whole answer does not. It applies
+/// to the attempt running on the calling thread, and the next attempt starts
+/// afresh.
 #[allow(dead_code)]
 pub fn commit() {
-    COMMITTED.store(true, Ordering::Relaxed);
+    COMMITTED.with(|flag| flag.set(true));
 }
 
 /// Runs a ported command up to its answer. `Some(answer)` is for the caller
@@ -166,31 +182,25 @@ pub fn commit() {
 /// process as any panic does (exit code 101), and returning `Err(HandBack)`
 /// is itself a bug and panics.
 ///
+/// The panic hook (what prints "thread 'main' panicked at …") belongs to the
+/// whole process. While any attempt runs, a panic on any thread says nothing,
+/// unless it happens on the thread of an attempt that has committed or the
+/// trace is on; when the last attempt returns, the hook that was there
+/// before is put back. Attempts may run on several threads at once, as tests
+/// do, but should not be nested.
+///
 /// This relies on unwinding. A crate built with `panic = "abort"` cannot
 /// catch anything: there a panic ends the process at once, with its usual
-/// message. The Cargo.toml that `rustify scaffold` writes leaves the default,
-/// which unwinds.
+/// message, and the JavaScript is not started. The Cargo.toml that `rustify
+/// scaffold` writes leaves the default, which unwinds.
 #[allow(dead_code)]
 pub fn attempt<T>(command: impl FnOnce() -> Result<T, HandBack>) -> Option<T> {
     use std::panic;
-    let committed = || COMMITTED.load(Ordering::Relaxed);
+    COMMITTED.with(|flag| flag.set(false));
     let outcome = if cfg!(panic = "unwind") {
-        // The hook is what prints "thread 'main' panicked at …". Keep it quiet
-        // while the invocation can still be handed back, on every thread the
-        // command starts, and put the previous hook back afterwards.
-        let previous = std::sync::Arc::new(panic::take_hook());
-        let report = std::sync::Arc::clone(&previous);
-        panic::set_hook(Box::new(move |info| {
-            if committed() || tracing() {
-                report(info);
-            }
-        }));
+        quiet_panics(true);
         let outcome = panic::catch_unwind(panic::AssertUnwindSafe(command));
-        drop(panic::take_hook());
-        panic::set_hook(match std::sync::Arc::try_unwrap(previous) {
-            Ok(hook) => hook,
-            Err(shared) => Box::new(move |info| shared(info)),
-        });
+        quiet_panics(false);
         outcome
     } else {
         Ok(command())
@@ -200,6 +210,49 @@ pub fn attempt<T>(command: impl FnOnce() -> Result<T, HandBack>) -> Option<T> {
         Ok(Err(HandBack)) if committed() => panic!("a ported command handed back after js_fallback::commit()"),
         Err(payload) if committed() => panic::resume_unwind(payload),
         Ok(Err(HandBack)) | Err(_) => None,
+    }
+}
+
+/// What `std::panic::take_hook` returns (`PanicHookInfo` needs Rust 1.81).
+type PanicHook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Sync + Send + 'static>;
+
+/// How many attempts are running, and the hook that was in place before the
+/// first of them.
+static QUIET: std::sync::Mutex<(usize, Option<std::sync::Arc<PanicHook>>)> = std::sync::Mutex::new((0, None));
+
+/// Puts the quiet panic hook in place for an attempt (`true`), or takes it
+/// away again when the last attempt is over (`false`).
+fn quiet_panics(on: bool) {
+    use std::panic;
+    use std::sync::Arc;
+    let mut state = QUIET.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (running, previous) = &mut *state;
+    if on {
+        if *running == 0 {
+            let earlier: Arc<PanicHook> = Arc::new(panic::take_hook());
+            let report = Arc::clone(&earlier);
+            panic::set_hook(Box::new(move |info| {
+                if committed() || tracing() {
+                    report(info);
+                }
+            }));
+            *previous = Some(earlier);
+        }
+        *running += 1;
+        return;
+    }
+    *running -= 1;
+    if *running == 0 {
+        if let Some(earlier) = previous.take() {
+            // Drops the quiet hook, and with it its share of the earlier one.
+            drop(panic::take_hook());
+            panic::set_hook(match Arc::try_unwrap(earlier) {
+                Ok(hook) => hook,
+                // The command kept the quiet hook somewhere, and with it a
+                // share of the earlier one.
+                Err(shared) => Box::new(move |info| shared(info)),
+            });
+        }
     }
 }
 
@@ -295,36 +348,62 @@ mod tests {
         assert_eq!(interpreter(""), None);
     }
 
-    /// One test for all of `attempt`: the panic hook and the commit mark are
-    /// shared by the whole process, so the steps have to run in this order.
+    /// One test for all of `attempt`, in this order. The panic hook belongs to
+    /// the whole process and the crate's other tests run beside this one, so
+    /// the hook put in place here counts the panics of this thread only and
+    /// passes those of every other thread on to the hook that was there.
     #[test]
     fn attempt_answers_declines_and_hands_back_a_panic_until_commit() {
         use std::panic::catch_unwind;
-        use std::sync::atomic::AtomicUsize;
-        static REPORTED: AtomicUsize = AtomicUsize::new(0);
-        let reported = || REPORTED.load(Ordering::Relaxed);
-        let before = std::panic::take_hook();
-        std::panic::set_hook(Box::new(|_| {
-            REPORTED.fetch_add(1, Ordering::Relaxed);
+        use std::sync::Arc;
+        thread_local! {
+            static REPORTED: Cell<Option<usize>> = const { Cell::new(None) };
+        }
+        let reported = || REPORTED.with(Cell::get).unwrap_or(0);
+        REPORTED.with(|count| count.set(Some(0)));
+        let before = Arc::new(std::panic::take_hook());
+        let others = Arc::clone(&before);
+        std::panic::set_hook(Box::new(move |info| match REPORTED.with(Cell::get) {
+            Some(count) => REPORTED.with(|counter| counter.set(Some(count + 1))),
+            None => others(info),
         }));
+        // A swallowed panic is reported when whoever runs the tests has
+        // switched the trace on.
+        let traced = usize::from(tracing());
+        let bug = || -> Result<i32, HandBack> { panic!("a bug in a ported command") };
 
         assert_eq!(attempt(|| Ok(7)), Some(7));
         assert_eq!(attempt(|| Err::<i32, _>(HandBack)), None);
-        assert_eq!(reported(), 0);
-        assert_eq!(attempt(|| -> Result<i32, HandBack> { panic!("a bug in a ported command") }), None);
-        // Silent, unless whoever runs the tests has switched the trace on.
-        assert_eq!(reported(), usize::from(tracing()), "a panic before commit is not reported");
-        let silent = reported();
+        assert_eq!(attempt(bug), None);
+        assert_eq!(reported(), traced, "a panic before commit is not reported");
         assert!(catch_unwind(|| panic!("outside attempt")).is_err());
-        assert_eq!(reported(), silent + 1, "the hook that was there before is back");
+        assert_eq!(reported(), traced + 1, "the hook that was there before is back");
 
-        commit();
-        assert_eq!(attempt(|| Ok(8)), Some(8));
-        assert!(catch_unwind(|| attempt(|| -> Result<i32, HandBack> { panic!("a bug after the first output") })).is_err());
-        assert_eq!(reported(), silent + 2, "a panic after commit is reported and not swallowed");
-        assert!(catch_unwind(|| attempt(|| Err::<i32, _>(HandBack))).is_err(), "handing back after commit is a bug");
-        assert_eq!(reported(), silent + 3);
-        std::panic::set_hook(before);
+        // Attempts on several threads at once leave that hook in place too.
+        let threads: Vec<_> = (0..4)
+            .map(|_| std::thread::spawn(move || (0..50).filter(|_| attempt(bug).is_none()).count()))
+            .collect();
+        assert!(threads.into_iter().all(|thread| thread.join().unwrap() == 50));
+        assert!(catch_unwind(|| panic!("after the threads")).is_err());
+        assert_eq!(reported(), traced + 2, "the hook is back after attempts on several threads");
+
+        let late = || -> Result<i32, HandBack> {
+            commit();
+            panic!("a bug after the first output")
+        };
+        assert!(catch_unwind(|| attempt(late)).is_err(), "a panic after commit is not swallowed");
+        assert_eq!(reported(), traced + 3, "and it is reported");
+        let late_hand_back = || -> Result<i32, HandBack> {
+            commit();
+            Err(HandBack)
+        };
+        assert!(catch_unwind(|| attempt(late_hand_back)).is_err(), "handing back after commit is a bug");
+        assert_eq!(reported(), traced + 4);
+        assert_eq!(attempt(|| Err::<i32, _>(HandBack)), None, "the next attempt starts afresh");
+
+        REPORTED.with(|count| count.set(None));
+        drop(std::panic::take_hook());
+        std::panic::set_hook(Arc::try_unwrap(before).unwrap_or_else(|shared| Box::new(move |info| shared(info))));
     }
 
     #[test]

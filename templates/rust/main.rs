@@ -32,10 +32,12 @@ fn main() {
         //
         //   Some("status") => {
         //       if let Some(text) = js_fallback::attempt(|| status::answer(&args[1..])) {
-        //           print!("{text}");
+        //           // A reader that has gone away (`| head`) is not an error.
+        //           let _ = std::io::Write::write_all(&mut std::io::stdout(), text.as_bytes());
         //           return;
         //       }
         //   }
+        #[allow(clippy::match_single_binding)] // until the first arm is added
         match args.first().map(String::as_str) {
             _ => {}
         }
