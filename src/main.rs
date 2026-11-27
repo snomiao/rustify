@@ -239,16 +239,19 @@ fn is_under(path: &str, dir: &str) -> bool {
     dir == "." || path == dir || path.starts_with(&format!("{dir}/"))
 }
 
+/// How far below the repository root a directory lies: 0 for the root
+/// itself, 2 for `rs/src`.
+fn depth(dir: &str) -> usize {
+    match tidy(dir) {
+        "." => 0,
+        dir => dir.split('/').count(),
+    }
+}
+
 /// How far below the repository root the deepest of `dirs` that holds `path`
-/// lies: 0 for the root itself, 2 for `rs/src`. `None` when none holds it.
+/// lies. `None` when none holds it.
 fn deepest<'a>(path: &str, dirs: impl IntoIterator<Item = &'a String>) -> Option<usize> {
-    dirs.into_iter()
-        .filter(|dir| is_under(path, dir))
-        .map(|dir| match tidy(dir) {
-            "." => 0,
-            dir => dir.split('/').count(),
-        })
-        .max()
+    dirs.into_iter().filter(|dir| is_under(path, dir)).map(|dir| depth(dir)).max()
 }
 
 /// The extension of a file name: `ts` for `a/b.d.ts`, nothing for a file that
@@ -260,16 +263,34 @@ fn extension(path: &str) -> &str {
 impl Project {
     /// Whether a file is TypeScript or JavaScript the port is to replace, its
     /// tests included: a script under a `ts` directory that no `ignore` or
-    /// `keep_ts` path holds. A `rust` directory inside the `ts` directory
-    /// takes its files out too (the port's own scripts are not to be
-    /// replaced). A `rust` directory that is the `ts` directory itself, or
-    /// holds it, takes nothing out: there the extension tells the two apart.
+    /// `keep_ts` path holds and that is not one of the port's own scripts.
     fn replaces(&self, path: &str) -> bool {
         let Some(ts) = deepest(path, &self.ts) else { return false };
         SCRIPT_EXTENSIONS.contains(&extension(path))
             && !path.ends_with(".d.ts")
             && !self.ignore.iter().chain(self.keep_ts.keys()).any(|skip| is_under(path, skip))
-            && !deepest(path, &self.rust).is_some_and(|rust| rust > ts)
+            && !self.is_ports_own_script(path, ts)
+    }
+
+    /// The directory the crate has to itself: `rs` for `rs/Cargo.toml`, and
+    /// also when projects.toml names no manifest, since `rustify scaffold`
+    /// puts the crate there. `None` for a crate at the repository root.
+    fn crate_dir(&self) -> Option<&str> {
+        let manifest = tidy(self.manifest.as_deref().unwrap_or("rs/Cargo.toml"));
+        manifest.rsplit_once('/').map(|(dir, _)| dir)
+    }
+
+    /// Whether a script under a `ts` directory `ts` levels down belongs to
+    /// the port: it lies in a `rust` directory inside the crate's own
+    /// directory, and that directory lies below the `ts` directory. A crate
+    /// at the repository root, or in the very directory of the TypeScript,
+    /// shares its directories (`src`) with the TypeScript: there the
+    /// extension alone tells the two apart, and a `rust` directory takes no
+    /// script out.
+    fn is_ports_own_script(&self, path: &str, ts: usize) -> bool {
+        let Some(crate_dir) = self.crate_dir() else { return false };
+        depth(crate_dir) > ts
+            && self.rust.iter().any(|rust| is_under(path, rust) && is_under(tidy(rust), crate_dir))
     }
 
     /// Whether a file belongs to the Rust port: a `.rs` file under a `rust`
@@ -1315,9 +1336,9 @@ mod tests {
     }
 
     #[test]
-    fn a_rust_directory_at_or_above_the_typescript_hides_none_of_it() {
+    fn a_crate_that_shares_its_directories_with_the_typescript_hides_none_of_it() {
         // The crate at the repository root, the TypeScript in its own directory.
-        let p = project("name = \"x\"\nts = [\"ts\"]\nrust = [\".\"]\nignore = [\"vendor\"]");
+        let p = project("name = \"x\"\nmanifest = \"Cargo.toml\"\nts = [\"ts\"]\nrust = [\".\"]\nignore = [\"vendor\"]");
         assert!(p.replaces("ts/cli.ts"));
         assert!(p.is_rust("src/main.rs"));
         assert!(p.is_rust("build.rs"));
@@ -1326,21 +1347,74 @@ mod tests {
 
         // Both at the root, and both in the same directory: the extension decides.
         for dir in [".", "src"] {
-            let p = project(&format!("name = \"x\"\nts = [\"{dir}\"]\nrust = [\"{dir}\"]"));
+            let p = project(&format!("name = \"x\"\nmanifest = \"Cargo.toml\"\nts = [\"{dir}\"]\nrust = [\"{dir}\"]"));
             assert!(p.replaces("src/cli.ts"), "{dir}");
             assert!(p.is_rust("src/main.rs"), "{dir}");
         }
 
-        // The TypeScript at the root and the crate below it: scripts inside
-        // the crate's sources belong to the port.
+        // The TypeScript at the root and a crate at the root whose sources
+        // are in src, beside the TypeScript's own (winrpc has all of its
+        // TypeScript in src).
+        for manifest in ["manifest = \"Cargo.toml\"\n", "manifest = \"./Cargo.toml\"\n", ""] {
+            let p = project(&format!("name = \"x\"\n{manifest}ts = [\".\"]\nrust = [\"src\"]"));
+            assert!(p.replaces("src/index.ts"), "{manifest}");
+            assert!(p.replaces("src/gen.mjs"), "{manifest}");
+            assert!(p.is_rust("src/main.rs"), "{manifest}");
+        }
+
+        // A package directory that holds both the TypeScript and the crate.
         let p = project(
-            "name = \"x\"\nts = [\".\"]\nrust = [\"src\"]\nkeep_ts = { \"extension\" = \"runs in the browser\" }",
+            "name = \"x\"\nmanifest = \"packages/cli/Cargo.toml\"\nts = [\"packages/cli\"]\nrust = [\"packages/cli/src\"]",
         );
+        assert!(p.replaces("packages/cli/src/index.ts"));
+        assert!(p.is_rust("packages/cli/src/main.rs"));
+
+        // A `rust` directory that holds the whole repository.
+        let p = project("name = \"x\"\nmanifest = \"rs/Cargo.toml\"\nts = [\".\"]\nrust = [\".\"]");
         assert!(p.replaces("cli.ts"));
-        assert!(p.replaces("lib/util.mjs"));
-        assert!(!p.replaces("src/gen.mjs"));
-        assert!(!p.replaces("extension/background.js"));
-        assert!(p.is_rust("src/main.rs"));
+    }
+
+    #[test]
+    fn scripts_in_the_rust_directories_of_a_crate_of_its_own_belong_to_the_port() {
+        // The TypeScript at the root and the crate in rs/, with or without a
+        // manifest in projects.toml (`rustify scaffold` puts the crate in rs/).
+        for manifest in ["manifest = \"rs/Cargo.toml\"\n", ""] {
+            let p = project(&format!(
+                "name = \"x\"\n{manifest}ts = [\".\"]\nrust = [\"rs/src\"]\nkeep_ts = {{ \"extension\" = \"runs in the browser\" }}"
+            ));
+            assert!(p.replaces("cli.ts"), "{manifest}");
+            assert!(p.replaces("lib/util.mjs"), "{manifest}");
+            assert!(!p.replaces("rs/src/vectors.mjs"), "{manifest}");
+            // Outside the `rust` directories only `ignore = ["rs"]` takes it out.
+            assert!(p.replaces("rs/parity.gen.mjs"), "{manifest}");
+            assert!(!p.replaces("extension/background.js"), "{manifest}");
+            assert!(p.is_rust("rs/src/main.rs"), "{manifest}");
+        }
+        // The same below a `ts` directory other than the root.
+        let p = project("name = \"x\"\nmanifest = \"pkg/rs/Cargo.toml\"\nts = [\"pkg\"]\nrust = [\"pkg/rs/src\"]");
+        assert!(p.replaces("pkg/cli.ts"));
+        assert!(!p.replaces("pkg/rs/src/vectors.mjs"));
+    }
+
+    #[test]
+    fn the_typescript_of_a_project_with_its_crate_at_the_root_is_counted() {
+        let repo = Scratch::new();
+        repo.git(&["init", "--quiet"]);
+        repo.write("src/index.ts", "export const a = 1;\n");
+        repo.write("src/rpc.ts", "export const b = 1;\nexport const c = 2;\n");
+        repo.write("test/a.test.ts", "test(\"x\", () => {});\n");
+        repo.write("package.json", "{ \"name\": \"w\" }\n");
+        repo.write("Cargo.toml", "[package]\nname = \"w\"\nversion = \"0.0.0\"\n");
+        repo.write("src/main.rs", "fn main() {}\n");
+        repo.commit("the TypeScript and a crate");
+        let home = Scratch::new();
+        let p = project("name = \"w\"\nmanifest = \"Cargo.toml\"\nts = [\".\"]\nrust = [\"src\"]");
+        let section = audit_project(&p, &home.dir, &home.dir, true, Some(&repo.dir));
+        let body = &section.body;
+        assert!(body.contains("TypeScript/JS to replace: 3 lines in 2 files; its tests: 1 lines"), "{body}");
+        assert!(body.contains("Rust: 1 lines in 1 files"), "{body}");
+        assert!(!body.contains("no TypeScript left"), "{body}");
+        assert_eq!(section.next.as_deref(), Some("write the parity ledger"));
     }
 
     /// A directory of its own in the temp directory, removed when dropped.
