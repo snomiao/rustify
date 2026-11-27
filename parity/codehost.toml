@@ -217,6 +217,26 @@
 #     expanded (it clones under a relative directory named `~`). TODO.md lists
 #     ideas (serve --login, port-forwarding subdomains, docker up, presence)
 #     that are not implemented and have no entries here
+#
+# The first Rust port (snomiao/codehost PR #10, branch build/rust-port,
+# after an independent verification and its repair) answers natively, on
+# Linux only: `open --print`, `init`, the token check of `serve`, `dev` and
+# `expose`, and `dev` registering with a live host daemon. Everything else,
+# and everything on macOS and Windows, is handed back to src/cli/index.ts
+# before anything is printed or changed. The entries below whose status is
+# not `missing` were set by that port; the hand-back situations it found are
+# grouped at the end.
+#
+# Proof, from the project's root after `bun install` and `cargo build
+# --release --manifest-path rs/Cargo.toml`:
+#
+#   sh rs/parity/proof.sh <rustify>/templates/parity/parity.mjs rs/target/release/codehost
+#   -> 440 cases: all the same on pipes and on a pseudo-terminal;
+#      300 answered by the binary, 140 handed back, as the cases say;
+#      cargo test: 27 passed (52,358 helper answers compared with the
+#      TypeScript's own functions under bun; 20,000 command lines parsed
+#      alike by the project's yargs chain)
+#
 
 reconciled = "cfba919"
 
@@ -226,15 +246,17 @@ reconciled = "cfba919"
 
 [[feature]]
 name = "codehost (CLI entry point, run by bun)"
-status = "missing"
+status = "partial"
 ts = "src/cli/index.ts:17; package.json:12 bin"
-note = "The bin `codehost` is ./src/cli/index.ts itself, a TypeScript file starting with `#!/usr/bin/env bun`: no build step, bun must be on PATH, node cannot run it. yargs with the script name fixed to `codehost` and the usage line `codehost <command> [options]` registers setup, init, serve, dev, expose, open, list, stop, update and the hidden __supervise, in that order. Its first import repairs TEMP/TMP; its imports then load the native WebRTC addon before any argument is parsed (see the header), for every command. Bun-only APIs are used throughout (Bun.which, Bun.spawn, Bun.sleep, Bun.listen, Bun.write, Bun.CryptoHasher, import.meta.dir)."
+rs = "rs/src/main.rs; rs/src/js_fallback.rs; rs/src/runtime.rs"
+note = "The bin `codehost` is ./src/cli/index.ts itself, a TypeScript file starting with `#!/usr/bin/env bun`: no build step, bun must be on PATH, node cannot run it. yargs with the script name fixed to `codehost` and the usage line `codehost <command> [options]` registers setup, init, serve, dev, expose, open, list, stop, update and the hidden __supervise, in that order. Its first import repairs TEMP/TMP; its imports then load the native WebRTC addon before any argument is parsed (see the header), for every command. Bun-only APIs are used throughout (Bun.which, Bun.spawn, Bun.sleep, Bun.listen, Bun.write, Bun.CryptoHasher, import.meta.dir). Port: package.json's `rustify` block (mode hybrid, both bins on the one cargo bin, rootEnv CODEHOST_PACKAGE_ROOT) makes the Rust binary the installed command. On Linux, the only system it was compared on, it answers natively `open --print`, `init`, the token check of serve, dev and expose, and dev's registration with a live host daemon; it hands every other invocation, and every invocation on macOS and Windows, to src/cli/index.ts (with the runtime its #! line names), before printing or changing anything; a panic before that is a hand-back too (js_fallback v5 `attempt`). With RUSTIFY_HANDBACK_TRACE set it says on stderr that it handed back, which the workflow's smoke lines use to show who answered on each platform. src/cli/index.ts stays where it is. Rust-only, for the owner to bless or remove: CODEHOST_NO_NATIVE=1 hands everything back; CODEHOST_PACKAGE_ROOT tells a binary run from the platform package where the JavaScript is (without a package, a command it does not answer prints `this command is not available in the standalone binary yet; install the npm package to use it` and exits 1); and a native init or dev whose write fails after its first change ends with `[codehost] could not write <path>: <error>. Nothing more was done; run the command again with CODEHOST_NO_NATIVE=1 for the JavaScript's own report.` and exit 1, where the TypeScript ends with bun's error report (unreachable short of a full disk or a change under its feet). Also Rust-only: without bun on PATH the TypeScript cannot start at all (`#!/usr/bin/env bun`: env's `No such file or directory`, exit 127), while the binary still answers its native commands and, for the others, prints the helper's `cannot run …: it needs bun, which could not be started (…)` and exits 127. What the binary checks before answering: the `hand-back:` entries."
 
 [[feature]]
 name = "ch (second command name)"
-status = "missing"
+status = "partial"
 ts = "package.json:13"
-note = "A second bin name for the same ./src/cli/index.ts. Help and usage still say `codehost`, because the script name is fixed."
+rs = "rs/src/main.rs"
+note = "A second bin name for the same ./src/cli/index.ts. Help and usage still say `codehost`, because the script name is fixed. Port: rustify.bins maps `ch` to the same cargo bin, which behaves the same under either name (nothing it prints names the command). The parity cases run it as `codehost`; one smoke line of the workflow runs `ch open --print …` after installing on every platform, marked `[native:linux] [handback:darwin,win32]`, so that CI shows the binary answered it under that name on Linux (not yet run: nothing is pushed)."
 
 [[feature]]
 name = "no command, unknown command, unknown option, missing required option (exit 1)"
@@ -262,12 +284,14 @@ note = "Prints the version yargs finds, exit 0. yargs 17.7.2 does not look in co
 
 [[feature]]
 name = "option syntax accepted on every command (yargs parsing rules)"
-status = "missing"
+status = "partial"
 ts = "src/cli/index.ts:17; src/cli/daemonize.ts:86"
-note = "yargs 17 parses `--flag value` and `--flag=value`, the short forms -t, -d, -f, -h, `--no-daemon`, camel-case spellings (`--newToken`), a repeatable and greedy `--allow` (it takes the bare words that follow it, a positional dir included), and `--port` as a number. A value that starts with `-` has to be given with `=`, which is why the daemon command line always uses `--flag=value`. From knowledge of yargs, not verified by running."
+rs = "rs/src/args.rs"
+proof = "rs/parity.json (the cases named after their command line, and those marked handback \"yargs's to answer\"); rs/src/compare.rs (20,000 generated command lines parsed by the yargs chain of src/cli/index.ts with recording handlers: every one the binary takes, yargs takes alike)"
+note = "yargs 17 parses `--flag value` and `--flag=value`, the short forms -t, -d, -f, -h, `--no-daemon`, camel-case spellings (`--newToken`), a repeatable and greedy `--allow` (it takes the bare words that follow it, a positional dir included), and `--port` as a number. A value that starts with `-` has to be given with `=`, which is why the daemon command line always uses `--flag=value`. Port: the binary answers only `--name value`, `--name=value` and `-x value` for an option with a value, a bare `--flag`/`-x` for a flag, each option once, positionals up to the command's count, the command as the first word; for the options of open (-t/--token, --anon, --page, --print), init (-f/--force), serve (-t, --name, --signal, --port as digits, --approve auto|confirm), dev (the same plus --standalone) and expose (a port of digits, -t, --name, --signal). Everything else goes back: `--flag=…`, `--no-flag`, `-xvalue`, `-x=value`, grouped flags, a separate value or an inline value starting with `-`, `--`, a repeated option, an unknown option or command, -d/--daemon, --allow, and any word `help`, `true` or `false` (yargs prints help for a last word `help`; it takes `true`/`false` as the value of a flag before them, so `open --print false` opens the browser). Compared: the accepted spellings against the TypeScript in the cases of open, init, serve, dev and expose; the rejected ones by the hand-back check."
+
 
 # ───────────── Commands ─────────────
-
 [[feature]]
 name = "codehost setup [dir]"
 status = "missing"
@@ -288,9 +312,11 @@ note = "24 characters, each a cryptographically random byte taken modulo a 59-ch
 
 [[feature]]
 name = "room token policy and rejection messages"
-status = "missing"
+status = "verified"
 ts = "src/shared/token.ts:42 validateToken; src/shared/token.ts:16 TOKEN_REQUIREMENTS; src/cli/commands/serve.ts:124"
-note = "serve, dev, expose and `setup -t` trim the token and reject it unless it is 12 to 256 characters (JavaScript string length), has no whitespace (JavaScript's \\s), mixes at least 3 of lowercase, uppercase, digits and other characters, and is not one of changeme1234, password1234, codehost1234, letmein12345 ignoring case. On rejection two stderr lines and exit 1: `[codehost] <reason>` and `[codehost] room token requires: at least 12 characters, no spaces, mixing at least 3 of: lowercase, uppercase, digits, symbols`. The reasons: `token must be at least 12 characters`, `token must be at most 256 characters`, `token must not contain whitespace`, `token must mix at least 3 of: lowercase, uppercase, digits, symbols`, `token is too common; choose a unique secret` (reachable only through a case variant such as Changeme1234, since the listed strings have two character classes). The page and the Worker enforce the same function; `open` does not validate. No test file."
+rs = "rs/src/token.rs; rs/src/js.rs; rs/src/commands/server.rs"
+proof = "rs/parity.json (cases `serve -t …`, `dev -t …`, `expose 8080 -t …` and the other bad-token cases; `verify: serve -t … (accepted)`, two tokens the policy accepts, handed back); rs/src/compare.rs (validateToken on 4,000 generated tokens and 48 around the 256-unit limit, every verdict reached)"
+note = "serve, dev, expose and `setup -t` trim the token and reject it unless it is 12 to 256 characters (JavaScript string length), has no whitespace (JavaScript's \\s), mixes at least 3 of lowercase, uppercase, digits and other characters, and is not one of changeme1234, password1234, codehost1234, letmein12345 ignoring case. On rejection two stderr lines and exit 1: `[codehost] <reason>` and `[codehost] room token requires: at least 12 characters, no spaces, mixing at least 3 of: lowercase, uppercase, digits, symbols`. The reasons: `token must be at least 12 characters`, `token must be at most 256 characters`, `token must not contain whitespace`, `token must mix at least 3 of: lowercase, uppercase, digits, symbols`, `token is too common; choose a unique secret` (reachable only through a case variant such as Changeme1234, since the listed strings have two character classes). The page and the Worker enforce the same function; `open` does not validate. No test file. Port: native for serve, dev and expose on Linux: length in UTF-16 units, JavaScript's trim and \\s (U+FEFF and U+3000 count, U+0085 does not), ASCII classes with anything else a symbol, the weak list for ASCII tokens only (no other string lowers to one of them). A token the policy accepts goes back (the server is not ported), except dev with a live host daemon. Handed back: `setup -t`; console.error in red (a terminal, FORCE_COLOR); and the spellings under `option syntax`."
 
 [[feature]]
 name = "setup: GitHub auth readiness report"
@@ -300,15 +326,19 @@ note = "setup ends with `✓ GitHub auth: ready — private repos will clone`, o
 
 [[feature]]
 name = "codehost init [dir]"
-status = "missing"
+status = "verified"
 ts = "src/cli/commands/init.ts:10; src/cli/init.ts:98 scaffoldCodehost"
-note = "Writes <dir>/.codehost/config.yaml, setup.sh (mode 0755) and setup.ps1; dir defaults to `.`. Existing files are kept unless -f/--force. Prints `scaffolded:` with the written paths and `edit .codehost/setup.sh, then run: codehost serve <dir>`, or `.codehost/ already set up in <dir> (use --force to overwrite)` when nothing was written. Exit 0. init.test.ts: three files, valid YAML with the default layout, shell variables kept literal, a second run writes nothing."
+rs = "rs/src/commands/init.rs; rs/src/templates/config.yaml; rs/src/templates/setup.sh; rs/src/templates/setup.ps1"
+proof = "rs/parity.json (cases `init …`: the files left behind, names, modes and contents, are compared)"
+note = "Writes <dir>/.codehost/config.yaml, setup.sh (mode 0755) and setup.ps1; dir defaults to `.`. Existing files are kept unless -f/--force. Prints `scaffolded:` with the written paths and `edit .codehost/setup.sh, then run: codehost serve <dir>`, or `.codehost/ already set up in <dir> (use --force to overwrite)` when nothing was written. Exit 0. init.test.ts: three files, valid YAML with the default layout, shell variables kept literal, a second run writes nothing. Port: native on Linux; the three texts are the TypeScript constants as bun evaluates them (rs/src/templates/ was written from them); dir resolved as path.resolve does (by the text, links not followed); a new file 0666 less the umask, setup.sh then 0755, an overwritten file keeps its mode. Everything that could fail is found before the first change, and goes back: .codehost or a component of the path being a file or a dangling link, a link among the three files, something other than a writable regular file where --force would overwrite, a directory that cannot be written into, an empty dir argument, and the spellings under `option syntax`."
 
 [[feature]]
 name = "codehost serve [dir]"
-status = "missing"
+status = "partial"
 ts = "src/cli/commands/serve.ts:76"
-note = "Serves a workspace root: joins the token's room as a `root` server, starts `code serve-web` in the dir, bridges browser data channels to it, answers the provisioning routes (github.com is the default git host) and loads the agent-yes, preview and meta plugins. Options: -t/--token (required), --name (default the hostname), --signal, -d/--daemon, --port, --approve auto|confirm, --allow (repeatable). An explicit dir is resolved against the current directory and remembered; with no dir the remembered root is used and created if missing, else `no workspace root configured.` and two more stderr lines, exit 1. An explicit dir that does not exist is not created: serve remembers it, writes daemon.json, prints and opens the connect URL, and fails only when `code serve-web` is started there (bun is assumed to throw on a missing working directory; read, not run), which ends as a handler error with exit 1; the next bare serve creates it. With -d the daemon is started in the missing directory. In the foreground it runs until Ctrl-C; with -d it starts the daemon, announces the connect URL and exits 0 or 1."
+rs = "rs/src/commands/server.rs"
+proof = "rs/parity.json (cases `serve …`)"
+note = "Serves a workspace root: joins the token's room as a `root` server, starts `code serve-web` in the dir, bridges browser data channels to it, answers the provisioning routes (github.com is the default git host) and loads the agent-yes, preview and meta plugins. Options: -t/--token (required), --name (default the hostname), --signal, -d/--daemon, --port, --approve auto|confirm, --allow (repeatable). An explicit dir is resolved against the current directory and remembered; with no dir the remembered root is used and created if missing, else `no workspace root configured.` and two more stderr lines, exit 1. An explicit dir that does not exist is not created: serve remembers it, writes daemon.json, prints and opens the connect URL, and fails only when `code serve-web` is started there (bun is assumed to throw on a missing working directory; read, not run), which ends as a handler error with exit 1; the next bare serve creates it. With -d the daemon is started in the missing directory. In the foreground it runs until Ctrl-C; with -d it starts the daemon, announces the connect URL and exits 0 or 1. Port: only the first step is native, rejecting a token the policy rejects (see `room token policy and rejection messages`). With a token it accepts, serve goes back to the JavaScript, as do -d and --allow."
 
 [[feature]]
 name = "remembered workspace root"
@@ -324,27 +354,35 @@ note = "serve and setup warn on stderr when the root is exactly the home directo
 
 [[feature]]
 name = "codehost dev [dir]"
-status = "missing"
+status = "partial"
 ts = "src/cli/commands/dev.ts:29"
-note = "Serves one folder (default `.`) as a `repo` server with its git identity, so deep links resolve to it. The options of serve plus --standalone. It runs its own peer and VS Code only when no host daemon is live or --standalone is given; -d makes it a daemon (always with --standalone). No risky-root check, and the dir is not remembered. A dir that does not exist is not created: a standalone dev fails like serve when VS Code is started there (handler error, exit 1), while registering with a host daemon succeeds and advertises nothing until the directory appears."
+rs = "rs/src/commands/server.rs"
+proof = "rs/parity.json (cases `dev …`)"
+note = "Serves one folder (default `.`) as a `repo` server with its git identity, so deep links resolve to it. The options of serve plus --standalone. It runs its own peer and VS Code only when no host daemon is live or --standalone is given; -d makes it a daemon (always with --standalone). No risky-root check, and the dir is not remembered. A dir that does not exist is not created: a standalone dev fails like serve when VS Code is started there (handler error, exit 1), while registering with a host daemon succeeds and advertises nothing until the directory appears. Port: native are the token check (see `room token policy and rejection messages`) and the registration with a live host daemon (see `dev: register with the running host daemon`). Its own server (no live daemon, or --standalone) and -d go back to the JavaScript."
 
 [[feature]]
 name = "dev: register with the running host daemon (--standalone opts out)"
-status = "missing"
+status = "verified"
 ts = "src/cli/commands/dev.ts:98; src/cli/registry.ts:48 liveDaemon; src/cli/registry.ts:60 registerWorkspace"
-note = "When ~/.codehost/daemon.json names a live serve, dev (with -d too) only appends its dir to workspaces.json and prints `host daemon already serving \"<root>\" (pid N)`, `registered <dir> with it — no second daemon needed`, `open: https://codehost.dev<deep link>#t=<the daemon's token>`, a note when that token differs from -t, and `(use --standalone to force an own daemon instead)`; exit 0. The link's host is always codehost.dev here and its token is the daemon's, read from daemon.json. Apart from the native-addon load that every command does at startup (see the header), which may download, it makes no network request."
+rs = "rs/src/commands/server.rs"
+proof = "rs/parity.json (cases `dev registers …`, `dev with the daemon's own token`, `dev with a daemon serving an odd root`: output, workspaces.json and the git commands compared; the daemon.json of these cases names the parity runner's own pid, which is alive)"
+note = "When ~/.codehost/daemon.json names a live serve, dev (with -d too) only appends its dir to workspaces.json and prints `host daemon already serving \"<root>\" (pid N)`, `registered <dir> with it — no second daemon needed`, `open: https://codehost.dev<deep link>#t=<the daemon's token>`, a note when that token differs from -t, and `(use --standalone to force an own daemon instead)`; exit 0. The link's host is always codehost.dev here and its token is the daemon's, read from daemon.json. Apart from the native-addon load that every command does at startup (see the header), which may download, it makes no network request. Port: native on Linux without -d, when daemon.json is a JSON object whose pid is a plain positive integer of a process that answers signal 0 and whose root and token are non-empty strings, and workspaces.json is absent or an array of objects of exactly `path` (a string) and `addedAt` (a plain integer up to 2^53-1). The file is rewritten as JSON.stringify(all, null, 2) does, keys in their order, or left alone when the directory is registered already; a directory with a backslash in its name has it turned into `/` in the link, as toPosixPath does. Handed back: -d, any other shape of either file, a pid that is not alive (dev would serve), a hostname that is not UTF-8, git output over 1 MiB (see `hand-back: git output over 1 MiB`), and the `hand-back:` situations. The `addedAt` of the entry being added is the one value normalised in the cases."
 
 [[feature]]
 name = "codehost expose <port>"
-status = "missing"
+status = "partial"
 ts = "src/cli/commands/expose.ts:18; src/tunnel/host.ts:230"
-note = "Tunnels an existing local HTTP/WebSocket server, reachable at codehost.dev/vs/<peerId>/ with that prefix stripped before forwarding. No VS Code and no in-daemon HTTP routes: /__codehost/* HTTP requests go to the exposed server like any other path. The tunnel's own preview WebSocket route is active all the same: a WsOpen to /__codehost/port/<PORT>/… connects to that loopback port (see `preview WebSocket route`). Options: -t/--token (required), --name (default `localhost:<port>`), --signal, -d/--daemon; no --approve or --allow, so every client with the token is admitted, and can open a WebSocket to any loopback port of the host. A port that is not an integer from 1 to 65535 prints `invalid port: <n>` and exits 1. It advertises name and cwd `localhost:<port>`, host, user and hostId, and no kind. -d uses the current directory as the daemon's working directory and its last segment as the daemon's label, and does not print the connect URL."
+rs = "rs/src/commands/server.rs"
+proof = "rs/parity.json (cases `expose …`)"
+note = "Tunnels an existing local HTTP/WebSocket server, reachable at codehost.dev/vs/<peerId>/ with that prefix stripped before forwarding. No VS Code and no in-daemon HTTP routes: /__codehost/* HTTP requests go to the exposed server like any other path. The tunnel's own preview WebSocket route is active all the same: a WsOpen to /__codehost/port/<PORT>/… connects to that loopback port (see `preview WebSocket route`). Options: -t/--token (required), --name (default `localhost:<port>`), --signal, -d/--daemon; no --approve or --allow, so every client with the token is admitted, and can open a WebSocket to any loopback port of the host. A port that is not an integer from 1 to 65535 prints `invalid port: <n>` and exits 1. It advertises name and cwd `localhost:<port>`, host, user and hostId, and no kind. -d uses the current directory as the daemon's working directory and its last segment as the daemon's label, and does not print the connect URL. Port: only the token check is native (it comes before the port check, so `expose 70000 -t <bad>` reports the token); the port has to be written in digits for that. Everything after it goes back, `invalid port` included."
 
 [[feature]]
 name = "codehost open [target]"
-status = "missing"
+status = "partial"
 ts = "src/cli/commands/open.ts:16; src/cli/commands/open.ts:57 buildUrl; src/cli/commands/open.ts:72 pathFromTarget"
-note = "Builds a codehost URL, prints `[codehost] <url>` and opens the default browser unless --print. The target may be a full URL that is not a repository (opened as it is, without a token), an existing deep-link path (gh/, git/, host/, dev/ or `<user>@<machine>/…`), a git URL with a scheme or an scp-style remote without a user (`github.com:o/r`), `owner/repo[/tree/branch]` (github.com), or anything else (it becomes `/dev/<target>`). The deep-link test comes first and takes anything with an `@` before its first `/`, so the usual remote `git@github.com:o/r.git` is opened as the path `/git@github.com:o/r.git`, not as a repository link (checked by evaluating both patterns). With no target it uses the git repository of the current directory, or the home page with `no git repo found here; opening the codehost home page` on stderr. Options: -t/--token (default the saved token), --anon, --page (default https://codehost.dev, trailing slashes removed), --print. The token is appended as `#t=<url-encoded token>`. Needs no daemon. Apart from the native-addon load that every command does at startup (see the header), which may download, it makes no network request; it reads ~/.codehost/config.json and asks git about the current directory."
+rs = "rs/src/commands/open.rs"
+proof = "rs/parity.json (cases `open …`)"
+note = "Builds a codehost URL, prints `[codehost] <url>` and opens the default browser unless --print. The target may be a full URL that is not a repository (opened as it is, without a token), an existing deep-link path (gh/, git/, host/, dev/ or `<user>@<machine>/…`), a git URL with a scheme or an scp-style remote without a user (`github.com:o/r`), `owner/repo[/tree/branch]` (github.com), or anything else (it becomes `/dev/<target>`). The deep-link test comes first and takes anything with an `@` before its first `/`, so the usual remote `git@github.com:o/r.git` is opened as the path `/git@github.com:o/r.git`, not as a repository link (checked by evaluating both patterns; a parity case shows it). With no target it uses the git repository of the current directory, or the home page with `no git repo found here; opening the codehost home page` on stderr. Options: -t/--token (default the saved token), --anon, --page (default https://codehost.dev, trailing slashes removed), --print. The token is appended as `#t=<url-encoded token>`. Needs no daemon. Apart from the native-addon load that every command does at startup (see the header), which may download, it makes no network request; it reads ~/.codehost/config.json and asks git about the current directory. Port: with --print it is native and verified (see `open --print`); without --print, the default, it opens the browser and goes back to the JavaScript, so a plain `codehost open` is no faster yet."
 
 [[feature]]
 name = "codehost list (alias ls)"
@@ -376,8 +414,8 @@ status = "missing"
 ts = "src/cli/commands/serve.ts:28 DEFAULT_SIGNAL_URL; src/cli/commands/serve.ts:96"
 note = "On serve, dev, expose and setup. Chooses the signaling WebSocket base URL and is always written into the daemon command line. README gives ws://localhost:8787 (`wrangler dev`) for local development. The default is the live service."
 
-# ───────────── What the commands print ─────────────
 
+# ───────────── What the commands print ─────────────
 [[feature]]
 name = "connect URL announcement and browser opening (#t=<token>)"
 status = "missing"
@@ -386,15 +424,19 @@ note = "Prints `[codehost] connect: https://codehost.dev/#t=<encodeURIComponent(
 
 [[feature]]
 name = "deep-link paths printed by dev and open"
-status = "missing"
+status = "verified"
 ts = "src/shared/repo.ts:213 shareableDeepLink; src/cli/commands/dev.ts:102; src/cli/commands/open.ts:81"
-note = "A git repository is `/<git-host>/<owner>/<repo>[/tree/<branch>]`, with `/<user>@<machine>` in front when pinned to a machine; a plain folder is `/<user>@<machine>/<path>` (dev registering a folder prints `/@<hostname>/<path>`), or the legacy `/dev/<path>` when no machine is known. Only user and machine are percent-encoded (encodeURIComponent). The page parses the same grammar from the same module, so the two must stay in step. Pinned by src/shared/repo.test.ts."
+rs = "rs/src/repo.rs"
+proof = "rs/parity.json (the cases of open and of dev registering); rs/src/compare.rs (shareableDeepLink for folders, and through gitUrlToPath and buildUrl, on generated inputs)"
+note = "A git repository is `/<git-host>/<owner>/<repo>[/tree/<branch>]`, with `/<user>@<machine>` in front when pinned to a machine; a plain folder is `/<user>@<machine>/<path>` (dev registering a folder prints `/@<hostname>/<path>`), or the legacy `/dev/<path>` when no machine is known. Only user and machine are percent-encoded (encodeURIComponent). The page parses the same grammar from the same module, so the two must stay in step. Pinned by src/shared/repo.test.ts. Port: verified as far as open and dev's registration print them (the repository form, `/@<hostname>/<path>`, `/dev/<path>`); the pinned `<user>@<machine>/<git-host>/…` form is printed by no command. src/shared/repo.ts stays the page's; the Rust copy (rs/src/repo.rs) has to follow it."
 
 [[feature]]
 name = "git URL to deep-link path (gitUrlToPath)"
-status = "missing"
+status = "verified"
 ts = "src/shared/repo.ts:254 gitUrlToPath; src/cli/commands/open.ts:62"
-note = "Accepts a scheme, a `user@` prefix, scp-style `host:owner/repo`, a trailing `.git`, a query or hash, a trailing slash and `/tree/<branch with slashes>`; requires a dotted host and exactly owner/repo, otherwise nothing. The host is lower-cased. `open` uses it to turn a pasted repository URL into a link, and to tell a repository URL from any other URL. One of its patterns uses a negative lookahead. Pinned by src/shared/repo.test.ts (the page's `open a repo` box uses the same function)."
+rs = "rs/src/repo.rs"
+proof = "rs/src/compare.rs (10,000 generated inputs against src/shared/repo.ts under bun); rs/parity.json (the target cases of open)"
+note = "Accepts a scheme, a `user@` prefix, scp-style `host:owner/repo`, a trailing `.git`, a query or hash, a trailing slash and `/tree/<branch with slashes>`; requires a dotted host and exactly owner/repo, otherwise nothing. The host is lower-cased. `open` uses it to turn a pasted repository URL into a link, and to tell a repository URL from any other URL. One of its patterns uses a negative lookahead. Pinned by src/shared/repo.test.ts (the page's `open a repo` box uses the same function). Port: each expression matched by hand with a backtracking engine's result (the lazy repo name, the `(?!\\d)` lookahead, `.` not matching a line terminator); repo.test.ts's expectations are unit tests. A host that is not ASCII is handed back (toLowerCase beyond ASCII is not compared). The page keeps the TypeScript."
 
 [[feature]]
 name = "startup and connection log lines ([codehost] and [rtc] prefixes)"
@@ -402,15 +444,17 @@ status = "missing"
 ts = "src/cli/run-server.ts:83; src/cli/run-server.ts:113; src/cli/run-server.ts:118; src/cli/run-server.ts:187; src/cli/rtc-daemon.ts:154; src/cli/rtc-daemon.ts:161; src/cli/vscode.ts:52"
 note = "On stdout: `[codehost] <label>` (`serving workspace root <dir>`, `serving <dir>`, `exposing localhost:<port>`), `[codehost] room token: <token>` (in clear), `[codehost] signaling:  <url>`, `[codehost] launching: <code> serve-web …`, `[codehost] VS Code ready at <url>`, `[codehost] registered as \"<name>\" (<first 8 characters of the peer id>)`, `[codehost] disconnected from signaling (code N \"reason\", up Nms), reconnecting…` (the quoted reason is left out when empty), `[codehost] <client label> (<id8>) connected; bridging to :<port>`, `[rtc] <id8> state: <state>`, `[rtc] <id8> channel \"<label>\" open`. On stderr: `[rtc] addRemoteCandidate failed for <id8>:` and `[rtc] setRemoteDescription failed for <id8>:` with the library's error. Under a process manager these lines are the daemon's log."
 
+
 # ═════ Machine state and identity ════════════════════════════════════════════
 
 # ───────────── Files under ~/.codehost ─────────────
-
 [[feature]]
 name = "~/.codehost/config.json"
-status = "missing"
+status = "partial"
 ts = "src/cli/config.ts:9; src/cli/config.ts:24 readConfig; src/cli/config.ts:32 writeConfig"
-note = "Machine-level configuration, written as 2-space JSON without a final newline: `token` (the saved room token, in clear), `hostId`, `root` (the remembered workspace root). A missing or unparsable file reads as empty, so the next write silently replaces a corrupt one. Every write rewrites the whole object from what was read, which is what keeps unknown fields. The path is fixed from the home directory when the program starts."
+rs = "rs/src/commands/open.rs"
+proof = "rs/parity.json (cases `open with … in config.json`)"
+note = "Machine-level configuration, written as 2-space JSON without a final newline: `token` (the saved room token, in clear), `hostId`, `root` (the remembered workspace root). A missing or unparsable file reads as empty, so the next write silently replaces a corrupt one. Every write rewrites the whole object from what was read, which is what keeps unknown fields. The path is fixed from the home directory when the program starts. Port: read natively for `open --print`'s saved token only (missing file or dangling link: none; an object's `token` string, null or absent; a string, number, boolean or array: none). Handed back: `null`, a token that is not a string, text that is not strict JSON or has a key twice, a file that cannot be read, HOME unset or empty (os.homedir() then asks the system), a HOME with a `..` component (path.join resolves it by the text, the system through the directories: `HOME=/nope/../h` is /h/.codehost/config.json for the TypeScript; found by the repair, cases `repair: open with HOME through …`). Nothing writes it natively: hostId, the remembered root and setup's token stay the JavaScript's."
 
 [[feature]]
 name = "hostId (stable machine identity)"
@@ -426,15 +470,19 @@ note = "The OS login name is advertised as `user`; when the uid has no passwd en
 
 [[feature]]
 name = "~/.codehost/daemon.json (host daemon presence)"
-status = "missing"
+status = "partial"
 ts = "src/cli/registry.ts:34 writeDaemonPresence; src/cli/registry.ts:48 liveDaemon; src/cli/commands/serve.ts:264"
-note = "A foreground serve writes `{pid, root, token, startedAt}` as 2-space JSON and removes the file when the process exits. A missing or unparsable file, missing fields or a pid that does not answer signal 0 mean no daemon; a live pid of another user also reads as dead. One slot only: a second serve overwrites it, and whichever exits first deletes it. registry.test.ts: round trip, dead pid, garbage file."
+rs = "rs/src/commands/server.rs"
+proof = "rs/parity.json (cases `dev registers …`)"
+note = "A foreground serve writes `{pid, root, token, startedAt}` as 2-space JSON and removes the file when the process exits. A missing or unparsable file, missing fields or a pid that does not answer signal 0 mean no daemon; a live pid of another user also reads as dead. One slot only: a second serve overwrites it, and whichever exits first deletes it. registry.test.ts: round trip, dead pid, garbage file. Port: read natively by dev (liveDaemon: a plain positive integer pid that answers signal 0, root and token non-empty strings); every other reading means dev would serve, which goes back. Writing and removing it is serve's, which is not ported."
 
 [[feature]]
 name = "~/.codehost/workspaces.json (registered workspaces)"
-status = "missing"
+status = "partial"
 ts = "src/cli/registry.ts:60 registerWorkspace; src/cli/registry.ts:70 readRegisteredWorkspaces"
-note = "A JSON array of `{path, addedAt}` to which `codehost dev` appends when a host daemon is live (once per resolved path). The daemon reads it, leaves out entries whose directory no longer exists and watches the file to advertise at once. Nothing ever removes an entry, and no command unregisters a directory. registry.test.ts: registering twice, a directory that is gone."
+rs = "rs/src/commands/server.rs"
+proof = "rs/parity.json (cases `dev registers …`, `dev with the directory registered already`)"
+note = "A JSON array of `{path, addedAt}` to which `codehost dev` appends when a host daemon is live (once per resolved path). The daemon reads it, leaves out entries whose directory no longer exists and watches the file to advertise at once. Nothing ever removes an entry, and no command unregisters a directory. registry.test.ts: registering twice, a directory that is gone. Port: dev's append is native (see `dev: register with the running host daemon`) for a file of exactly `{path, addedAt}` entries; a file the JavaScript would rewrite by its own rules (other keys, entries it drops, numbers it would print differently, text that is not strict JSON) goes back. The daemon's reading and watching are not ported."
 
 [[feature]]
 name = "TEMP/TMP repair at startup (Windows)"
@@ -448,19 +496,23 @@ status = "missing"
 ts = "src/cli/config.ts:9; src/cli/registry.ts:12; src/cli/fallback-daemon.ts:19; src/cli/vscode-install.ts:15; src/cli/plugins/agent-yes.ts:15; src/cli/commands/serve.ts:56; src/cli/vscode-install.ts:164; src/cli/oxmgr-heal.ts:80; src/terminal-ws.ts:39"
 note = "Everything under ~/.codehost (config.json, daemon.json, workspaces.json, daemons.json, logs/, tasks/, vscode/) and ~/.agent-yes comes from os.homedir(): $HOME on POSIX (the passwd entry only when HOME is unset), %USERPROFILE% on Windows; daemon-kit's ~/.daemon-kit/launchers too. Those paths are fixed when the modules load; the risky-root check and the library's ~/ws ask at each call. A different HOME, as a daemon started by an init system or Task Scheduler may have, relocates all of it, the saved token and the hostId included, so the machine shows up on the page under a new identity. Temporary files go under os.tmpdir(): $TMPDIR on POSIX (else /tmp), TEMP or TMP on Windows after the repair above: codehost-vscode-<version>.tar.gz or .zip and codehost-vscode-x-<version>, oxmgr-heal-<random>, and the legacy terminal's codehost-term-zshrc. The installers read HOME (install.sh, for BUN_INSTALL's default) and USERPROFILE (install.ps1)."
 
-# ───────────── Identity from git, paths, enumeration ─────────────
 
+# ───────────── Identity from git, paths, enumeration ─────────────
 [[feature]]
 name = "repo identity from git (origin remote and branch, repo key)"
-status = "missing"
+status = "verified"
 ts = "src/cli/git.ts:22 repoIdentity; src/cli/git.ts:17 isGitRepo; src/cli/git.ts:70 git; src/cli/git.ts:44 parseGitRemote; src/shared/repo.ts:158 repoKey"
-note = "Every call is `git -C <dir> …`, and a non-zero exit counts as empty output. `rev-parse --is-inside-work-tree` must print `true`. The origin URL comes from `remote get-url origin`, falling back to `config --get remote.origin.url` (only the first applies url.<base>.insteadOf); the branch from `rev-parse --abbrev-ref HEAD`, falling back to `symbolic-ref --short HEAD`, so a repository without commits still reports its branch, while a detached HEAD prints `HEAD` and gives none. Without git on PATH every directory counts as not a repository: setup scaffolds .codehost into a real repository and starts it as a root `serve` instead of `dev`, dev advertises no repo, and open falls back to the home page. The remote becomes the repo key `<lower-cased host>/<owner>/<repo>`: https, scp-like, ssh:// with user and port, git://; `.git` removed; only the first two path segments kept, so a GitLab subgroup collapses. The key is what PeerMeta.repo, WorkspaceInfo.repo, the provisioning allowlist and deep links carry. Used by dev, open, setup and serve's registered workspaces. parseGitRemote is pinned by src/shared/repo.test.ts."
+rs = "rs/src/git.rs; rs/src/repo.rs"
+proof = "rs/parity.json (cases `open in …`, `open with GIT_DIR …`, `open with no git on PATH`, `dev registers a repository …`, `verify: open in a repository whose origin URL is 600 KB`, `repair: open in a repository whose origin URL makes git print exactly 1 MiB`: the git commands each side ran are compared through a logging git); rs/src/compare.rs (parseGitRemote on 10,000 generated remotes)"
+note = "Every call is `git -C <dir> …` through spawnSync, and a non-zero exit counts as empty output. So does output past spawnSync's maxBuffer, 1 MiB of standard output or of standard error (bun 1.4.0 kills the child and reports status null: never up to 1,048,576 bytes, sometimes from one byte more, always from 2 MB), so an origin URL of 9 MB reads as no remote. `rev-parse --is-inside-work-tree` must print `true`. The origin URL comes from `remote get-url origin`, falling back to `config --get remote.origin.url` (only the first applies url.<base>.insteadOf); the branch from `rev-parse --abbrev-ref HEAD`, falling back to `symbolic-ref --short HEAD`, so a repository without commits still reports its branch, while a detached HEAD prints `HEAD` and gives none. Without git on PATH every directory counts as not a repository: setup scaffolds .codehost into a real repository and starts it as a root `serve` instead of `dev`, dev advertises no repo, and open falls back to the home page. The remote becomes the repo key `<lower-cased host>/<owner>/<repo>`: https, scp-like, ssh:// with user and port, git://; `.git` removed; only the first two path segments kept, so a GitLab subgroup collapses. The key is what PeerMeta.repo, WorkspaceInfo.repo, the provisioning allowlist and deep links carry. Used by dev, open, setup and serve's registered workspaces. parseGitRemote is pinned by src/shared/repo.test.ts. Port: verified as far as open --print and dev's registration use it, on Linux (the same commands in the same order, output trimmed as JavaScript trims, up to exactly 1 MiB compared); setup and serve are handed back. Handed back: a host that is not ASCII, git output that is not UTF-8 (bun would decode it with replacement characters), either stream of a git call over 1,048,576 bytes (see `hand-back: git output over 1 MiB`), a git that exists but cannot be started, a PATH with an empty or relative entry, a .env that defines a variable git would inherit (see `hand-back: bun's .env files in the current directory`), and any variable whose name or value is not UTF-8 (bun hands git U+FFFD in place of its bytes, or leaves it out; see `hand-back: variables for the runtime …`)."
 
 [[feature]]
 name = "?folder= path form (toPosixPath / fromPosixPath)"
-status = "missing"
+status = "partial"
 ts = "src/shared/repo.ts:173 toPosixPath; src/shared/repo.ts:187 fromPosixPath"
-note = "Paths are advertised in the form VS Code's `?folder=` expects: `C:\\ws` becomes `/C:/ws` (drive-letter case kept, backslashes to slashes, trailing slashes removed, a bare drive becomes `/C:`); other paths only have backslashes turned into slashes. fromPosixPath reverses it for the provisioning script's environment. Pinned by a full table in src/shared/repo.test.ts."
+rs = "rs/src/repo.rs"
+proof = "rs/src/compare.rs (toPosixPath on 10,000 generated paths); rs/parity.json (`dev registers a directory with a backslash`)"
+note = "Paths are advertised in the form VS Code's `?folder=` expects: `C:\\ws` becomes `/C:/ws` (drive-letter case kept, backslashes to slashes, trailing slashes removed, a bare drive becomes `/C:`); other paths only have backslashes turned into slashes. fromPosixPath reverses it for the provisioning script's environment. Pinned by a full table in src/shared/repo.test.ts. Port: toPosixPath is ported and compared, and used natively for dev's folder link (where a POSIX directory with a backslash in its name gets a `/` in the link); fromPosixPath is not ported (the provisioning server is the JavaScript's)."
 
 [[feature]]
 name = "workspace enumeration by layout template"
@@ -468,30 +520,36 @@ status = "missing"
 ts = "src/cli/workspaces.ts:17 enumerateWorkspaces; src/cli/commands/serve.ts:202"
 note = "Walks the layout (default `{owner}/{repo}/tree/{branch}`) one segment at a time under the root: a literal segment must exist, a placeholder matches one directory level (symlinks included, dot-directories skipped), and a leaf counts only if it holds `.git` (a directory, or a worktree's file). Reports `{path, repo: <host>/<owner>/<repo>, branch}`, at most 200 results and 1000 intermediate directories. serve passes no host, so every checkout under its root is advertised as `github.com/<owner>/<repo>`, a clone from another host included, and the page takes it for an exact match of the GitHub link. serve caches the walk for 30 seconds. workspaces.test.ts: default layout, literal segments, dot-directories, a custom git host."
 
-# ───────────── The served root's .codehost directory ─────────────
 
+# ───────────── The served root's .codehost directory ─────────────
 [[feature]]
 name = "<root>/.codehost/config.yaml (workspace, allowlist, folderProvisioning)"
-status = "missing"
+status = "partial"
 ts = "src/cli/provision-server.ts:47 readCodehostConfig; src/cli/init.ts:8 CONFIG_YAML"
-note = "Scaffolded with `workspace: \"{owner}/{repo}/tree/{branch}\"` and a commented `allowlist:` example. The daemon reads three keys: `workspace` (a string, the layout template), `allowlist` (an array; items that are not strings are left out), `folderProvisioning` (only the literal true enables it). It is read again at every provision request and every metadata poll, so edits apply without a restart, except the layout, which serve reads once at start for its enumeration. A missing or malformed file reads as empty: default layout, every repo allowed, folder provisioning off."
+rs = "rs/src/templates/config.yaml; rs/src/commands/init.rs"
+proof = "rs/parity.json (cases `init …`)"
+note = "Scaffolded with `workspace: \"{owner}/{repo}/tree/{branch}\"` and a commented `allowlist:` example. The daemon reads three keys: `workspace` (a string, the layout template), `allowlist` (an array; items that are not strings are left out), `folderProvisioning` (only the literal true enables it). It is read again at every provision request and every metadata poll, so edits apply without a restart, except the layout, which serve reads once at start for its enumeration. A missing or malformed file reads as empty: default layout, every repo allowed, folder provisioning off. Port: the scaffold is written natively by init, byte for byte (compared); the daemon's reading of the file is not ported."
 
 [[feature]]
 name = "<root>/.codehost/setup.sh (scaffolded provisioning hook)"
-status = "missing"
+status = "partial"
 ts = "src/cli/init.ts:21 SETUP_SH"
-note = "An editable bash script, written with mode 0755. It leaves early when `$CODEHOST_WS/.git` exists; otherwise it clones `https://$CODEHOST_HOST/$CODEHOST_OWNER/$CODEHOST_REPO.git` into the workspace path minus `/tree/<branch>`, detaches the fresh clone, fetches the branch and adds a git worktree at `$CODEHOST_WS` (falling back to `-b <branch> origin/<branch>`). The text is user-visible, is returned by GET /__codehost/provision-config as the default, and init.test.ts checks that its shell variables stay literal."
+rs = "rs/src/templates/setup.sh; rs/src/commands/init.rs"
+proof = "rs/parity.json (cases `init …`)"
+note = "An editable bash script, written with mode 0755. It leaves early when `$CODEHOST_WS/.git` exists; otherwise it clones `https://$CODEHOST_HOST/$CODEHOST_OWNER/$CODEHOST_REPO.git` into the workspace path minus `/tree/<branch>`, detaches the fresh clone, fetches the branch and adds a git worktree at `$CODEHOST_WS` (falling back to `-b <branch> origin/<branch>`). The text is user-visible, is returned by GET /__codehost/provision-config as the default, and init.test.ts checks that its shell variables stay literal. Port: written natively by init, byte for byte and with mode 0755 (compared); the provision-config route that returns it is not ported."
 
 [[feature]]
 name = "<root>/.codehost/setup.ps1 (scaffolded hook for Windows)"
-status = "missing"
+status = "partial"
 ts = "src/cli/init.ts:68 SETUP_PS1"
-note = "The PowerShell counterpart: skips when `.git` exists, clones, detaches, then `git worktree add $ws $env:CODEHOST_BRANCH` (no fallback that creates the branch). On Windows the daemon prefers .codehost/setup.bat, which nothing scaffolds, then setup.ps1, then setup.sh."
+rs = "rs/src/templates/setup.ps1; rs/src/commands/init.rs"
+proof = "rs/parity.json (cases `init …`)"
+note = "The PowerShell counterpart: skips when `.git` exists, clones, detaches, then `git worktree add $ws $env:CODEHOST_BRANCH` (no fallback that creates the branch). On Windows the daemon prefers .codehost/setup.bat, which nothing scaffolds, then setup.ps1, then setup.sh. Port: written natively by init on Linux, byte for byte (compared); on macOS and Windows init is handed back, and the daemon's choice of script is not ported."
+
 
 # ═════ Background daemons ════════════════════════════════════════════════════
 
 # ───────────── Launching one (-d and setup) ─────────────
-
 [[feature]]
 name = "-d / --daemon (background daemon launch; CODEHOST_NO_OXMGR)"
 status = "missing"
@@ -522,8 +580,8 @@ status = "missing"
 ts = "src/cli/self-update.ts:25 selfUpdate; src/cli/self-update.ts:69 isGlobalInstall"
 note = "Every setup, `serve -d`, `dev -d` and `expose -d` first asks https://registry.npmjs.org/codehost/latest (5-second limit). If the version string differs from its own package.json's and the script lies in a recognised global install (a path containing `/.bun/install/global/node_modules/codehost/` or `/lib/node_modules/codehost/`), it runs `<runtime> add -g codehost@<latest>` (120-second limit) and prints `updating codehost <old> → <new>…` and `updated to <new>; the new daemon will run it.`, or `self-update to <new> failed; continuing on <old>.`. Every failure is non-fatal (`self-update skipped: <message>`); a development checkout and a bunx run are left alone. CODEHOST_NO_SELF_UPDATE=1 skips all of it. It relies on the process being bun and on replacing source files in place."
 
-# ───────────── oxmgr ─────────────
 
+# ───────────── oxmgr ─────────────
 [[feature]]
 name = "daemon start under oxmgr"
 status = "missing"
@@ -572,8 +630,8 @@ status = "missing"
 ts = "src/cli/oxmgr-heal.ts:76; src/cli/oxmgr-heal.ts:125 oxmgrSlug"
 note = "OXMGR_DIST_BASE replaces the base URL of the musl archive. OXMGR_NPM_REPOSITORY replaces the GitHub `owner/repo`, which otherwise comes from the repository URL in oxmgr's package.json, with Vladimir-Urik/OxMgr as the last resort. Both redirect where an executable is downloaded from."
 
-# ───────────── The fallback manager (no oxmgr) ─────────────
 
+# ───────────── The fallback manager (no oxmgr) ─────────────
 [[feature]]
 name = "fallback daemon registry ~/.codehost/daemons.json"
 status = "missing"
@@ -622,8 +680,8 @@ status = "missing"
 ts = "src/cli/proc.ts:10 killProcessTree; src/cli/proc.ts:29 descendants"
 note = "`code serve-web` forks twice, so stopping it means the whole tree. POSIX: reads `ps -A -o pid=,ppid=` and sends SIGTERM to every descendant, deepest first, then to the root. A `ps` that is missing or fails gives no output (spawnSync does not throw), so only the root is signalled and VS Code's forked server keeps running, as in a minimal container. Windows: `taskkill /pid <pid> /T /F`. Used at shutdown, by the supervisor and by stop; pids 0 and 1 are refused."
 
-# ═════ VS Code ═══════════════════════════════════════════════════════════════
 
+# ═════ VS Code ═══════════════════════════════════════════════════════════════
 [[feature]]
 name = "launching `code serve-web`"
 status = "missing"
@@ -690,10 +748,10 @@ status = "missing"
 ts = "src/cli/vscode-install.ts:75"
 note = "If the manifest request fails and a cached binary exists, warns `could not check for VS Code updates (<error>); using cached <productVersion>` and goes on. With nothing cached it fails with `Unable to download VS Code and none is cached: … set CODEHOST_CODE_BIN to an existing binary.`. A failed archive download or checksum is not caught and aborts the start."
 
+
 # ═════ The foreground server ═════════════════════════════════════════════════
 
 # ───────────── The loop shared by serve, dev and expose ─────────────
-
 [[feature]]
 name = "foreground server loop shared by serve, dev and expose"
 status = "missing"
@@ -730,8 +788,8 @@ status = "missing"
 ts = "src/cli/run-server.ts:168; src/tunnel/host.ts:179; src/tunnel/host.ts:44 LocalRequest"
 note = "Before a tunneled HTTP request is proxied it is offered to the daemon as method, raw path with query (before any prefix stripping), filtered headers and the whole body. serve tries /__codehost/provision, then /__codehost/provision-config, then the plugins in order (agent-yes, port, meta); anything else goes to VS Code. dev and expose install no handler, so the same paths are proxied to their local server. src/tunnel/tunnel.test.ts has the interception case."
 
-# ───────────── WebRTC ─────────────
 
+# ───────────── WebRTC ─────────────
 [[feature]]
 name = "WebRTC answering peer (one connection per browser client)"
 status = "missing"
@@ -768,8 +826,8 @@ status = "missing"
 ts = "src/cli/rtc-daemon.ts:26 loadNodeDataChannel; src/cli/rtc-daemon.ts:15; src/cli/rtc-daemon.ts:41; src/cli/rtc-daemon.ts:60"
 note = "If loading node-datachannel fails (bunx skips install scripts, and a global add probably does too: see the trustedDependencies entry), prints `[codehost] fetching node-datachannel native binary (prebuild-install)…`, runs `<bun> prebuild-install/bin.js -r napi` in the package directory and tries once more; a second failure throws `Failed to load the native WebRTC module (node-datachannel)…` with install advice and the cause. It runs when the module is loaded, at the top level of rtc-daemon.ts, which index.ts reaches through its static imports before yargs is constructed: so it runs at the start of every command, and the second failure is an uncaught error at module load, which bun prints without any help text, exit 1, for every command, --help and --version included. Candidate to stay JavaScript or to lapse: a Rust binary that links its WebRTC stack has nothing to repair; the owner decides."
 
-# ───────────── Admitting clients ─────────────
 
+# ───────────── Admitting clients ─────────────
 [[feature]]
 name = "client admission policy (--approve auto | confirm)"
 status = "missing"
@@ -806,10 +864,10 @@ status = "missing"
 ts = "src/cli/run-server.ts:93; src/cli/run-server.ts:121; src/web/discovery.tsx:77"
 note = "The daemon rebuilds a peer-id-to-name map from every `peers` message, for members whose role is client or viewer, and uses it in approval prompts, --allow matching and the `connected` line; a client not (yet) in the roster is `unknown client`. Page side (stays TypeScript): each tab joins with the name `<Browser> · <OS>` sniffed from the user agent (`Chrome · macOS`); the page's short-lived probe clients and the embeddable client join with no name. A returning browser cannot be recognised: its peer id is new at every page load."
 
+
 # ═════ Signaling (WebSocket to the Worker) ═══════════════════════════════════
 # The Worker half of each entry stays TypeScript (worker/, keep_ts); the entry
 # is what the daemon has to send, accept and survive.
-
 [[feature]]
 name = "signaling room endpoint <signal>/room/<token>"
 status = "missing"
@@ -888,13 +946,13 @@ status = "missing"
 ts = "src/cli/commands/serve.ts:251 buildRoomMeta; worker/room.ts:188"
 note = "Daemon side: serve removes `workspaces` and `agents` from what it sends to the room, in hello and in meta messages; the page fetches the full metadata from /__codehost/meta. Worker side: each peer's hello is kept in a socket attachment of about 2 KB; on overflow the Worker halves `meta.workspaces` until it fits, then drops the list, and if it still does not fit the peer silently never appears in the roster. A Rust daemon must keep its room metadata as small as the TypeScript one does."
 
+
 # ═════ The tunnel (HTTP and WebSocket over a data channel) ═══════════════════
 # The daemon is the host half (src/tunnel/host.ts). The client half
 # (src/tunnel/client.ts) runs in the page and stays TypeScript; it is also what
 # src/tunnel/tunnel.test.ts drives the host with, over an in-memory transport.
 
 # ───────────── Frames ─────────────
-
 [[feature]]
 name = "tunnel frame format and the 64 KiB frame limit"
 status = "missing"
@@ -949,8 +1007,8 @@ status = "missing"
 ts = "src/tunnel/protocol.ts:24; src/tunnel/host.ts:135; src/tunnel/host.ts:251; src/tunnel/client.ts:133; src/tunnel/client.ts:234"
 note = "Page to daemon: JSON `{code?, reason?}`; the daemon closes the upstream socket without forwarding code or reason and drops partial fragments. Daemon to page: `{code, reason}` from the upstream close event, or `{code:1006, reason:'error'}` on an upstream error; both can be sent for one socket. The page takes missing fields as 1000 and an empty reason."
 
-# ───────────── Proxying ─────────────
 
+# ───────────── Proxying ─────────────
 [[feature]]
 name = "tunneled HTTP proxy to the local server"
 status = "missing"
@@ -1011,8 +1069,8 @@ status = "missing"
 ts = "src/tunnel/transport.ts:5 TunnelTransport; src/tunnel/node-datachannel.ts:5 nodeDataChannelTransport; src/cli/tunnel.ts:12"
 note = "What the tunnel asks of a transport: send a frame, say whether it is open, report the bytes buffered (0 if unknowable), optionally call back when that drops below a threshold, deliver binary frames only, report closing; whole frames, in order, both ways. The daemon's adapter sends with sendMessageBinary, sets the low threshold (skipped silently on an addon too old to have it), delivers only binary messages and forwards the closed event. The Rust daemon needs the same adapter over whichever WebRTC library it adopts. src/tunnel/node-datachannel.test.ts runs it over a real loopback WebRTC pair and needs the native addon."
 
-# ═════ Provisioning (serve only) ═════════════════════════════════════════════
 
+# ═════ Provisioning (serve only) ═════════════════════════════════════════════
 [[feature]]
 name = "GET /__codehost/provision?owner=&repo=&branch=&host= (repo provisioning)"
 status = "missing"
@@ -1103,8 +1161,8 @@ status = "missing"
 ts = "src/cli/provision-server.ts:161; src/web/discovery.tsx:979"
 note = "A JSON body `{configYaml?, setupScript?}` creates <root>/.codehost, writes config.yaml and the platform's setup script as given (setup.sh gets mode 0755), re-advertises the metadata and answers 200 `{ok:true}`. A body that is not JSON gives 400 `{error:'invalid JSON body'}`. Nothing is validated: any client in the room can replace the script that the next repo link runs, which the code states is the same trust the editor's terminal already gives. No test."
 
-# ═════ Plugins (serve only) ══════════════════════════════════════════════════
 
+# ═════ Plugins (serve only) ══════════════════════════════════════════════════
 [[feature]]
 name = "plugin mounts: /__codehost/<name>/*"
 status = "missing"
@@ -1153,10 +1211,10 @@ status = "missing"
 ts = "src/cli/plugins/preview.ts:15 previewPlugin"
 note = "Forwards method, headers and body to http://127.0.0.1:<PORT><rest> (a bare /<PORT> maps to /), setting Host to 127.0.0.1:<PORT>, x-forwarded-host to the incoming Host and `x-forwarded-proto: https`, without following redirects. Through the tunnel the incoming Host is never the browser's (Host is hop-by-hop): it is the caller's own x-forwarded-host when it sent one, else 127.0.0.1:<VS Code port>, while preview.test.ts sets the Host directly. The forwarded headers include the tunnel's `accept-encoding: gzip`, which probably breaks compressed answers (see the gzip entry). A path that is not /<1 to 5 digits>… gets 404 `expected /__codehost/port/<PORT>/…`, a port outside 1 to 65535 gets 400 `invalid port`, a refused connection gets 502 `nothing is listening on 127.0.0.1:<PORT>`. Any client in the room reaches any loopback port of the host through it. plugins/preview.test.ts covers each case."
 
+
 # ═════ The npm package ═══════════════════════════════════════════════════════
 
 # ───────────── What is published and how it is installed ─────────────
-
 [[feature]]
 name = "npm package contents (TypeScript source, the whole repository)"
 status = "missing"
@@ -1193,8 +1251,8 @@ status = "missing"
 ts = "public/_redirects:3; public/_redirects:10"
 note = "Cloudflare Pages rewrites (status 200): /setup.sh and /setup.ps1 serve the installers, and any path without a static file serves index.html, so that deep links reach the app (/vs/* is the Service Worker's). Hosting configuration of the page, not daemon code; the page's `Set up a machine` card prints the /setup.* commands. Candidate to stay as it is."
 
-# ───────────── What the package exports to other programs ─────────────
 
+# ───────────── What the package exports to other programs ─────────────
 [[feature]]
 name = "codehost/provision (package export)"
 status = "missing"
@@ -1231,13 +1289,13 @@ status = "missing"
 ts = "packages/ws-provision/package.json:6; packages/ws-provision/src/index.ts:46; packages/ws-provision/README.md:1"
 note = "Version 0.1.0, MIT, public; exports `.` as ./src/index.ts and ships src (setup-repo.sh and the test files included) and its README; no runtime dependencies. The same code as codehost/provision. The root package.json declares no workspaces and the release workflow publishes the root package only; nothing in the repository publishes this one. Candidate to stay TypeScript."
 
+
 # ═════ The provisioning library (codehost/provision) ═════════════════════════
 # Reachable only as an import: no codehost command calls these, except the
 # credential probes listed under Provisioning. It is a second provisioning
 # path with its own layout (an independent clone per branch under ~/ws),
 # unlike the daemon's hook (one clone and git worktrees under the served root).
 # All of it is a candidate to stay TypeScript.
-
 [[feature]]
 name = "workspace root resolution (wsRoot argument, CODEHOST_WS_ROOT, ~/ws)"
 status = "missing"
@@ -1328,12 +1386,12 @@ status = "missing"
 ts = "packages/ws-provision/src/index.ts:207 git; packages/ws-provision/src/index.ts:65"
 note = "Every git call of the library is an argument array (no shell) with LC_ALL=C, LANG=C, LANGUAGE=C, GIT_TERMINAL_PROMPT=0 and GCM_INTERACTIVE=Never on top of the inherited environment, a 120-second limit and a 64 MiB output cap."
 
+
 # ═════ The legacy web terminal ═══════════════════════════════════════════════
 # src/server.ts and src/terminal-ws.ts: started only by the package scripts
 # `start` and `dev:server`, imported by no command, and without a page that
 # talks to it in the built site. They ship in the npm package as source.
 # Whether this is part of the product, and so of the port, is the owner's call.
-
 [[feature]]
 name = "legacy web terminal server (`bun src/server.ts`, PORT)"
 status = "missing"
@@ -1370,12 +1428,12 @@ status = "missing"
 ts = "src/terminal-ws.ts:20; src/terminal-ws.ts:39; src/terminal-ws.ts:72; src/terminal-ws.ts:160; src/terminal-ws.ts:167"
 note = "bash gets a PROMPT_COMMAND that prints OSC 7, put in front of an existing one; zsh gets ZDOTDIR=<tmp>/codehost-term-zshrc, whose .zshenv, .zprofile and .zshrc source the user's files and add a precmd hook. An OSC 7 path in the output (URL-decoded) that differs from the session's cwd updates it and is sent as a cwd message. When the output holds the device-attributes query (ESC [ c or ESC [ 0 c) the server writes ESC [ ? 1 ; 2 c back to the shell, and for the cursor-position query (ESC [ 6 n) it writes ESC [ 1 ; 1 R, so that programs do not block while no client is attached."
 
+
 # ═════ The page and the Worker ═══════════════════════════════════════════════
 # One summarising entry per area. All of it runs in a browser or on Cloudflare
 # and is a candidate to stay TypeScript; what the daemon owes each area has
 # its own entry above. Read by one reader (see the header); the bugs named
 # here were read, not run.
-
 [[feature]]
 name = "page: Service Worker (/vs/<peerId>/* interception, bootstrap injection, asset caches, CDN rewrite)"
 status = "missing"
@@ -1447,3 +1505,67 @@ name = "signaling Worker: what the daemon never calls (/, /health, OPTIONS, 404,
 status = "missing"
 ts = "worker/index.ts:27; worker/index.ts:33; worker/index.ts:53; worker/index.ts:67 handleCdnProxy; worker/room.ts:37; worker/room.ts:122 alarm; worker/wrangler.jsonc:3"
 note = "GET / and /health answer `{\"ok\":true,\"service\":\"codehost-signal\"}`; any OPTIONS answers 200 with open CORS headers; unknown paths 404 `not found`. GET or HEAD /cdn/<host>/<path> re-serves hosts ending in .vscode-cdn.net with `Access-Control-Allow-Origin: *` and `cache-control: public, max-age=3600`, cached at the edge (other hosts 403 `host not allowed`, other methods 405). The room's sweep alarm starts 20 seconds after a join, doubles after every sweep that evicts nobody and stops past a day until someone joins, so a peer that was killed hard can linger in a long-stable room. Deployed as `codehost-signal` with one Durable Object class. Already set aside as keep_ts in projects.toml; listed so that nothing found is lost."
+
+# ── hand-back situations found by the first Rust port ──
+
+[[feature]]
+name = "open --print (print the URL instead of opening the browser)"
+status = "verified"
+ts = "src/cli/commands/open.ts:42; src/cli/commands/open.ts:57 buildUrl; src/cli/commands/open.ts:72 pathFromTarget; src/cli/commands/open.ts:87 pathFromCwd"
+rs = "rs/src/commands/open.rs; rs/src/repo.rs; rs/src/git.rs"
+proof = "rs/parity.json (cases `open …`: about 90 targets and option lines, the saved token in ten shapes and seven that go back, the repository of the current directory in some 25 states, git asked the same commands, no browser asked); rs/src/compare.rs (the buildUrl of open.ts, loaded as it is, on about 10,000 generated targets with and without a token and four pages)"
+note = "(new entry) `codehost open [target] --print`: the URL of `codehost open`, printed as `[codehost] <url>`, exit 0, nothing opened. Native on Linux: every kind of target, -t/--token (trimmed; blank falls back to the saved token), --anon, --page, the saved token from ~/.codehost/config.json (read only where the TypeScript reads it), the repository of the current directory through the same git commands, and the stderr line when there is none. The quirks are kept: `git@host:o/r` is a `<user>@<machine>` path, `https://github.com:443/a/b` keeps its port in the link, a full URL that is not a repository is printed as it is without a token, `--page ''` gives a path alone. Handed back: a saved config that is `null`, a token that is not a string, a config.json that is not strict JSON or has a key twice (JSON.parse's verdicts are not reproduced), a config.json that cannot be read; a host that is not ASCII; without a target, a terminal or FORCE_COLOR (the line on stderr would be red, and whether there is one is known only after asking git, which is not asked twice: so `codehost open --print` typed at a terminal goes back even inside a repository); git output over 1 MiB; the spellings under `option syntax`; and the `hand-back:` situations."
+
+[[feature]]
+name = "hand-back: package.json, tsconfig.json and jsconfig.json bun warns about"
+status = "missing"
+ts = "src/cli/index.ts:1 (bun reads them before the program)"
+rs = "rs/src/runtime.rs"
+proof = "rs/parity.json (cases `open beside a …`, `open below a …`, `open in a JavaScript project`, the `verify:` and `repair:` cases beside a tsconfig.json or jsconfig.json); rs/src/compare.rs (project_files_the_binary_accepts_are_quiet_in_bun: 600 generated package.json, tsconfig.json and jsconfig.json files; bun 1.4.0 is started beside each, and its stderr is empty for every one the binary accepts)"
+note = "(new entry) Before the program starts, bun reads package.json, tsconfig.json and jsconfig.json in the current directory and every directory above it (not those above the program's own file), and writes to stderr, after the program's output, what it does not like: a syntax error, a key given twice at any depth (`Duplicate key`), a `type` other than \"module\"/\"commonjs\" or not a string, an `exports`/`imports` value of the wrong kind or an exports object mixing `.` keys with others, a `browser` mapping that is not a string or boolean; in compilerOptions a `paths` entry that is not an array (`Substitutions for pattern … should be an array`), a `paths` pattern or target with more than one `*` (`Invalid pattern …, must have at most one \"*\" character`), a target that is not relative when there is no baseUrl (`Non-relative path … is not allowed when \"baseUrl\" is not set`), a jsxFactory or jsxFragmentFactory that is not a member expression (`Invalid JSX member expression`, for `a-b`, `a b`, `1x`, `a.`), an unknown `importsNotUsedAsValues` (all seen with bun 1.4.0, each with a source excerpt, coloured on a terminal). It accepts comments, trailing commas, single quotes and hex numbers. The binary answers beside such files only when each is strict JSON plus comments and trailing commas, an object, with no key twice, a `type` of module/commonjs, `exports` a string or an object of uniform keys whose values are strings or condition objects, `imports` an object of such values, `browser` a string or an object of strings and booleans, and for tsconfig/jsconfig no `extends` (bun would read that file too), `compilerOptions` an object with `paths` whose patterns and targets are strings with at most one `*`, every target starting with `./` or `../` unless baseUrl is a non-empty string, a jsxFactory and jsxFragmentFactory that are ASCII identifiers joined by dots, and no `importsNotUsedAsValues`. Anything else goes back, including files bun would accept quietly (a target `*` without baseUrl, a jsxFactory `.a` or empty). The first port missed the `paths` and jsx warnings; the independent verification found the `*` and jsx ones, and the repair found the baseUrl one (case `repair: open beside a tsconfig.json with a paths target not relative and no baseUrl`). A token rejection beside such a file goes back too, although `process.exit(1)` drops bun's warnings and the TypeScript prints only the two rejection lines: needless, and harmless. Common: a JavaScript project with an ordinary package.json and a commented tsconfig.json is answered natively (cases)."
+
+[[feature]]
+name = "hand-back: bun's .env files in the current directory"
+status = "partial"
+ts = "src/cli/index.ts:1 (bun loads them before the program)"
+rs = "rs/src/runtime.rs"
+proof = "rs/parity.json (cases `open beside a .env …`, `open beside a .env.local …`, `open beside a .env.production …`, and the `verify:` and `repair:` cases with a .env); rs/src/compare.rs (dotenv_keys_cover_what_bun_loads: 597 generated .env files, 400 from the pieces bun's parser cares about, line ends between a key and its `=` among them, one for every byte that is not a key character put before a key, inside it, between it and its `=` and after its `:`, and 7 whose keys are all set; bun 1.4.0 prints its environment beside each: every variable it loaded is a name the binary found, and the environment is untouched beside every file the binary answers)"
+note = "(new entry) bun loads .env, .env.local, .env.development and .env.development.local (others under another NODE_ENV) from the current directory, and only there, into process.env, without overriding a variable that is set, and every program the JavaScript starts inherits them. git reads far more than GIT_* and XDG_*: a .env setting LD_LIBRARY_PATH to a libc git cannot load makes the TypeScript report no repository, and SUDO_UID changes git's verdict on a repository of another user for root (both found by the independent verification; the first port answered both natively and differently). Port: the binary finds every name bun could take for a key (a run of [A-Za-z0-9_.-] followed by blanks and `=` or `:`, anywhere in the file, inside values and comments too; blanks there include CR and LF, since bun 1.4.0 takes `LD_LIBRARY_PATH\\r=<dir>` and `KEY\\n=1` for keys, which the first repair missed and its second pass found: cases `repair: … CR before =`, `repair: … on the next`) and answers only when each of them is already set to something that is not empty, so that bun changes nothing, and the file mentions none of GIT_, XDG_, BUN, NODE, ICU and COLOR. A .env of comments and blank lines, or one setting only HOME and PATH, is answered natively (cases); one that sets anything new (FOO, GITHUB_TOKEN, LANG, `export X=…`, `X: 1`) goes back, as does one that is a directory or cannot be read. So in a project that keeps a .env with its own settings in the current directory, every command goes back: no speed-up there yet. A token rejection beside such a file goes back too, needlessly (bun decides colours before it loads .env, and the rejection does not read the environment)."
+
+[[feature]]
+name = "hand-back: variables for the runtime (BUN_*, NODE_*, MIMALLOC_*, ICU_*, LD_*) and bunfig.toml"
+status = "missing"
+ts = "src/cli/index.ts:1 (bun reads them before the program)"
+rs = "rs/src/runtime.rs"
+proof = "rs/parity.json (cases `open with NODE_ENV set`, `open with a BUN_ variable set`, `open with BUN_INSTALL set`, `repair: open with LD_BIND_NOW set`, `open beside a bunfig.toml`, `open with a ~/.bunfig.toml`, `repair: … not UTF-8 …` (set by rs/parity/run.sh's PARITY_PRINTF_ENV), `repair: open with HOME through …`, `repair: open with a relative HOME`, `repair: dev registers with …HOME…`)"
+note = "(new entry) bun takes options and switches from variables named for it, for Node and for the libraries inside it, and the dynamic loader that starts bun (glibc's or musl's) reads LD_* (LD_PRELOAD, LD_LIBRARY_PATH, LD_DEBUG, …); the binary shipped for Linux is static, so the loader never sees them for it, and an LD_PRELOAD of a missing library or an LD_DEBUG makes bun's output differ from the binary's. When bun runs a file it reads bunfig.toml in the current directory, not in the directories above it; bun 1.4.0 ignores ~/.bunfig.toml and $XDG_CONFIG_HOME/.bunfig.toml there (a preload, a [define] and a malformed file all had no effect, per the independent verification). Any variable starting BUN_, NODE_, MIMALLOC_, ICU_ or LD_ (in any case) other than BUN_INSTALL, which bun's installer puts in every profile, sends the invocation back, as does a ./bunfig.toml; ~/.bunfig.toml and $XDG_CONFIG_HOME/.bunfig.toml go back too, which is needless and costs only speed. So a user with LD_LIBRARY_PATH set in their profile gets no speed-up. Also back: HOME unset or empty (os.homedir() then asks the system), a HOME with a `..` component (the TypeScript's path.join resolves it by the text, the system through the directories, so the two named different files; a relative HOME, `.` segments and `//` name the same files and stay native), any variable whose name or value is not UTF-8 (bun keeps process.env as text: such a value reaches git with U+FFFD in place of its bytes, such a name not at all, so with XDG_CONFIG_HOME holding a byte 0xFF the TypeScript's git missed the git config the binary's git read), a PATH entry that is empty or relative, a current directory or package path that is not UTF-8 or (for the package) holds `?` or `\\`, which bun cannot load from. The `..` HOME and the non-UTF-8 variables were found by the repair after the independent verification; the first port answered both natively and differently (cases)."
+
+[[feature]]
+name = "hand-back: console.error in red (a terminal, FORCE_COLOR)"
+status = "missing"
+ts = "src/cli/commands/open.ts:91; src/cli/commands/serve.ts:127"
+rs = "rs/src/runtime.rs; rs/src/commands/open.rs; rs/src/commands/server.rs"
+proof = "rs/parity.json (cases `open with FORCE_COLOR …`, `serve with a bad token and FORCE_COLOR`); rs/parity/proof.sh (every case again on a pseudo-terminal, both sides)"
+note = "(new entry) bun prints console.error in red when standard output or standard error is a terminal, or FORCE_COLOR is set (any value), and plain otherwise (NO_COLOR, CLICOLOR_FORCE change nothing without a terminal). A native command that may write to standard error goes back in those cases: every token rejection, and `open --print` without a target (outside a repository it writes a line to stderr; the binary declines before asking git, so that git is never asked twice). What writes only to standard output (console.log, never coloured) stays native on a terminal: open with a target, init, dev's registration. So a token rejection, or `codehost open --print` with no target, typed at a terminal is not faster yet."
+
+[[feature]]
+name = "hand-back: node-datachannel addon not where require finds it"
+status = "missing"
+ts = "src/cli/rtc-daemon.ts:15; src/cli/rtc-daemon.ts:26 loadNodeDataChannel"
+rs = "rs/src/runtime.rs"
+note = "(new entry) Every TypeScript command imports rtc-daemon.ts, whose top level loads node-datachannel and, if that fails, prints `[codehost] fetching node-datachannel native binary (prebuild-install)…` and downloads it before the command runs (see `node-datachannel native module self-heal`). The binary looks for the package where require would, in the nearest node_modules above <package>/src/cli (links resolved), and hands back unless node_modules/node-datachannel/package.json and build/Release/node_datachannel.node are files. That is the state after `bunx codehost` or an install without scripts, until the first TypeScript run has fetched it. Not detected: an addon that is there but cannot be loaded (a glibc build on a musl system), where the TypeScript fails at every command and the binary still answers the native ones. Not compared by a parity case (the cases need the addon to run the TypeScript at all); the hand-back check gives the binary a stub package."
+
+[[feature]]
+name = "hand-back: git output over 1 MiB (bun's spawnSync limit)"
+status = "missing"
+ts = "src/cli/git.ts:70 git (spawnSync, default maxBuffer)"
+rs = "rs/src/git.rs"
+proof = "rs/parity.json (cases `verify: open in a repository whose origin URL is 9 MB`, `verify: dev registers a repository whose origin URL is 9 MB`, `repair: open with a git that writes 9 MB to stderr`, against `repair: open in a repository whose origin URL makes git print exactly 1 MiB` and `verify: open in a repository whose origin URL is 600 KB`, which are native)"
+note = "(new entry) spawnSync reads at most 1,048,576 bytes of a child's standard output and as many of its standard error; past that bun kills git and reports status null, which git.ts takes for empty output. Measured with bun 1.4.0: never up to 1,048,576 bytes, about half the time at 1.1 MB (it depends on how fast git writes), always from 2 MB. So with an origin URL of 9 MB the TypeScript reports no repository (open prints the home page and its stderr line; dev links the folder), while the first port printed the repository link (found by the independent verification). Port: when either stream of any git call is longer than 1,048,576 bytes, the binary hands back. It has then only asked git read-only questions, which the JavaScript asks again; the cases compare which git commands were asked, not how often. Rare: only an absurd remote URL or git warnings that long."
+
+[[feature]]
+name = "hand-back: everything on macOS and Windows"
+status = "missing"
+ts = "src/cli/index.ts:17"
+rs = "rs/src/main.rs; rs/src/runtime.rs"
+note = "(new entry) The binary answers natively on Linux only, the one system its cases ran on. On Windows the ported modules are not compiled; on macOS they are, but runtime::machine() declines first, and every invocation goes to src/cli/index.ts. Nothing was compared on either (on Windows: homedir from USERPROFILE, how git is found, the console's encoding, path forms; on macOS: the cases use GNU find -printf, and other ports found macOS-only differences). The smoke lines of .github/workflows/rust-npm-release.yml run `open --print` (also as `ch`), `init -f` and a token rejection after installing on every platform, marked `[native:linux] [handback:darwin,win32]` so that each platform has to show who answered (rs/src/js_fallback.rs is helper v5); they have not run yet, as nothing is pushed. To make macOS native: run the cases there (`parity-platforms`), then lift the check."
