@@ -224,10 +224,14 @@ struct SourceFile {
     is_test: bool,
 }
 
-/// A directory of projects.toml as git prints paths: `src/` is `src`, and
+/// A directory of projects.toml as git prints paths: `./src/` is `src`, and
 /// the repository root is `.`.
 fn tidy(dir: &str) -> &str {
-    dir.trim_end_matches('/')
+    let mut dir = dir.trim_end_matches('/');
+    while let Some(rest) = dir.strip_prefix("./") {
+        dir = rest;
+    }
+    dir
 }
 
 fn is_under(path: &str, dir: &str) -> bool {
@@ -256,13 +260,16 @@ fn extension(path: &str) -> &str {
 impl Project {
     /// Whether a file is TypeScript or JavaScript the port is to replace, its
     /// tests included: a script under a `ts` directory that no `ignore` or
-    /// `keep_ts` path and no `rust` directory holds (the port's own scripts
-    /// are not to be replaced).
+    /// `keep_ts` path holds. A `rust` directory inside the `ts` directory
+    /// takes its files out too (the port's own scripts are not to be
+    /// replaced). A `rust` directory that is the `ts` directory itself, or
+    /// holds it, takes nothing out: there the extension tells the two apart.
     fn replaces(&self, path: &str) -> bool {
+        let Some(ts) = deepest(path, &self.ts) else { return false };
         SCRIPT_EXTENSIONS.contains(&extension(path))
             && !path.ends_with(".d.ts")
-            && self.ts.iter().any(|dir| is_under(path, dir))
-            && !self.ignore.iter().chain(self.keep_ts.keys()).chain(&self.rust).any(|skip| is_under(path, skip))
+            && !self.ignore.iter().chain(self.keep_ts.keys()).any(|skip| is_under(path, skip))
+            && !deepest(path, &self.rust).is_some_and(|rust| rust > ts)
     }
 
     /// Whether a file belongs to the Rust port: a `.rs` file under a `rust`
@@ -1189,6 +1196,18 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_directory_may_be_spelled_with_a_leading_dot_or_a_trailing_slash() {
+        assert!(is_under("src/cli.ts", "./src/"));
+        assert!(is_under("cli.ts", "./"));
+        assert!(!is_under("srcs/cli.ts", "./src"));
+        let dirs = [".".to_string(), "./rs/".to_string(), "rs/src".to_string(), "docs".to_string()];
+        assert_eq!(deepest("rs/src/main.rs", &dirs), Some(2));
+        assert_eq!(deepest("rs/build.rs", &dirs), Some(1));
+        assert_eq!(deepest("cli.ts", &dirs), Some(0));
+        assert_eq!(deepest("cli.ts", &dirs[1..]), None);
+    }
+
     /// A project as one `[[project]]` block of projects.toml declares it.
     fn project(block: &str) -> Project {
         toml::from_str(block).expect("project block")
@@ -1227,6 +1246,35 @@ mod tests {
         // The same directory under both: listing it under `rust` wins.
         let p = project("name = \"x\"\nts = [\"ts\"]\nrust = [\"rs\"]\nignore = [\"rs\"]");
         assert!(p.is_rust("rs/main.rs"));
+    }
+
+    #[test]
+    fn a_rust_directory_at_or_above_the_typescript_hides_none_of_it() {
+        // The crate at the repository root, the TypeScript in its own directory.
+        let p = project("name = \"x\"\nts = [\"ts\"]\nrust = [\".\"]\nignore = [\"vendor\"]");
+        assert!(p.replaces("ts/cli.ts"));
+        assert!(p.is_rust("src/main.rs"));
+        assert!(p.is_rust("build.rs"));
+        assert!(!p.is_rust("vendor/dep/src/lib.rs"));
+        assert!(!p.replaces("vendor/dep/index.js"));
+
+        // Both at the root, and both in the same directory: the extension decides.
+        for dir in [".", "src"] {
+            let p = project(&format!("name = \"x\"\nts = [\"{dir}\"]\nrust = [\"{dir}\"]"));
+            assert!(p.replaces("src/cli.ts"), "{dir}");
+            assert!(p.is_rust("src/main.rs"), "{dir}");
+        }
+
+        // The TypeScript at the root and the crate below it: scripts inside
+        // the crate's sources belong to the port.
+        let p = project(
+            "name = \"x\"\nts = [\".\"]\nrust = [\"src\"]\nkeep_ts = { \"extension\" = \"runs in the browser\" }",
+        );
+        assert!(p.replaces("cli.ts"));
+        assert!(p.replaces("lib/util.mjs"));
+        assert!(!p.replaces("src/gen.mjs"));
+        assert!(!p.replaces("extension/background.js"));
+        assert!(p.is_rust("src/main.rs"));
     }
 
     /// A directory of its own in the temp directory, removed when dropped.
