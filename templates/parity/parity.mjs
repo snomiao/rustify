@@ -65,9 +65,18 @@
 // `env` to take out what the runner sets. Nothing else comes in from the
 // machine: no TERM, NO_COLOR or FORCE_COLOR.
 //
+// The run's directory is <temp>/rustify-parity-XXXXXX and holds a file IN-USE
+// while the run lasts. If that directory, that file, or the <ROOT> of the case
+// that is running is removed under the runner (a clean-up of the temp
+// directory by someone else), the runner stops with one message and exit code
+// 3 instead of reporting differences that are not the port's. Remove such a
+// directory by its exact name only, never by pattern: other runs keep theirs
+// beside it. --keep leaves it there, without the IN-USE file, and prints its
+// path.
+//
 // Exit code: 0 all the same; 1 some case differs, is broken or went the wrong
 // way; 2 nothing could be run (usage, a mistake in the cases file, no case
-// selected).
+// selected); 3 the run's directory disappeared.
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -113,20 +122,57 @@ const command = (text) =>
     .map((token) => (fs.existsSync(path.resolve(launchDir, token)) && /[\\/.]/.test(token) ? path.resolve(launchDir, token) : token));
 const impls = { ts: opts.ts ? command(opts.ts) : null, rs: command(opts.rs) };
 const MARKER = "__RUSTIFY_HANDED_BACK__";
-const work = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "rustify-parity-"));
+
+const selected = spec.cases
+  .map((testCase, index) => ({ testCase, index }))
+  .filter(({ testCase }) => typeof opts.filter !== "string" || testCase.name.includes(opts.filter));
 
 function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+const work = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "rustify-parity-"));
+// Tells whoever finds the directory whose it is. It is also how the runner
+// notices that the directory was emptied under it: a clean-up that races the
+// run can fail to remove the directory itself and still take this file.
+const inUse = path.join(work, "IN-USE");
+fs.writeFileSync(
+  inUse,
+  `A rustify parity run is working in this directory: process ${process.pid} on ${os.hostname()}, started ${new Date().toISOString()} in ${launchDir}.\nDo not remove it while that process is alive.\n`,
+);
+
+// What must still be there for a result to mean anything. Only what nothing
+// but a clean-up from outside removes: a case may remove its own HOME, temp
+// or working directory on purpose, and that is compared like anything else.
+const mine = [work, inUse];
+class Vanished extends Error {}
+function stillThere(...more) {
+  for (const place of [...mine, ...more]) if (!fs.existsSync(place)) throw new Vanished(place);
+}
+
 function runCase(testCase, impl, index, extraEnv = {}) {
   const root = path.join(work, `${index}-${impl}`);
+  stillThere();
+  let run;
+  try {
+    run = runIn(root, testCase, impl, extraEnv);
+  } catch (error) {
+    // A file that could not be written because its directory went away is
+    // that, not a fault of the case.
+    stillThere(root);
+    throw error;
+  }
+  stillThere(root);
+  return run;
+}
+
+function runIn(root, testCase, impl, extraEnv) {
   const cwd = path.join(root, "cwd");
   const home = path.join(root, "home");
-  fs.mkdirSync(cwd, { recursive: true });
-  fs.mkdirSync(home, { recursive: true });
   const tmp = path.join(root, "tmp");
-  fs.mkdirSync(tmp, { recursive: true });
+  // One level at a time: making the missing parents too would quietly put
+  // back a run directory that somebody removed.
+  for (const dir of [root, cwd, home, tmp]) fs.mkdirSync(dir);
   // <CWD>, <HOME> and <ROOT> in what a case says stand for this run's directories.
   const here = (text) => String(text).split("<CWD>").join(cwd).split("<HOME>").join(home).split("<ROOT>").join(root).split("<REPO>").join(launchDir);
   for (const [file, content] of Object.entries(testCase.files || {})) {
@@ -190,6 +236,7 @@ function runCase(testCase, impl, index, extraEnv = {}) {
   return { observed };
 }
 
+
 function show(label, text) {
   const lines = text.split("\n");
   const shown = lines.slice(0, 30).map((l) => `        ${l}`);
@@ -212,34 +259,34 @@ function handbackCheck() {
   fs.mkdirSync(path.dirname(path.join(standIn, entry)), { recursive: true });
   fs.writeFileSync(path.join(standIn, "package.json"), JSON.stringify({ name: "stand-in", version: "0.0.0" }));
   fs.writeFileSync(path.join(standIn, entry), `console.log(${JSON.stringify(MARKER)});\n`);
+  // Without it every handed-back case would look answered by the binary.
+  mine.push(path.join(standIn, entry));
   let native = 0;
   let back = 0;
-  spec.cases.forEach((testCase, index) => {
-    if (typeof opts.filter === "string" && !testCase.name.includes(opts.filter)) return;
+  for (const { testCase, index } of selected) {
     ran++;
     const run = runCase(testCase, "rs", index, { [rootEnv]: standIn });
     if (run.broken) {
       failed++;
-      return console.log(`  BROKEN  ${testCase.name}\n      ${run.broken}`);
+      console.log(`  BROKEN  ${testCase.name}\n      ${run.broken}`);
+      continue;
     }
     const reached = run.observed.stdout.includes(MARKER);
     if (reached) back++;
     else native++;
-    if (reached === Boolean(testCase.handback)) return;
+    if (reached === Boolean(testCase.handback)) continue;
     failed++;
     console.log(
       reached
         ? `  WRONG   ${testCase.name}\n      reached the JavaScript, but the case does not say "handback"`
         : `  WRONG   ${testCase.name}\n      was answered by the binary, but the case says it is handed back (${testCase.handback})`,
     );
-  });
+  }
   if (ran && !failed) console.log(`${native} case(s) answered by the binary, ${back} handed back to the JavaScript, as the cases say`);
 }
 
-try {
-  if (opts.handback) handbackCheck();
-  else spec.cases.forEach((testCase, index) => {
-    if (typeof opts.filter === "string" && !testCase.name.includes(opts.filter)) return;
+function compareAll() {
+  for (const { testCase, index } of selected) {
     ran++;
     const ts = runCase(testCase, "ts", index);
     const rs = runCase(testCase, "rs", index);
@@ -247,14 +294,14 @@ try {
     if (broken) {
       failed++;
       console.log(`  BROKEN  ${testCase.name}\n      ${broken}`);
-      return;
+      continue;
     }
     const differing = Object.keys(ts.observed).filter((k) => ts.observed[k] !== rs.observed[k]);
     if (!differing.length) {
       console.log(`  same    ${testCase.name}`);
       // --show: what was compared, so a case that proves nothing is visible.
       if (opts.show) for (const [k, v] of Object.entries(ts.observed)) console.log(show(k, v));
-      return;
+      continue;
     }
     failed++;
     console.log(`  DIFFER  ${testCase.name}  (${differing.join(", ")})`);
@@ -263,11 +310,32 @@ try {
       console.log(show("TypeScript", ts.observed[k]));
       console.log(show("Rust", rs.observed[k]));
     }
-  });
-} finally {
-  if (opts.keep) console.log(`kept ${work}`);
-  else fs.rmSync(work, { recursive: true, force: true, maxRetries: 3 });
+  }
 }
+
+let gone = null;
+try {
+  if (opts.handback) handbackCheck();
+  else compareAll();
+  // Once more at the end: the last case may have run while the directory was being removed.
+  stillThere();
+} catch (error) {
+  if (!(error instanceof Vanished)) throw error;
+  gone = error.message;
+  console.log(
+    `parity: stopped, because ${gone} is gone: something else on this machine removed this run's directory, or part of it, while the cases were running ` +
+      "(a clean-up of the temp directory?). What is printed above for the last case(s) is not a result of the port. Run it again.",
+  );
+} finally {
+  if (opts.keep && fs.existsSync(work)) {
+    // The IN-USE file would tell whoever finds the directory later that a run is still in it.
+    fs.rmSync(inUse, { force: true });
+    console.log(`kept ${work}`);
+    console.log(`  When you are done with it, remove that directory by this exact path, and nothing else:`);
+    console.log(`  never ${path.join(path.dirname(work), "rustify-parity-*")} as a pattern, which takes the directories of runs still going.`);
+  } else fs.rmSync(work, { recursive: true, force: true, maxRetries: 3 });
+}
+if (gone) process.exit(3);
 if (!ran) {
   console.log("no case ran");
   process.exit(2);

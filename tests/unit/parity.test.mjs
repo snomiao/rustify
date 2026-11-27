@@ -26,6 +26,11 @@ function setup(rsBody) {
     if (cmd === "tmp") console.log("tmp=" + process.env.TMPDIR + " entries=" + fs.readdirSync(process.env.TMPDIR).length);
     if (cmd === "vars") console.log(rest.map((name) => name + "=" + process.env[name]).join(" "));
     if (cmd === "log") { fs.writeFileSync(process.env.LOG, rest.join(" ") + "\\n"); console.log(fs.readFileSync(process.env.LOG, "utf8") + require("path").relative(process.env.TMPDIR, process.env.LOG)); }
+    // Stands for something else on the machine cleaning up the temp directory.
+    if (cmd === "remove") fs.rmSync(require("path").resolve(process.env.TMPDIR, rest[0]), { recursive: true, force: true });
+    // A program that removes a directory of its own on purpose.
+    if (cmd === "remove-own") { fs.rmSync(process.env[rest[0]], { recursive: true, force: true }); console.log("removed " + rest[0] + ", which is there: " + fs.existsSync(process.env[rest[0]])); }
+    if (cmd === "inuse") console.log(fs.readFileSync(require("path").resolve(process.env.TMPDIR, "../../IN-USE"), "utf8"));
   `;
   fs.writeFileSync(path.join(dir, "ts.cjs"), base);
   fs.writeFileSync(path.join(dir, "rs.cjs"), rsBody ? base + rsBody : base);
@@ -228,6 +233,88 @@ test("a cases file that is not JSON, or has no list of cases, is said so in one 
     assert.equal(noList.status, 2, noList.stdout + noList.stderr);
     assert.equal(noList.stderr, 'parity: raw.json has no "cases" list\n');
   } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a run whose directory is removed under it stops with one message and exit code 3", () => {
+  const dir = setup();
+  try {
+    const cases = (target) => ({
+      cases: [
+        { name: "before", args: ["echo", "1"] },
+        { name: "meanwhile", args: ["remove", target], after: ["echo probed"] },
+        { name: "after", args: ["echo", "2"] },
+      ],
+    });
+    // The file that marks the directory as in use: on every system. A
+    // directory that a program is running in cannot be removed on Windows.
+    const targets = [["../../IN-USE", /rustify-parity-\w+[\\/]IN-USE/]];
+    if (!isWindows) targets.push(["..", /rustify-parity-\w+[\\/]1-ts/], ["../..", /rustify-parity-\w+/]);
+    for (const [target, gone] of targets) {
+      const r = run(dir, cases(target));
+      assert.equal(r.status, 3, r.stdout + r.stderr);
+      const lines = r.stdout.trimEnd().split("\n");
+      assert.deepEqual(lines.slice(0, -1), ["  same    before"], r.stdout);
+      assert.match(lines.at(-1), /^parity: stopped, because \S+ is gone: something else on this machine removed this run's directory, or part of it, while the cases were running .* not a result of the port\. Run it again\.$/);
+      assert.match(lines.at(-1), gone);
+      assert.doesNotMatch(r.stdout, /DIFFER|BROKEN|differ|behave the same/);
+    }
+    // --handback: the same, and also when only the stand-in package goes.
+    const handback = (target) => {
+      fs.writeFileSync(path.join(dir, "parity.json"), JSON.stringify(cases(target)));
+      return spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--rs", `${process.execPath} rs.cjs`, "--handback", "DEMO_ROOT=dist/cli.js"], { cwd: dir, encoding: "utf8" });
+    };
+    for (const [target, gone] of [...targets, ["../../stand-in", /rustify-parity-\w+[\\/]stand-in[\\/]dist[\\/]cli\.js/]]) {
+      const r = handback(target);
+      assert.equal(r.status, 3, r.stdout + r.stderr);
+      // Only the binary runs here, so the case's directory is 1-rs.
+      assert.match(r.stdout.trimEnd().split("\n").at(-1), new RegExp(gone.source.replace("1-ts", "1-rs")));
+      assert.doesNotMatch(r.stdout, /WRONG|BROKEN|went the wrong way|as the cases say/);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a program that removes its own HOME or temp directory is compared, not taken for a vanished run", () => {
+  const dir = setup(`
+    if (cmd === "remove-own" && rest.includes("HOME")) process.exitCode = 1;
+  `);
+  try {
+    const r = run(dir, {
+      cases: [
+        { name: "the temp directory", args: ["remove-own", "TMPDIR"] },
+        { name: "HOME", args: ["remove-own", "HOME"] },
+        { name: "after them", args: ["echo", "x"] },
+      ],
+    }, ["--show"]);
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(shown(r.stdout, "the temp directory"), /removed TMPDIR, which is there: false\n/);
+    assert.match(r.stdout, /DIFFER {2}HOME {2}\(exit code\)/);
+    assert.match(r.stdout, /same {4}after them\n[^]*\n1 of 3 case\(s\) differ\n$/);
+    assert.doesNotMatch(r.stdout, /stopped|gone/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("--keep leaves the run's directory, names it, and says to remove that one only", () => {
+  const dir = setup();
+  let kept;
+  try {
+    const r = run(dir, { cases: [{ name: "one", args: ["write", "hello"] }, { name: "the IN-USE file", args: ["inuse"] }] }, ["--keep", "--show"]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    kept = /^kept (.+)$/m.exec(r.stdout)?.[1];
+    assert.ok(kept && fs.existsSync(path.join(kept, "0-rs", "cwd", "out.txt")), r.stdout);
+    assert.ok(r.stdout.includes(`kept ${kept}\n  When you are done with it, remove that directory by this exact path, and nothing else:\n`), r.stdout);
+    assert.match(r.stdout, /never .*rustify-parity-\* as a pattern, which takes the directories of runs still going\./);
+    // While the run lasts the directory says whose it is; once kept, nobody is in it any more.
+    assert.match(shown(r.stdout, "the IN-USE file"), /A rustify parity run is working in this directory: process \d+ on .*\n\s+Do not remove it while that process is alive\./);
+    assert.ok(!fs.existsSync(path.join(kept, "IN-USE")), "IN-USE is still there");
+  } finally {
+    // Its exact path, and only if it is what the runner made.
+    if (kept && /rustify-parity-\w{6}$/.test(kept)) fs.rmSync(kept, { recursive: true, force: true });
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
