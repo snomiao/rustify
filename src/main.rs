@@ -224,9 +224,55 @@ struct SourceFile {
     is_test: bool,
 }
 
+/// A directory of projects.toml as git prints paths: `src/` is `src`, and
+/// the repository root is `.`.
+fn tidy(dir: &str) -> &str {
+    dir.trim_end_matches('/')
+}
+
 fn is_under(path: &str, dir: &str) -> bool {
-    let dir = dir.trim_end_matches('/');
+    let dir = tidy(dir);
     dir == "." || path == dir || path.starts_with(&format!("{dir}/"))
+}
+
+/// How far below the repository root the deepest of `dirs` that holds `path`
+/// lies: 0 for the root itself, 2 for `rs/src`. `None` when none holds it.
+fn deepest<'a>(path: &str, dirs: impl IntoIterator<Item = &'a String>) -> Option<usize> {
+    dirs.into_iter()
+        .filter(|dir| is_under(path, dir))
+        .map(|dir| match tidy(dir) {
+            "." => 0,
+            dir => dir.split('/').count(),
+        })
+        .max()
+}
+
+/// The extension of a file name: `ts` for `a/b.d.ts`, nothing for a file that
+/// is merely called `ts`.
+fn extension(path: &str) -> &str {
+    Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("")
+}
+
+impl Project {
+    /// Whether a file is TypeScript or JavaScript the port is to replace, its
+    /// tests included: a script under a `ts` directory that no `ignore` or
+    /// `keep_ts` path and no `rust` directory holds (the port's own scripts
+    /// are not to be replaced).
+    fn replaces(&self, path: &str) -> bool {
+        SCRIPT_EXTENSIONS.contains(&extension(path))
+            && !path.ends_with(".d.ts")
+            && self.ts.iter().any(|dir| is_under(path, dir))
+            && !self.ignore.iter().chain(self.keep_ts.keys()).chain(&self.rust).any(|skip| is_under(path, skip))
+    }
+
+    /// Whether a file belongs to the Rust port: a `.rs` file under a `rust`
+    /// directory. Being listed under `rust` outranks an `ignore` entry that
+    /// holds the directory (`ignore = ["rs"]` with `rust = ["rs/src"]`); an
+    /// `ignore` entry inside the directory still leaves its files out.
+    fn is_rust(&self, path: &str) -> bool {
+        let Some(rust) = deepest(path, &self.rust) else { return false };
+        extension(path) == "rs" && !deepest(path, &self.ignore).is_some_and(|ignored| ignored > rust)
+    }
 }
 
 fn is_test_path(path: &str) -> bool {
@@ -236,21 +282,13 @@ fn is_test_path(path: &str) -> bool {
         || path.split('/').any(|part| matches!(part, "tests" | "test" | "__tests__" | "e2e"))
 }
 
-/// Tracked files under `roots` with one of `extensions`, minus `skip`.
-fn sources(dir: &Path, roots: &[String], extensions: &[&str], skip: &[&String]) -> Vec<SourceFile> {
+/// The tracked files of a checkout that `wanted` accepts.
+fn sources(dir: &Path, wanted: impl Fn(&str) -> bool) -> Vec<SourceFile> {
     let mut files = Vec::new();
-    if roots.is_empty() {
-        return files;
-    }
-    let listed = git(dir, &["ls-files"]).unwrap_or_default();
-    for path in listed.lines() {
-        let extension = path.rsplit('.').next().unwrap_or("");
-        if !extensions.contains(&extension) || path.ends_with(".d.ts") {
-            continue;
-        }
-        if !roots.iter().any(|r| is_under(path, r)) || skip.iter().any(|s| is_under(path, s)) {
-            continue;
-        }
+    // -z, because git otherwise prints a name with non-ASCII characters
+    // quoted and escaped, and no extension would match it.
+    let listed = git(dir, &["ls-files", "-z"]).unwrap_or_default();
+    for path in listed.split('\0').filter(|path| wanted(path)) {
         let Ok(bytes) = fs::read(dir.join(path)) else { continue };
         files.push(SourceFile {
             path: path.to_string(),
@@ -376,11 +414,8 @@ fn audit_project(project: &Project, home: &Path, root: &Path, offline: bool, her
 
     // ── code ──
     s.heading("Code");
-    let mut skip: Vec<&String> = project.ignore.iter().collect();
-    skip.extend(project.keep_ts.keys());
-    skip.extend(project.rust.iter());
-    let ts = sources(&dir, &project.ts, SCRIPT_EXTENSIONS, &skip);
-    let rs = sources(&dir, &project.rust, &["rs"], &project.ignore.iter().collect::<Vec<_>>());
+    let ts = sources(&dir, |path| project.replaces(path));
+    let rs = sources(&dir, |path| project.is_rust(path));
     let (ts_src, ts_tests): (Vec<&SourceFile>, Vec<&SourceFile>) = ts.iter().partition(|f| !f.is_test);
     let ts_lines: usize = ts_src.iter().map(|f| f.lines).sum();
     let ts_test_lines: usize = ts_tests.iter().map(|f| f.lines).sum();
@@ -1152,5 +1187,188 @@ mod tests {
             assert!(platform["triple"].is_string(), "{key} has no triple");
             assert!(platform["os"].is_array() && platform["cpu"].is_array(), "{key} lacks os/cpu");
         }
+    }
+
+    /// A project as one `[[project]]` block of projects.toml declares it.
+    fn project(block: &str) -> Project {
+        toml::from_str(block).expect("project block")
+    }
+
+    #[test]
+    fn rust_listed_inside_an_ignored_directory_is_still_rust() {
+        let p = project(
+            r#"
+            name = "dede"
+            ts = ["."]
+            rust = ["rs/src"]
+            ignore = ["rs", "skills", "rs/src/generated"]
+            "#,
+        );
+        assert!(p.is_rust("rs/src/main.rs"));
+        assert!(p.is_rust("rs/src/commands/get.rs"));
+        // An ignore entry inside the rust directory is still honoured.
+        assert!(!p.is_rust("rs/src/generated/table.rs"));
+        // Only what `rust` lists comes back out of the ignored directory.
+        assert!(!p.is_rust("rs/build.rs"));
+        assert!(!p.is_rust("skills/tool/src/main.rs"));
+        assert!(!p.is_rust("rs/src/main.rs.txt"));
+        // The port's own scripts stay out of the TypeScript count.
+        assert!(p.replaces("dede.ts"));
+        assert!(p.replaces("dede.test.ts"));
+        assert!(!p.replaces("rs/parity.gen.mjs"));
+        assert!(!p.replaces("rs/src/vectors.mjs"));
+        assert!(!p.replaces("skills/setup/run.mjs"));
+        assert!(!p.replaces("primitives.d.ts"));
+        assert!(!p.replaces("package.json"));
+        // A file that is merely called like an extension is not a script.
+        assert!(!p.replaces("ts"));
+        assert!(!p.replaces("bin/js"));
+
+        // The same directory under both: listing it under `rust` wins.
+        let p = project("name = \"x\"\nts = [\"ts\"]\nrust = [\"rs\"]\nignore = [\"rs\"]");
+        assert!(p.is_rust("rs/main.rs"));
+    }
+
+    /// A directory of its own in the temp directory, removed when dropped.
+    struct Scratch {
+        dir: PathBuf,
+    }
+
+    impl Scratch {
+        fn new() -> Scratch {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            loop {
+                let n = NEXT.fetch_add(1, Ordering::Relaxed);
+                let dir = env::temp_dir().join(format!("rustify-audit-test-{}-{n}", std::process::id()));
+                match fs::create_dir(&dir) {
+                    Ok(()) => return Scratch { dir },
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(e) => panic!("cannot create {}: {e}", dir.display()),
+                }
+            }
+        }
+
+        fn write(&self, path: &str, text: &str) {
+            let file = self.dir.join(path);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(file, text).unwrap();
+        }
+
+        fn git(&self, args: &[&str]) -> String {
+            let mut git = Command::new("git");
+            // Set by git for a hook, these would point the commands below at
+            // the repository the tests were started from.
+            for name in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY"] {
+                git.env_remove(name);
+            }
+            let out = git
+                .arg("-C")
+                .arg(&self.dir)
+                .args(["-c", "user.name=rustify test", "-c", "user.email=test@example.invalid"])
+                .args(["-c", "commit.gpgsign=false"])
+                .args(args)
+                .output()
+                .expect("git");
+            assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        }
+
+        /// Commits everything in the directory and returns the short commit id.
+        fn commit(&self, message: &str) -> String {
+            self.git(&["add", "--all"]);
+            self.git(&["commit", "--quiet", "--no-verify", "--message", message]);
+            self.git(&["rev-parse", "--short", "HEAD"])
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    /// A repository shaped like a small tool whose TypeScript is at the root
+    /// and whose port lives in `rs/`: the first commit is the TypeScript, the
+    /// second adds the port. Returns it with the id of the first commit.
+    fn ported_repository() -> (Scratch, String) {
+        let repo = Scratch::new();
+        repo.git(&["init", "--quiet"]);
+        repo.write("dede.ts", "#!/usr/bin/env bun\nconsole.log(1);\n");
+        repo.write("dede.test.ts", "test(\"prints\", () => {});\n");
+        repo.write("备注 notes.ts", "export {};\nexport {};\n");
+        repo.write("primitives.d.ts", "export {};\n");
+        repo.write("package.json", "{ \"name\": \"dede\", \"bin\": { \"dede\": \"dede.ts\" } }\n");
+        let first = repo.commit("the TypeScript");
+        repo.write(
+            "package.json",
+            "{ \"name\": \"dede\", \"bin\": { \"dede\": \"dede.ts\" }, \"rustify\": { \"bins\": { \"dede\": \"dede\" } } }\n",
+        );
+        repo.write(".github/workflows/rust-npm-release.yml", "name: rust-npm-release\n");
+        repo.write("README.md", "# dede\n");
+        repo.write("rs/Cargo.toml", "[package]\nname = \"dede\"\nversion = \"0.0.0\"\n");
+        repo.write("rs/src/main.rs", "fn main() {}\n");
+        repo.write("rs/src/dede.rs", "pub fn get() {}\n#[test]\nfn gets() {}\n");
+        repo.write("rs/src/generated/table.rs", "pub const TABLE: &[u8] = &[];\n");
+        repo.write("rs/parity.gen.mjs", "console.log('cases');\n");
+        repo.write("rs/parity.json", "[]\n");
+        repo.write("skills/setup/run.mjs", "console.log('skill');\n");
+        repo.commit("the port");
+        (repo, first)
+    }
+
+    const PORTED_PROJECT: &str = r#"
+        name = "dede"
+        manifest = "rs/Cargo.toml"
+        ts = ["."]
+        rust = ["rs/src"]
+        ignore = ["rs", "skills", "rs/src/generated"]
+    "#;
+
+    #[test]
+    fn the_counts_are_made_of_tracked_files_whatever_their_names() {
+        let (repo, _) = ported_repository();
+        let p = project(PORTED_PROJECT);
+        let counted = |wanted: &dyn Fn(&str) -> bool| -> Vec<(String, usize)> {
+            sources(&repo.dir, wanted).into_iter().map(|f| (f.path, f.lines)).collect()
+        };
+        // git prints the last of these quoted and escaped unless asked not to.
+        assert_eq!(
+            counted(&|path| p.replaces(path)),
+            [("dede.test.ts".to_string(), 1), ("dede.ts".to_string(), 2), ("备注 notes.ts".to_string(), 2)]
+        );
+        assert_eq!(
+            counted(&|path| p.is_rust(path)),
+            [("rs/src/dede.rs".to_string(), 3), ("rs/src/main.rs".to_string(), 1)]
+        );
+    }
+
+    /// The audit of the ported repository, with a ledger of one verified
+    /// feature that was reconciled at the repository's first commit.
+    fn audit_of_ported_repository() -> (Section, String) {
+        let (repo, first) = ported_repository();
+        let home = Scratch::new();
+        home.write(
+            "parity/dede.toml",
+            &format!(
+                "reconciled = \"{first}\"\n\n[[feature]]\nname = \"get\"\nstatus = \"verified\"\n\
+                 ts = \"dede.ts:1 get; dede.ts:2 dispatch\"\nrs = \"rs/src/dede.rs get\"\n\
+                 proof = \"rs/parity.json cases `get: …`\"\n"
+            ),
+        );
+        (audit_project(&project(PORTED_PROJECT), &home.dir, &home.dir, true, Some(&repo.dir)), first)
+    }
+
+    #[test]
+    fn the_audit_sees_a_port_that_lives_in_an_ignored_directory() {
+        let (section, _) = audit_of_ported_repository();
+        let body = &section.body;
+        assert!(
+            body.contains("TypeScript/JS to replace: 4 lines in 2 files; its tests: 1 lines, about 1 cases"),
+            "{body}"
+        );
+        assert!(body.contains("Rust: 4 lines in 2 files, 1 tests"), "{body}");
+        assert!(!body.contains("no Rust port exists yet"), "{body}");
+        assert_eq!(section.port, "1 verified, 0 ported, 0 partial, 0 missing of 1");
     }
 }
