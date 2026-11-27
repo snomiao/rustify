@@ -76,9 +76,14 @@ on:
         default: false
         type: boolean
       parity:
-        description: "Command that proves the Rust binary behaves like the TypeScript. Runs on Linux x64 with the freshly built binaries in $RUSTIFY_BIN_DIR, and has to pass before anything can be published. Example: `bun install --frozen-lockfile && bun test tests/parity.test.ts`"
+        description: "Command that proves the Rust binary behaves like the TypeScript. Runs with the freshly built binaries in $RUSTIFY_BIN_DIR, on each platform of `parity-platforms` (Linux x64 unless that says otherwise), and has to pass before anything can be published. Example: `bun install --frozen-lockfile && bun test tests/parity.test.ts`"
         required: false
         default: ""
+        type: string
+      parity-platforms:
+        description: "Platforms the parity command runs on, as a JSON list of platform keys: linux-x64, linux-arm64, darwin-arm64, darwin-x64, win32-x64, win32-arm64. Each runs on a runner of that platform, with its binaries in $RUSTIFY_BIN_DIR and its key in $RUSTIFY_PLATFORM, in bash (Git Bash on Windows). Default: [\"linux-x64\"]. A binary that answers a command natively on a platform should be proven there; until it is, it should hand that platform back."
+        required: false
+        default: '["linux-x64"]'
         type: string
       smoke-env:
         description: "Environment for the smoke commands, one NAME=value per line. For switching off a fallback the test must not take, such as a download. The smoke commands get a home directory of their own (HOME, USERPROFILE, and on Windows APPDATA and LOCALAPPDATA; the XDG_*_HOME variables are removed); a variable set here wins over that."
@@ -198,13 +203,29 @@ jobs:
   # against the binary that was just built. The packer and the parity runner of
   # this repo are available in .rustify/templates.
   parity:
-    name: parity (Rust against TypeScript)
+    # On Linux x64 the check keeps the name it has always had.
+    name: ${{ matrix.key == 'linux-x64' && 'parity (Rust against TypeScript)' || format('parity (Rust against TypeScript) on {0}', matrix.key) }}
     needs: build
     # `build` is skipped for prebuilt binaries; that must not skip this job.
     if: ${{ !cancelled() && inputs.parity != '' && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest","linux-arm64":"ubuntu-24.04-arm","darwin-arm64":"macos-latest","darwin-x64":"macos-15-intel","win32-x64":"windows-latest","win32-arm64":"windows-11-arm"}')[matrix.key] || 'ubuntu-latest' }}
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        key: ${{ fromJSON(inputs.parity-platforms || '["linux-x64"]') }}
+    defaults:
+      run:
+        shell: bash
     steps:
+      - name: Platform
+        env:
+          KEY: ${{ matrix.key }}
+        run: |
+          case "$KEY" in
+            linux-x64|linux-arm64|darwin-arm64|darwin-x64|win32-x64|win32-arm64) echo "parity on $KEY ($RUNNER_OS $RUNNER_ARCH)" ;;
+            *) echo "::error::parity-platforms: unknown platform key '$KEY' (linux-x64, linux-arm64, darwin-arm64, darwin-x64, win32-x64, win32-arm64)"; exit 1 ;;
+          esac
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
         with:
@@ -240,13 +261,15 @@ jobs:
           if [ -f "$pin" ]; then node "$pin" --check; else bun --version; fi
       - uses: actions/download-artifact@v4
         with:
-          name: native-linux-x64
+          name: native-${{ matrix.key }}
           path: .rustify-bin
-      - run: chmod +x .rustify-bin/*
+      - if: runner.os != 'Windows'
+        run: chmod +x .rustify-bin/*
       - name: Run the parity tests
         env:
           RUSTIFY_BIN_DIR: ${{ github.workspace }}/.rustify-bin
           RUSTIFY_PARITY: ${{ github.workspace }}/.rustify/templates/parity/parity.mjs
+          RUSTIFY_PLATFORM: ${{ matrix.key }}
         run: ${{ inputs.parity }}
 
   pack:
