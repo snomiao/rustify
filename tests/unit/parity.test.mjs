@@ -60,6 +60,7 @@ function setup(rsBody) {
     if (cmd === "die") process.kill(process.pid, rest[0]);
     if (cmd === "bytes") process.stdout.write(Buffer.from(rest[0], "hex"));
     if (cmd === "json") console.log(JSON.stringify({ cwd: process.cwd(), home: process.env.HOME }));
+    if (cmd === "args") console.log(JSON.stringify(rest));
     // The working directory in the spellings a program on Windows may come upon.
     if (cmd === "spellings") {
       const cwd = process.cwd();
@@ -1072,6 +1073,65 @@ test("--ts and --rs take a word in double quotes, and a quote that is not closed
   }
 });
 
+// Arguments that a program of the MSYS family on Windows would rewrite: globs
+// that match files of the case, a home, braces, a file to read for @name,
+// POSIX paths; and spaces, quotes and backslashes, which MSYS reads by rules
+// of its own.
+const AS_WRITTEN_ARGS = ["args", ".env.*", "*", "~", "{a,b}", "@plain", "/", "x=/tmp/y", "/owner/repo", "two words", 'a"b', "", "c\\d", "e\\\\f", "x y\\", "'g h'"];
+const AS_WRITTEN_FILES = { ".env.a": "", ".env.b": "", plain: "" };
+const AS_WRITTEN_SHOWN = JSON.stringify(AS_WRITTEN_ARGS.slice(1));
+
+test("a leading env in --ts or --rs sets variables for the program only, and the case's arguments reach it as written", () => {
+  // On Windows the runner does this env itself; MSYS's env.exe would add a TERM and rewrite the arguments.
+  const dir = setup();
+  try {
+    fs.writeFileSync(path.join(dir, "parity.json"), JSON.stringify({
+      cases: [
+        { name: "variables", args: ["vars", "GREETING", "TERM", "HOME"], after: ['echo "${GREETING-not in the lines}"'] },
+        { name: "arguments", args: AS_WRITTEN_ARGS, files: AS_WRITTEN_FILES },
+      ],
+    }));
+    const r = spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--ts", `env GREETING=hi ${RUNTIME} ts.cjs`, "--rs", `env GREETING=hi ${RUNTIME} rs.cjs`, "--show"], { cwd: dir, encoding: "utf8" });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(shown(r.stdout, "variables"), /stdout:\n\s+GREETING=hi TERM=undefined HOME=<HOME>\n[^]*not in the lines\n/);
+    assert.ok(shown(r.stdout, "arguments").includes(`stdout:\n        ${AS_WRITTEN_SHOWN}\n`), r.stdout);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Windows: an MSYS program in front of the program passes the case's arguments on as written; the lines keep MSYS's path conversion", { skip: !isWindows && "this is about Windows" }, () => {
+  const dir = setup();
+  try {
+    // A wrapper script run by Git's sh, as `sh rs/parity/run.sh …` is.
+    const sh = path.resolve(spawnSync("git", ["--exec-path"], { encoding: "utf8" }).stdout.trim(), "..", "..", "..", "usr", "bin", "sh.exe");
+    fs.writeFileSync(path.join(dir, "launch.sh"), 'exec "$@"\n');
+    const variables = ["vars", "MSYS", "MSYS2_ARG_CONV_EXCL", "MSYS_NO_PATHCONV"];
+    const inLines = 'echo "${MSYS-none} ${MSYS2_ARG_CONV_EXCL-none} ${MSYS_NO_PATHCONV-none}"';
+    const none = { MSYS2_ARG_CONV_EXCL: null, MSYS_NO_PATHCONV: null };
+    fs.writeFileSync(path.join(dir, "parity.json"), JSON.stringify({
+      cases: [
+        { name: "arguments", args: AS_WRITTEN_ARGS, files: AS_WRITTEN_FILES },
+        // The line hands node a POSIX path, which MSYS turns into a Windows one.
+        { name: "variables", args: variables, env: { PARITY_NODE: process.execPath }, after: [inLines, '"$PARITY_NODE" -p "process.argv[1]" /usr/x'] },
+        // Taken out by the case: then the wrapper rewrites what the Rust side gets.
+        { name: "without them", args: ["args", "/"], env: none, after: [inLines] },
+      ],
+    }));
+    const r = spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--ts", `${RUNTIME} ts.cjs`, "--rs", `"${sh}" launch.sh ${RUNTIME} rs.cjs`, "--show"], { cwd: dir, encoding: "utf8" });
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.ok(shown(r.stdout, "arguments").includes(`stdout:\n        ${AS_WRITTEN_SHOWN}\n`), r.stdout);
+    const vars = shown(r.stdout, "variables");
+    assert.match(vars, /stdout:\n\s+MSYS=undefined MSYS2_ARG_CONV_EXCL=\* MSYS_NO_PATHCONV=1\n/);
+    assert.match(vars, /:\n\s+none none none\n\s+\[exit 0\]\n/);
+    assert.match(vars, /process\.argv\[1\]" \/usr\/x:\n\s+[A-Za-z]:\/.*\/usr\/x\n\s+\[exit 0\]/);
+    assert.match(r.stdout, /DIFFER {2}without them {2}\(stdout\)\n\s+stdout\n\s+TypeScript:\n\s+\["\/"\]\n\s+\n\s+Rust:\n\s+\["[A-Za-z]:\/[^"]*\/"\]\n/);
+    assert.match(r.stdout, /1 of 3 case\(s\) differ/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("Windows: lines run in Git for Windows' bash, before Windows' own find and sort", { skip: !isWindows && "this is about Windows" }, () => {
   const dir = setup();
   try {
@@ -1189,7 +1249,7 @@ test("Windows: started from Git Bash, as the pipeline starts it, the run's direc
   }
 });
 
-test("Windows: a program named without .exe starts, also through env", { skip: !isWindows && "this is about Windows" }, () => {
+test("Windows: a program named without .exe starts, also behind env", { skip: !isWindows && "this is about Windows" }, () => {
   const dir = setup();
   try {
     fs.mkdirSync(path.join(dir, "bin"));

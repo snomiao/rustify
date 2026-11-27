@@ -249,9 +249,36 @@
 //   program hands it a path no Windows program reads as meant; write <CWD>,
 //   <ROOT> or <HOME> there instead of $(pwd), ~ or $HOME.
 // - A program in --ts or --rs named without .exe (rs/target/release/mycli) is
-//   started with it, also through another program (env, sh).
-// - A program also sees SystemRoot, PATHEXT, and TEMP and TMP, which are its
-//   temp directory as TMPDIR is.
+//   started with it, also behind another program (env, sh).
+// - A leading `env NAME=value …` in --ts or --rs is done by the runner itself:
+//   it starts the program with those variables, the values as written (a
+//   Windows path: $GITHUB_WORKSPACE, or $(pwd -W) in Git Bash, not $PWD). The
+//   env on Windows is MSYS's, which would give the program TERM=xterm-256color
+//   and rewrite its arguments.
+// - Any other program of the MSYS family in front of the program (sh
+//   rs/parity/run.sh, or an env behind a wrapper) reads its command line by
+//   rules of its own: it globs * ? [ against the case's files, expands ~ and
+//   {a,b}, reads a file for @name, and turns what looks like a POSIX path into
+//   a Windows one when it starts a Windows program (/ into C:/Program
+//   Files/Git/, x=/tmp/y into x=C:/…/tmp/y). So the runner puts an argument
+//   with a space or any of " ' * ? [ ] { } ~ @ in double quotes, where MSYS
+//   does none of that and Windows programs read it the same, and gives the
+//   program MSYS2_ARG_CONV_EXCL=* and MSYS_NO_PATHCONV=1, which stop the
+//   conversion. One difference is left: in double quotes MSYS makes one
+//   backslash of two, so an argument that is quoted and has two backslashes
+//   in a row (\\server\share x) arrives with one. Such a program also gives
+//   what it starts a TERM, and a wrapper script that starts a Windows program
+//   with a POSIX path of its own converts that path itself (cygpath -w). The
+//   lines do not get the two variables: they need the conversion (git -C
+//   "$(pwd)"). A case can set them, or take them out with null, in its `env`;
+//   the lines then get what it says. (MSYS=noglob is no help: with it, MSYS
+//   reads no quotes, and an argument with a space arrives in pieces.)
+// - A program also sees SystemRoot, PATHEXT, TEMP and TMP (its temp directory,
+//   as TMPDIR is), and the two variables above. node itself adds HOMEDRIVE,
+//   HOMEPATH, LOGONSERVER, SYSTEMDRIVE, USERDOMAIN, USERNAME and WINDIR from
+//   the runner's own environment where the program's lacks them, so null
+//   cannot take these out, and HOMEDRIVE with HOMEPATH names the real home
+//   directory.
 // - There is no terminal (a case with "tty" is BROKEN, see "A terminal") and
 //   no signal for a program to end by, only its exit code.
 //
@@ -347,15 +374,44 @@ function words(text, where) {
 // A command is run from another directory, so anything in it that names a
 // file here has to become absolute. On Windows a program is often named
 // without its .exe (rs/target/release/mycli); with it, whatever starts the
-// program (env, sh) finds it too.
-const command = (text, where) =>
-  words(text, where).map((token) => {
+// program (sh, a wrapper) finds it too.
+//
+// On Windows a leading `env NAME=value …` is done by the runner itself: the
+// program is started with those variables, and no env.exe stands in between.
+// The env there is MSYS's (Git's or MSYS2's usr\bin), which gives the program
+// a TERM it would not have and rewrites its arguments (see "Windows"). An env
+// with options of its own (-u, -i) or without a program is left to env.
+function command(text, where) {
+  let tokens = words(text, where);
+  const vars = {};
+  if (isWindows && /^env(\.exe)?$/i.test(tokens[0] ?? "")) {
+    let at = 1;
+    while (at < tokens.length && /^[^=-][^=]*=/.test(tokens[at])) at++;
+    if (at < tokens.length && !tokens[at].startsWith("-")) {
+      for (const assignment of tokens.slice(1, at)) {
+        const eq = assignment.indexOf("=");
+        setVariable(vars, assignment.slice(0, eq), assignment.slice(eq + 1));
+      }
+      tokens = tokens.slice(at);
+    }
+  }
+  const argv = tokens.map((token) => {
     if (!/[\\/.]/.test(token)) return token;
     const file = path.resolve(launchDir, token);
     if (fs.existsSync(file)) return file;
     if (isWindows && fs.existsSync(`${file}.exe`)) return `${file}.exe`;
     return token;
   });
+  return { argv, vars };
+}
+
+// Sets a variable in an environment; on Windows, where Path and PATH are one
+// variable, in place of the one it has in any other letter case.
+function setVariable(env, name, value) {
+  if (isWindows) for (const key of Object.keys(env)) if (key !== name && key.toUpperCase() === name.toUpperCase()) delete env[key];
+  env[name] = value;
+}
+
 const impls = { ts: opts.ts ? command(opts.ts, "--ts") : null, rs: command(opts.rs, "--rs") };
 const MARKER = "__RUSTIFY_HANDED_BACK__";
 
@@ -531,6 +587,32 @@ function gitBash() {
 
 // The name of the variable that carries a line to the shell on Windows.
 const LINE = "RUSTIFY_PARITY_LINE";
+
+// On Windows, what a program of the MSYS family between the runner and the
+// program (sh with a wrapper script, an env that is not the first word) needs
+// to pass the case's arguments on without turning what looks like a POSIX
+// path into a Windows one: MSYS2's variable, and Git for Windows' own. Given
+// to the program, not to the lines, which need that conversion: git -C
+// "$(pwd)" hands git.exe a Windows path only because of it. (MSYS=noglob is
+// not among them: with it, MSYS reads no quotes on its command line, and an
+// argument with a space arrives in pieces. windowsArgument() keeps MSYS from
+// globbing instead.)
+const AS_WRITTEN = { MSYS2_ARG_CONV_EXCL: "*", MSYS_NO_PATHCONV: "1" };
+
+// On Windows a program gets its arguments as one command line, which it
+// splits by rules of its own. Windows programs (node, bun, Rust's std) follow
+// the MSVC runtime, which node writes the line for. A program of the MSYS
+// family also globs an argument there, expands ~ and {a,b}, and reads a file
+// for @file, unless the argument is in double quotes, where it reads \" as
+// the MSVC runtime does. So an argument with a space or one of those
+// characters goes in double quotes, which a Windows program reads the same.
+// (In double quotes MSYS also makes one backslash of two, where the MSVC
+// runtime keeps both; outside them both keep them, so an argument with
+// nothing else to quote stays as it is.)
+function windowsArgument(arg) {
+  if (arg !== "" && !/[\s"'*?[\]{}~@]/.test(arg)) return arg;
+  return `"${arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, "$1$1")}"`;
+}
 
 // Runs one "setup" or "after" line in the case's directory and environment.
 function runLine(line, cwd, env) {
@@ -794,20 +876,26 @@ function runIn(root, testCase, impl, plan, extraEnv) {
     XDG_CACHE_HOME: path.join(root, "cache"),
     // Its own: programs keep state in the temp directory too.
     TMPDIR: tmp,
-    ...(isWindows ? { SystemRoot: process.env.SystemRoot, TEMP: tmp, TMP: tmp, PATHEXT: process.env.PATHEXT } : {}),
+    ...(isWindows ? { SystemRoot: process.env.SystemRoot, TEMP: tmp, TMP: tmp, PATHEXT: process.env.PATHEXT, ...AS_WRITTEN } : {}),
     // On a terminal there is always a TERM, and programs choose their colours by it.
     ...(terminals.length ? { TERM: "xterm-256color" } : {}),
   };
   // The cases file's variables, then the case's. null takes a variable out
   // (on Windows in any spelling: Path and PATH are one variable there).
+  const named = new Set();
   for (const variables of [spec.env, testCase.env]) {
     for (const [name, value] of Object.entries(variables || {})) {
+      named.add(isWindows ? name.toUpperCase() : name);
       if (value !== null) env[name] = here(value);
       else for (const key of Object.keys(env)) if (key === name || (isWindows && key.toUpperCase() === name.toUpperCase())) delete env[key];
     }
   }
   Object.assign(env, extraEnv);
-  const shell = (line) => runLine(here(line), cwd, env);
+  // The lines' environment: the program's, without the variables above that
+  // keep MSYS from converting paths, unless the cases themselves set them.
+  const lineEnv = { ...env };
+  for (const name of Object.keys(AS_WRITTEN)) if (isWindows && !named.has(name)) delete lineEnv[name];
+  const shell = (line) => runLine(here(line), cwd, lineEnv);
   for (const line of testCase.setup || []) {
     const result = shell(line);
     // The shell could not be started (a timeout is reported as before, below).
@@ -816,10 +904,13 @@ function runIn(root, testCase, impl, plan, extraEnv) {
       return { broken: `setup \`${line}\` exited ${result.status}: ${result.stderr || result.stdout}` };
     }
   }
-  const [program, ...baseArgs] = impls[impl];
+  const [program, ...baseArgs] = impls[impl].argv;
   const args = [...baseArgs, ...(testCase.args || []).map(here)];
+  // What a leading `env NAME=value` in --ts or --rs sets, on Windows (see command()).
+  const programEnv = { ...env };
+  for (const [name, value] of Object.entries(impls[impl].vars)) setVariable(programEnv, name, value);
   const seconds = testCase.timeout || 120;
-  const options = { cwd, env, input: here(plan.piped), encoding: "utf8", timeout: seconds * 1000 };
+  const options = { cwd, env: programEnv, input: here(plan.piped), encoding: "utf8", timeout: seconds * 1000 };
   // The runner's own files of this run: what the program wrote, when that
   // goes to files, and what the terminal was sent.
   const own = path.join(root, "runner");
@@ -838,6 +929,9 @@ function runIn(root, testCase, impl, plan, extraEnv) {
     const request = path.join(own, "terminal.json");
     fs.writeFileSync(request, JSON.stringify({ terminals, type: plan.typed.map((step) => step.map(here)), transcript, ...WINDOW }));
     result = spawnSync(terminal().python, ["-I", TERMINAL_PY, request, program, ...args], options);
+  } else if (isWindows) {
+    // The command line as windowsArgument() writes it, the program's own path first.
+    result = spawnSync(program, args.map(windowsArgument), { ...options, windowsVerbatimArguments: true, argv0: windowsArgument(program) });
   } else {
     result = spawnSync(program, args, options);
   }
