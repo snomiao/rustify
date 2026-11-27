@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 
-import { TRACE_ENV, TRACE_LINE, homeVariables, parseLine, withEnv } from "../../templates/npm/smoke-command.mjs";
+import { TRACE_ENV, TRACE_LINE, homeVariables, parseLine, withEnv, withPath } from "../../templates/npm/smoke-command.mjs";
 
 const KEYS = ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64"];
 const parse = (text, host = "linux-x64") => parseLine(text, host, KEYS);
@@ -120,4 +120,12 @@ test("what the caller sets afterwards wins, on Windows whatever the case", () =>
   });
   // Elsewhere names differ by case, and both variables exist.
   assert.deepEqual(withEnv({ HOME: "/a" }, { home: "/b" }, "linux"), { HOME: "/a", home: "/b" });
+});
+
+test("a runtime's directory goes first in PATH, under the name PATH already has", () => {
+  assert.deepEqual(withPath({ PATH: "/usr/bin:/bin", HOME: "/h" }, ["/opt/bun/bin"], "linux"), { PATH: "/opt/bun/bin:/usr/bin:/bin", HOME: "/h" });
+  assert.deepEqual(withPath({ HOME: "/h" }, ["/a", "/b"], "darwin"), { HOME: "/h", PATH: "/a:/b" });
+  assert.deepEqual(withPath({ Path: "C:\\Windows" }, ["C:\\node"], "win32"), { Path: "C:\\node;C:\\Windows" });
+  // Elsewhere case matters: `Path` is not PATH there.
+  assert.deepEqual(withPath({ Path: "x" }, ["/a"], "linux"), { Path: "x", PATH: "/a" });
 });

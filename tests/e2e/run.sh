@@ -299,6 +299,23 @@ node "$SMOKE" --dist "$WORK/npm-dist-hybrid" --run "toy check" --expect "version
   --also "legacy homedir => rustify-smoke-" \
   | sed 's/^/  /' || die "smoke.mjs failed on the hybrid package"
 
+echo "== smoke.mjs: a runtime behind a version manager's shim"
+# The shim stands for asdf's or mise's: it finds the runtime under the real
+# home directory only, so it fails with the one the commands under test get.
+REAL_RUNTIME="$(command -v "$RUNTIME")"
+mkdir -p "$WORK/shim"
+printf '#!/bin/sh\n[ "$HOME" = "%s" ] || { echo "shim: no %s version is set for this home" >&2; exit 126; }\nexec "%s" "$@"\n' \
+  "$HOME" "$RUNTIME" "$REAL_RUNTIME" > "$WORK/shim/$RUNTIME"
+chmod +x "$WORK/shim/$RUNTIME"
+[ "$(HOME="$WORK" PATH="$WORK/shim:$PATH" "$RUNTIME" --version 2>&1)" = "shim: no $RUNTIME version is set for this home" ] \
+  || die "the stand-in shim does not fail without the real home directory"
+out="$(PATH="$WORK/shim:$PATH" node "$SMOKE" --dist "$WORK/npm-dist-hybrid" --run "toy check" --expect "version=1.2.4" --installer bun \
+  --also "[handback] toy js shimmed => js cli: js shimmed" --also "legacy shimmed => js cli: shimmed" 2>&1)" \
+  || die "smoke.mjs failed with a shim in PATH: $out"
+[[ "$out" == *"note  $RUNTIME does not start with the home directory the commands under test get; they get $(dirname "$REAL_RUNTIME") first in PATH"* ]] \
+  && pass "a $RUNTIME the shim cannot start there is found where it really is, and the launcher, the hand-back and the JavaScript command work" \
+  || die "smoke.mjs did not say where it found $RUNTIME: $out"
+
 echo "== smoke.mjs: what it must refuse"
 set +e
 out="$(node "$SMOKE" --dist "$WORK/npm-dist-hybrid" --run "toy check" --expect "version=1.2.4" --installer bun --real-home \

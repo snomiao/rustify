@@ -37,10 +37,14 @@
 // removed so that they default to it. A command can then neither use the
 // credentials nor change the files of whoever runs this test. What a command
 // leaves there is seen by the lines after it. --env is applied afterwards, so
-// a variable given there wins. Not covered: variables that hold credentials
-// themselves, the directory the test is started in (bun reads its `.env`),
-// the system keychain, and Windows programs that ask the system instead of
-// the environment for their folders.
+// a variable given there wins. A `bun` or `node` that does not start with that
+// home directory (a version manager's shim) is asked, with the real one, where
+// it is, and that directory goes first in the commands' PATH. The installs
+// themselves run with the real environment. Not covered: variables that hold
+// credentials themselves, agents the environment points at (SSH_AUTH_SOCK),
+// the directory the test is started in, which stays the commands' working
+// directory (bun reads a `.env` there), the system keychain, and Windows
+// programs that ask the system instead of the environment for their folders.
 //
 // Who answered: a command the binary hands back to the JavaScript passes its
 // line just like one the binary answers itself. For a line marked [native] or
@@ -49,7 +53,8 @@
 // stderr before it starts the JavaScript. A binary with an older helper, or
 // with none, never writes that line, and its silence must not be read as a
 // native answer. So the test looks for the line's text in the installed
-// binary, and fails a marked line when it is not there.
+// binary, and fails a marked line when it is not there. The line is taken out
+// of the output before the texts of the line are looked for.
 
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -57,7 +62,7 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { TRACE_ENV, TRACE_LINE, homeVariables, parseLine, withEnv } from "./smoke-command.mjs";
+import { TRACE_ENV, TRACE_LINE, homeVariables, parseLine, withEnv, withPath } from "./smoke-command.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const isWindows = process.platform === "win32";
@@ -114,6 +119,8 @@ const ownInstallScripts = (() => {
     return [];
   }
 })();
+// Installs and the commands' home directories go here. rustify's own CI
+// recognises a path of this test by the name `rustify-smoke-`.
 const work = fs.mkdtempSync(path.join(os.tmpdir(), "rustify-smoke-"));
 let failures = 0;
 const timings = [];
@@ -151,15 +158,47 @@ function makeHome(label) {
   return dir;
 }
 
+// Directories put first in PATH for the commands under test, see findRuntimes.
+const runtimeDirs = [];
+
 // The environment of a command under test: this process's, with the home
 // directory `userHome` in place of the real one (see the header), then --env,
 // then the switch that makes a hand-back visible.
 function environment(userHome, { realHome = false, trace = false } = {}) {
   let env = { ...process.env };
-  if (!realHome && !everyRealHome) env = withEnv(env, homeVariables(userHome));
+  if (!realHome && !everyRealHome) {
+    env = withEnv(env, homeVariables(userHome));
+    if (runtimeDirs.length) env = withPath(env, runtimeDirs);
+  }
   env = withEnv(env, commandEnv);
   if (trace) env = withEnv(env, { [TRACE_ENV]: "1" });
   return env;
+}
+
+// The launchers, the package managers' shims and the hand-back start `bun`
+// and `node` by name. Where that name is a version manager's shim (asdf, mise,
+// proto; Volta on Windows), the shim looks for its installs under the home
+// directory and fails with the commands' own. Such a runtime is asked, with
+// the real environment, where its executable is, and the commands under test
+// get that directory first in PATH: the runtime the shim would have chosen.
+function findRuntimes() {
+  const probe = environment(makeHome("probe"));
+  const starts = (tool, env) => spawnSync(tool, ["--version"], { stdio: "ignore", shell: isWindows, env }).status === 0;
+  for (const tool of ["bun", "node"]) {
+    if (!starts(tool, process.env) || starts(tool, probe)) continue;
+    const asked = spawnSync(tool, ["-p", "process.execPath"], { encoding: "utf8", shell: isWindows });
+    const executable = asked.status === 0 ? String(asked.stdout).trim() : "";
+    const dir = executable && path.isAbsolute(executable) ? path.dirname(executable) : "";
+    if (dir && starts(tool, withPath(probe, [dir]))) {
+      runtimeDirs.push(dir);
+      console.log(`  note  ${tool} does not start with the home directory the commands under test get; they get ${dir} first in PATH`);
+    } else {
+      console.log(
+        `  note  ${tool} does not start with the home directory the commands under test get. ` +
+          "Give it what it needs with --env, or run with --real-home",
+      );
+    }
+  }
 }
 
 function runOnce(bin, runArgs, env) {
@@ -385,20 +424,7 @@ try {
     });
     ok(`published to a local registry (${registry})`);
   }
-  if (!everyRealHome) {
-    // A runtime that a version manager starts through a shim may need the
-    // real home directory to find itself. Say so before the commands fail.
-    const probe = environment(makeHome("probe"));
-    const starts = (tool, env) => spawnSync(tool, ["--version"], { stdio: "ignore", shell: isWindows, env }).status === 0;
-    for (const tool of ["bun", "node"]) {
-      if (starts(tool, process.env) && !starts(tool, probe)) {
-        console.log(
-          `  note  ${tool} does not start with the home directory the commands under test get. ` +
-            "Give it what it needs with --env, or run with --real-home",
-        );
-      }
-    }
-  }
+  if (!everyRealHome) findRuntimes();
   const wanted = typeof opts.installer === "string" ? [opts.installer] : ["bun", "npm"];
   const usable = wanted.filter(has);
   if (!usable.length) bad(`none of ${wanted.join(", ")} is installed`);

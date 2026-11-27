@@ -76,8 +76,10 @@ export function parseLine(text, hostKey, platformKeys) {
 //                       directory, and APPDATA and LOCALAPPDATA, where
 //                       programs keep their settings and data
 //
-// What no variable can redirect stays the user's: the system keychain or
-// credential store, and on Windows the folders a program gets from the system
+// XDG_RUNTIME_DIR stays: it holds the session's sockets, not settings. What no
+// variable can redirect stays the user's: the system keychain or credential
+// store, agents the environment points at (SSH_AUTH_SOCK, the desktop's
+// session bus), and on Windows the folders a program gets from the system
 // (SHGetKnownFolderPath) instead of from the environment.
 export function homeVariables(home, platform = process.platform) {
   const variables = {
@@ -96,6 +98,15 @@ export function homeVariables(home, platform = process.platform) {
     variables.LOCALAPPDATA = path.win32.join(home, "AppData", "Local");
   }
   return variables;
+}
+
+// `env` with the directories `dirs` first in PATH, under whatever name `env`
+// already gives it (Windows ignores case, and usually says `Path`).
+export function withPath(env, dirs, platform = process.platform) {
+  const isPath = (name) => (platform === "win32" ? name.toUpperCase() === "PATH" : name === "PATH");
+  const name = Object.keys(env).find(isPath) || "PATH";
+  const rest = env[name] ? [env[name]] : [];
+  return { ...env, [name]: [...dirs, ...rest].join(platform === "win32" ? ";" : ":") };
 }
 
 // `base` with `changes` applied; a value of `undefined` removes the variable.
