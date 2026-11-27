@@ -979,6 +979,12 @@ test('a mistake in "handback" or "skip" stops the run before any case, with exit
   }
 });
 
+// How a POSIX shell's pwd, ~ and $HOME spell a directory of the run: on
+// Windows as MSYS does, /c/Users/… or /tmp/…, which clean() tags. And how
+// JSON spells one: on Windows with doubled backslashes, tagged too.
+const MSYS = isWindows ? ":msys" : "";
+const IN_JSON = isWindows ? ":json" : "";
+
 test("setup and after lines reach the shell as written, and the run's directories come back as placeholders", () => {
   const dir = setup();
   try {
@@ -996,10 +1002,10 @@ test("setup and after lines reach the shell as written, and the run's directorie
         c\d
         [exit 0]`), r.stdout);
     const where = shown(r.stdout, "where the lines run");
-    assert.match(where, /stdout:\n\s+\{"cwd":"<CWD>","home":"<HOME>"\}\n/);
-    assert.match(where, /after: pwd:\n\s+<CWD>\n\s+\[exit 0\]\n/);
-    assert.match(where, /after: cd \.\. && pwd:\n\s+<ROOT>\n\s+\[exit 0\]\n/);
-    assert.match(where, /after: echo "\$HOME":\n\s+<HOME>\n\s+\[exit 0\]\n/);
+    assert.ok(where.includes(`stdout:\n        {"cwd":"<CWD${IN_JSON}>","home":"<HOME${IN_JSON}>"}\n`), where);
+    assert.match(where, new RegExp(`after: pwd:\\n\\s+<CWD${MSYS}>\\n\\s+\\[exit 0\\]\\n`));
+    assert.match(where, new RegExp(`after: cd \\.\\. && pwd:\\n\\s+<ROOT${MSYS}>\\n\\s+\\[exit 0\\]\\n`));
+    assert.match(where, new RegExp(`after: echo "\\$HOME":\\n\\s+<HOME${MSYS}>\\n\\s+\\[exit 0\\]\\n`));
     assert.match(where, /after: echo '<CWD>' '<ROOT>' '<HOME>':\n\s+<CWD> <ROOT> <HOME>\n\s+\[exit 0\]$/);
     assert.match(shown(r.stdout, "the line is not in the environment"), /after: env \| grep -c RUSTIFY_PARITY_LINE:\n\s+0\n\s+\[exit 1\]$/);
   } finally {
@@ -1088,22 +1094,66 @@ test("Windows: lines run in Git for Windows' bash, before Windows' own find and 
   }
 });
 
-test("Windows: every spelling of a directory comes back as its placeholder, the 8.3 one too", { skip: !isWindows && "this is about Windows" }, () => {
+// The 8.3 spelling of a directory on Windows, as cmd gives it.
+function shortOf(dir) {
+  const cmd = path.join(process.env.SystemRoot, "System32", "cmd.exe");
+  return spawnSync(cmd, ["/d", "/c", `for %I in ("${dir}") do @echo %~sI`], { encoding: "utf8", windowsVerbatimArguments: true }).stdout.trim();
+}
+
+// A temp directory in its 8.3 spelling, as GitHub's runners give it
+// (C:\Users\RUNNER~1\…), and the tag of that spelling: none where the volume
+// makes no short names.
+function shortTemp(dir) {
+  const long = path.join(dir, "a long temp directory");
+  fs.mkdirSync(long);
+  const short = shortOf(long);
+  return { short, tag: short.toLowerCase() === long.toLowerCase() ? "" : ":8.3" };
+}
+
+test("Windows: every spelling of a directory comes back as its placeholder, tagged with the spelling, the 8.3 one too", { skip: !isWindows && "this is about Windows" }, () => {
   const dir = setup();
   try {
-    // As on GitHub's runners, the temp directory comes in its 8.3 spelling (C:\Users\RUNNER~1\…).
-    const long = path.join(dir, "a long temp directory");
-    fs.mkdirSync(long);
-    const cmd = path.join(process.env.SystemRoot, "System32", "cmd.exe");
-    const short = spawnSync(cmd, ["/d", "/c", `for %I in ("${long}") do @echo %~sI`], { encoding: "utf8", windowsVerbatimArguments: true }).stdout.trim();
+    const { short, tag } = shortTemp(dir);
     const env = { ...process.env, TEMP: short, TMP: short };
     const r = run(dir, { cases: [{ name: "spellings", args: ["spellings"], after: ["pwd", "cygpath -aw .", "cygpath -am .", "cygpath -ad ."] }, { name: "where", args: ["where"] }] }, ["--show"], env);
     assert.equal(r.status, 0, r.stdout + r.stderr);
     const spellings = shown(r.stdout, "spellings");
     // As node gives it, with forward slashes, a lower-case drive letter, as MSYS prints it, as JSON writes it, and in 8.3.
-    assert.match(spellings, /stdout:\n\s+<CWD>\n\s+<CWD>\n\s+<CWD>\n\s+<CWD>\n\s+"<CWD>"\n\s+<CWD>\n/);
-    for (const line of ["pwd", "cygpath -aw .", "cygpath -am .", "cygpath -ad ."]) assert.match(spellings, new RegExp(`after: ${line.replace(".", "\\.")}:\\n\\s+<CWD>\\n`));
+    assert.ok(spellings.includes(`stdout:\n        <CWD>\n        <CWD>\n        <CWD:case>\n        <CWD:msys>\n        "<CWD:json>"\n        <CWD${tag}>\n`), spellings);
+    for (const [line, name] of [["pwd", "<CWD:msys>"], ["cygpath -aw .", "<CWD>"], ["cygpath -am .", "<CWD>"], ["cygpath -ad .", `<CWD${tag}>`]]) {
+      assert.ok(spellings.includes(`after: ${line}:\n        ${name}\n`), `${line}: ${spellings}`);
+    }
     assert.match(shown(r.stdout, "where"), /cwd=<CWD> home=<HOME>\n/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Windows: two programs that print a directory in different spellings differ", { skip: !isWindows && "this is about Windows" }, () => {
+  // Stands for a port that prints the directory with {:?}, in lower case, as
+  // MSYS does, or in 8.3, where its TypeScript prints it as Windows gives it.
+  const dir = setup(`
+    if (cmd === "spelt") {
+      const cwd = process.cwd();
+      const short = require("child_process").spawnSync(require("path").join(process.env.SystemRoot, "System32", "cmd.exe"), ["/d", "/c", "for %I in (.) do @echo %~sI"], { encoding: "utf8", windowsVerbatimArguments: true }).stdout.trim();
+      const spelt = { json: JSON.stringify(cwd), lower: cwd.toLowerCase(), msys: "/" + cwd[0].toLowerCase() + cwd.slice(2).replace(/\\\\/g, "/"), short, slashed: cwd.replace(/\\\\/g, "/") };
+      console.log(spelt[rest[0]]);
+      process.exit(0);
+    }
+  `);
+  fs.appendFileSync(path.join(dir, "ts.cjs"), `if (cmd === "spelt") console.log(rest[0] === "json" ? '"' + process.cwd() + '"' : process.cwd());\n`);
+  try {
+    const { short, tag } = shortTemp(dir);
+    const r = run(dir, { cases: ["json", "lower", "msys", "short", "slashed"].map((spelling) => ({ name: spelling, args: ["spelt", spelling] })) }, [], { ...process.env, TEMP: short, TMP: short });
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /DIFFER {2}json {2}\(stdout\)\n\s+stdout\n\s+TypeScript:\n\s+"<CWD>"\n\s+\n\s+Rust:\n\s+"<CWD:json>"\n/);
+    assert.match(r.stdout, /DIFFER {2}lower {2}\(stdout\)\n[^]*Rust:\n\s+<CWD:case>\n/);
+    assert.match(r.stdout, /DIFFER {2}msys {2}\(stdout\)\n[^]*Rust:\n\s+<CWD:msys>\n/);
+    // Where the volume makes no short names, the short spelling is the long one.
+    if (tag) assert.match(r.stdout, /DIFFER {2}short {2}\(stdout\)\n[^]*Rust:\n\s+<CWD:8\.3>\n/);
+    // As the runner always had it: forward slashes are the same directory.
+    assert.match(r.stdout, /\n {2}same {4}slashed\n/);
+    assert.match(r.stdout, new RegExp(`${tag ? 4 : 3} of 5 case\\(s\\) differ`));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -1112,18 +1162,28 @@ test("Windows: every spelling of a directory comes back as its placeholder, the 
 test("Windows: started from Git Bash, as the pipeline starts it, the run's directories under /tmp come back as placeholders", { skip: !isWindows && "this is about Windows" }, () => {
   const dir = setup();
   try {
-    // Git Bash shares its mount table with the shell that runs the lines, and its /tmp is the runner's temp directory.
+    // The shell that runs the lines shares the mounts of the Git Bash below,
+    // whose /tmp is that Git Bash's temp directory: this test's directory, or
+    // the temp directory of a Git Bash the tests were started from. The
+    // runner's own temp directory is another, below it and in 8.3, so only
+    // the shell can say where its /tmp is.
     const gitBash = path.resolve(spawnSync("git", ["--exec-path"], { encoding: "utf8" }).stdout.trim(), "..", "..", "..", "bin", "bash.exe");
-    fs.writeFileSync(path.join(dir, "parity.json"), JSON.stringify({ cases: [{ name: "where the lines run", args: ["json"], after: ["pwd", "cd .. && pwd", 'echo "$HOME"'] }] }));
+    const { short } = shortTemp(dir);
+    fs.writeFileSync(path.join(dir, "parity.json"), JSON.stringify({ cases: [{ name: "where the lines run", args: ["json"], after: ["pwd", "pwd -W", "cd .. && pwd", 'echo "$HOME"'] }] }));
     // The values go in variables: on its command line Git Bash would read their backslashes by its own rules.
-    const env = { ...process.env, PARITY_NODE: process.execPath, PARITY_RUNNER: RUNNER, PARITY_TS: `${RUNTIME} ts.cjs`, PARITY_RS: `${RUNTIME} rs.cjs` };
-    const r = spawnSync(gitBash, ["--noprofile", "--norc", "-c", '"$PARITY_NODE" "$PARITY_RUNNER" --cases parity.json --ts "$PARITY_TS" --rs "$PARITY_RS" --show'], { cwd: dir, env, encoding: "utf8" });
+    const env = { ...process.env, TEMP: dir, TMP: dir, PARITY_TEMP: short, PARITY_NODE: process.execPath, PARITY_RUNNER: RUNNER, PARITY_TS: `${RUNTIME} ts.cjs`, PARITY_RS: `${RUNTIME} rs.cjs` };
+    const r = spawnSync(
+      gitBash,
+      ["--noprofile", "--norc", "-c", 'cd /tmp && echo "/tmp is $(pwd -W)" && cd - > /dev/null && TEMP="$PARITY_TEMP" TMP="$PARITY_TEMP" "$PARITY_NODE" "$PARITY_RUNNER" --cases parity.json --ts "$PARITY_TS" --rs "$PARITY_RS" --show'],
+      { cwd: dir, env, encoding: "utf8" },
+    );
     assert.equal(r.status, 0, r.stdout + r.stderr);
     const where = shown(r.stdout, "where the lines run");
-    assert.match(where, /stdout:\n\s+\{"cwd":"<CWD>","home":"<HOME>"\}\n/);
-    assert.match(where, /after: pwd:\n\s+<CWD>\n/);
-    assert.match(where, /after: cd \.\. && pwd:\n\s+<ROOT>\n/);
-    assert.match(where, /after: echo "\$HOME":\n\s+<HOME>\n/);
+    assert.match(where, /stdout:\n\s+\{"cwd":"<CWD:json>","home":"<HOME:json>"\}\n/);
+    assert.match(where, /after: pwd:\n\s+<CWD:msys>\n/);
+    assert.match(where, /after: pwd -W:\n\s+<CWD>\n/);
+    assert.match(where, /after: cd \.\. && pwd:\n\s+<ROOT:msys>\n/);
+    assert.match(where, /after: echo "\$HOME":\n\s+<HOME:msys>\n/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

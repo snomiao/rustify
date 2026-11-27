@@ -72,7 +72,9 @@
 // (see "Windows").
 //
 // The paths of these directories are replaced by <CWD>, <HOME>, <ROOT> and
-// <REPO> before comparing. Anything else that legitimately varies between two runs
+// <REPO> before comparing (on Windows, a spelling other than the one the
+// runner hands out gets a tag, <CWD:json>: see "Windows"). Anything else that
+// legitimately varies between two runs
 // (timestamps, random ids) needs a `normalize` rule; keep those rare, each one
 // is a hole in the proof.
 //
@@ -218,14 +220,27 @@
 //   (C:/Users/…/cwd): the one spelling that the shell and Windows programs
 //   both read as that directory. A backslash is an escape to the shell.
 // - Before comparing, these directories are turned back into their names in
-//   every spelling a program may print: with backslashes, with forward
-//   slashes, with doubled backslashes as JSON writes them, as MSYS tools print
-//   them (/c/Users/…, and /tmp/rustify-parity-…/… when the runner was started
-//   from Git Bash: the shell that runs the lines then shares that Git Bash's
-//   mounts, whose /tmp is that Git Bash's temp directory, so the runner asks
-//   the shell once where its /tmp is), long or in 8.3
-//   (C:\Users\RUNNER~1\…, as GitHub's runners give the temp directory), in any
-//   mix of upper and lower case. The run's directory itself is made in the
+//   every spelling a program or a tool may print, and a spelling other than
+//   the ones the runner hands out keeps a tag that says which it was. So a
+//   port that prints a directory in another spelling than its TypeScript
+//   still differs, and one that prints it the same way compares the same:
+//     <CWD>        C:\Users\…\cwd as Windows gives it, or C:/Users/…/cwd as the
+//                  placeholders are written; for <REPO> also the long
+//                  spelling of the directory the runner was started in
+//     <CWD:json>   C:\\Users\\…, with doubled backslashes, as JSON and Rust's
+//                  {:?} write it
+//     <CWD:msys>   /c/Users/…/cwd as MSYS tools print it, or /tmp/rustify-
+//                  parity-…/0-ts/cwd: the shell that runs the lines shares the
+//                  mounts of a Git Bash that is still running (the runner was
+//                  started from it), whose /tmp is that Git Bash's temp
+//                  directory, so the runner asks the shell once where its
+//                  /tmp is
+//     <CWD:8.3>    C:\Users\RUNNER~1\…, the short spelling, as GitHub's runners
+//                  give the temp directory (also <CWD:8.3:json>, <CWD:8.3:msys>)
+//     <CWD:case>   any of these in other letters, which Windows takes for the
+//                  same directory (c:\users\…); <CWD:json:case>, …
+//   The pwd of a line is therefore <CWD:msys> on Windows where it is <CWD>
+//   elsewhere, the same for both sides. The run's directory is made in the
 //   long spelling. The \\?\ that Rust's std::fs::canonicalize puts in front of
 //   a path stays (\\?\<CWD>): the TypeScript does not print it, so it is a
 //   difference.
@@ -633,8 +648,10 @@ function visible(text) {
 const work = fs.mkdtempSync(path.join((isWindows ? fs.realpathSync.native : fs.realpathSync)(os.tmpdir()), "rustify-parity-"));
 
 // Other spellings of a directory on Windows, each as [prefix, another
-// spelling of that prefix]: the 8.3 one of the run's directory, the long and
-// 8.3 ones of <REPO>. A program can still come upon them.
+// spelling of that prefix, its tag]: the 8.3 one of the run's directory
+// ("8.3"), the long ("") and 8.3 ones of <REPO>. A program can still come upon
+// them. The long spelling of <REPO> has no tag: the runner was started in
+// <REPO> as given, and Windows gives back the long one for it.
 const otherSpellings = [];
 // The directory that MSYS tools call /tmp, in every spelling: the runner's
 // temp directory, and the one the shell for the lines says (shellTemp).
@@ -648,7 +665,9 @@ if (isWindows) {
     try {
       long = fs.realpathSync.native(dir);
     } catch {}
-    for (const other of new Set([long, shortName(long)])) if (other && other !== dir) otherSpellings.push([dir, other]);
+    const short = shortName(long);
+    if (long !== dir) otherSpellings.push([dir, long, ""]);
+    if (short && short !== dir && short !== long) otherSpellings.push([dir, short, "8.3"]);
   }
   const temp = os.tmpdir();
   const longTemp = fs.realpathSync.native(temp);
@@ -663,25 +682,51 @@ function shortName(dir) {
   return /^[A-Za-z]:\\/.test(short) && !short.includes("\n") ? short : null;
 }
 
-// Every spelling of a directory that clean() turns back into its placeholder:
-// as given, and on Windows also the other spellings above, each with forward
-// slashes (C:/Users/…, as git and placeholders write it), with doubled
-// backslashes (C:\\Users\\…, as JSON writes it) and as MSYS tools print it
-// (/c/Users/…, or /tmp/… under the runner's temp directory). Longest first,
+// Every spelling of a directory that clean() turns back into its placeholder,
+// each as [spelling, tags]: what sets it apart from the spellings the runner
+// hands out. On Linux and macOS that is the directory as it is. On Windows the
+// runner hands out the directory as given and with forward slashes (C:/Users/…,
+// as the placeholders are written), and those have no tag. The others do:
+// "8.3" for the short spelling (above), "json" with doubled backslashes
+// (C:\\Users\\…, as JSON and Rust's {:?} write it), "msys" as MSYS tools print
+// it (/c/Users/…, or /tmp/… under the shell's temp directory). So two programs
+// that print a directory in different spellings still differ. Longest first,
 // so that no spelling takes part of another.
 function spellingsOf(dir) {
-  if (!isWindows) return [dir];
-  const forms = new Set([dir]);
-  for (const [prefix, other] of otherSpellings) if (dir === prefix || dir.startsWith(`${prefix}\\`)) forms.add(other + dir.slice(prefix.length));
-  for (const form of [...forms]) {
-    const slashed = form.replace(/\\/g, "/");
-    forms.add(slashed);
-    forms.add(form.replace(/\\/g, "\\\\"));
-    const drive = /^([A-Za-z]):\//.exec(slashed);
-    if (drive) forms.add(`/${drive[1].toLowerCase()}${slashed.slice(2)}`);
-    for (const temp of tempSpellings) if (form.toLowerCase().startsWith(`${temp}\\`)) forms.add(`/tmp${slashed.slice(temp.length)}`);
+  if (!isWindows) return [[dir, []]];
+  const bases = [[dir, []]];
+  for (const [prefix, other, tag] of otherSpellings) {
+    if (dir === prefix || dir.startsWith(`${prefix}\\`)) bases.push([other + dir.slice(prefix.length), tag ? [tag] : []]);
   }
-  return [...forms].sort((a, b) => b.length - a.length);
+  // The first tags given to a spelling hold.
+  const forms = new Map();
+  const add = (spelling, tags) => forms.has(spelling) || forms.set(spelling, tags);
+  for (const [base, tags] of bases) {
+    const slashed = base.replace(/\\/g, "/");
+    add(base, tags);
+    add(slashed, tags);
+    add(base.replace(/\\/g, "\\\\"), [...tags, "json"]);
+    const drive = /^([A-Za-z]):\//.exec(slashed);
+    if (drive) add(`/${drive[1].toLowerCase()}${slashed.slice(2)}`, [...tags, "msys"]);
+    for (const temp of tempSpellings) if (base.toLowerCase().startsWith(`${temp}\\`)) add(`/tmp${slashed.slice(temp.length)}`, [...tags, "msys"]);
+  }
+  return [...forms].sort(([a], [b]) => b.length - a.length);
+}
+
+// What clean() does for one directory: its spellings as they are, and on
+// Windows also in any other letter case, which Windows takes for the same
+// directory and which is then told apart by the tag "case".
+function placeOf(dir, name) {
+  const forms = spellingsOf(dir);
+  const pattern = forms.map(([spelling]) => escapeRegExp(spelling)).join("|");
+  const exact = new Map(forms);
+  const anyCase = new Map();
+  for (const [spelling, tags] of forms) if (!anyCase.has(spelling.toLowerCase())) anyCase.set(spelling.toLowerCase(), [...tags, "case"]);
+  const placeholder = (tags) => `<${[name, ...tags].join(":")}>`;
+  return (text) => {
+    const out = text.replace(new RegExp(pattern, "g"), (found) => placeholder(exact.get(found)));
+    return isWindows ? out.replace(new RegExp(pattern, "gi"), (found) => placeholder(anyCase.get(found.toLowerCase()))) : out;
+  };
 }
 // Tells whoever finds the directory whose it is. It is also how the runner
 // notices that the directory was emptied under it: a clean-up that races the
@@ -825,15 +870,11 @@ function runIn(root, testCase, impl, plan, extraEnv) {
     return { broken: lastLine(written("stderr")) || `the terminal helper ended with ${result.status} and without a transcript` };
   }
   const rules = [...(spec.normalize || []), ...(testCase.normalize || [])].map(([pattern, to]) => [new RegExp(pattern, "g"), to]);
-  // Every spelling of each directory (see spellingsOf); on Windows whatever
-  // the letters' case, as Windows reads a path.
-  const places = [[cwd, "<CWD>"], [home, "<HOME>"], [root, "<ROOT>"], [launchDir, "<REPO>"]].map(([dir, name]) => [
-    new RegExp(spellingsOf(dir).map(escapeRegExp).join("|"), isWindows ? "gi" : "g"),
-    name,
-  ]);
+  // Every spelling of each directory (see spellingsOf and placeOf).
+  const places = [[cwd, "CWD"], [home, "HOME"], [root, "ROOT"], [launchDir, "REPO"]].map(([dir, name]) => placeOf(dir, name));
   const clean = (text) => {
     let out = String(text ?? "");
-    for (const [spellings, name] of places) out = out.replace(spellings, name);
+    for (const place of places) out = place(out);
     for (const [pattern, to] of rules) out = out.replace(pattern, to);
     return out;
   };
