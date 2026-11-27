@@ -16,9 +16,13 @@ document cache under `~/.qqdocs`.
 - **But only on some machines.** The binary answers when no terminal is
   attached, the time zone is UTC by name, there is no `package.json`,
   `tsconfig.json` or `jsconfig.json` in the current directory or above it,
-  and the machine is not Windows. So CI jobs, containers and servers get the
-  binary; a developer's own computer, or an agent working inside a project,
-  still gets the JavaScript.
+  and the machine is not Windows; on macOS the zone must also come from `TZ`.
+  So CI jobs, containers and servers get the binary; a developer's own
+  computer, or an agent working inside a project, still gets the JavaScript.
+- The parity job runs on Linux x64, macOS arm64 and Windows x64: 910 cases on
+  Linux and macOS (567 and 566 answered by the binary), and on Windows all
+  905 that run there handed back as marked. Two differences seen on the Mac
+  came from the test stand-in running under bun, not from the binary.
 - Proof: 910 parity cases against a stand-in server on 127.0.0.1 that records
   every request; all the same on both sides, requests included; 567 answered
   by the binary, 343 handed back on purpose. The real service was never

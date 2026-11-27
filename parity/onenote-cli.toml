@@ -6,36 +6,99 @@
 # is rs/ on that branch and nothing of it is on main yet, so read this ledger
 # with `rustify audit onenote-cli --at <that worktree>`.
 #
-# What is ported: `onenote search <query>` where a synced Linux machine is
-# (an index with pages in it), and `onenote auth setup`. Everything else is
-# handed to src/index.ts, the file the published package runs (`npm view
-# onenote-cli bin`), before anything is printed. Status below is what the
-# binary does on its own, so what is handed back is `missing`.
+# What is ported: `onenote search <query>` where a synced Linux machine or
+# Mac is (an index with pages in it), and `onenote auth setup` on Linux,
+# macOS and Windows. On Windows the search is not compiled in and every
+# search is handed back. Everything else is handed to src/index.ts, the file
+# the published package runs (`npm view onenote-cli bin`), before anything
+# is printed. Status below is what the binary does on its own, so what is
+# handed back is `missing`.
 #
-# Every `verified` below was seen to pass on that branch on Linux x64 (glibc
-# build; bun 1.4.0, whose SQLite is 3.53.2 and whose time zone database is
-# ICU 78.3's; the binary's SQLite is 3.54.1, the one rusqlite 0.43 bundles,
-# and its time zone database is tzdb 2026f, the one jiff-tzdb 1.0.0
-# bundles), at 81070be, from the repository root after `bun install` and
-# `cargo build --release` in rs/:
+# Per system. The cases (rs/parity.json, 573, written by rs/parity.gen.mjs)
+# say for each system who answers each: Linux 382 the binary, 191 the
+# JavaScript; macOS 389 and 183, 1 not run; Windows 5 and 564, 4 not run.
+# The workflow's parity job runs them on linux-x64, darwin-arm64 and
+# win32-x64 (`parity-platforms`), with rs/parity/proof.sh. linux-arm64,
+# darwin-x64 and win32-arm64 run the same code and get only the install
+# smoke lines.
 #
-#   sh rs/parity/proof.sh <rustify>/templates/parity/parity.mjs rs/target/release/onenote-cli
-#   → plain: all 562 case(s) behave the same
-#   → terminal: all 562 case(s) behave the same
-#   → handback: 371 case(s) answered by the binary, 191 handed back to the JavaScript, as the cases say (twice)
+# Every `verified` below was seen to pass on the branch at 8d65a05, from the
+# repository root after `bun install`, on three machines, each with bun 1.4.5
+# (the bun setup-bun gave the parity job in its first CI run, below) and
+# with the bun the machine has, run by the parity runner of rustify's
+# releases/v1 (8ab8191), the one CI takes:
+#
+#   sh rs/parity/proof.sh <rustify>/templates/parity/parity.mjs <binary>
+#
+# Linux x64, against the linux-x64 binary of that CI run (the pipeline's
+# static musl build; rs/src has not changed since. Its SQLite is 3.54.1, the
+# one rusqlite 0.43 bundles, and its zone database tzdb 2026f, jiff-tzdb
+# 1.0.0's), with bun 1.4.5 (SQLite 3.54.1, the zone data of ICU 78.3) and
+# with bun 1.4.0 (SQLite 3.53.2, ICU 78.3), the same lines from both:
+#   → plain: all 573 case(s) behave the same
+#   → terminal: all 573 case(s) behave the same
+#   → handback: 382 case(s) answered by the binary, 191 handed back to the JavaScript, as the cases say (twice)
 #   → zones: 598 zones, 22893434 answers compared with the runtime, 1021160 of them --since spans
-#            test result: ok. 24 passed
+#            test result: ok. 26 passed
+#   and TypeScript against TypeScript under bun 1.4.5, on pipes and on a
+#   terminal: all 573 the same.
 #
-# which is what CI runs, and is these, side by side:
+# macOS 27.0.1 arm64, against the darwin-arm64 binary of that CI run, with
+# bun 1.4.5 and with bun 1.4.4, the same lines from both (on macOS both use
+# the system's SQLite 3.54.0 and ICU 78.1 with its time zone data, edition
+# 2026e on that Mac; python3 3.9):
+#   → plain: all 572 case(s) behave the same (1 skipped on darwin)
+#   → terminal: all 572 case(s) behave the same
+#   → handback: 389 case(s) answered by the binary, 183 handed back to the JavaScript, as the cases say (twice)
+#   → zones: 598 zones, 22955113 answers compared with the runtime, 1007924 of them --since spans;
+#            test result: ok. 26 passed
+#   and TypeScript against TypeScript under bun 1.4.5, on pipes and (twice)
+#   on a terminal: all 572 the same, with the CR rule (see the terminal
+#   entry; without it, it differed from itself there).
+#   (At de8f69d, with bun 1.4.4, the zone test also passed with
+#   ICU_TIMEZONE_FILES_DIR pointing the system's ICU at edition 2026f, which
+#   that Mac had downloaded beside it; nothing that test reads has changed.)
+#
+# Windows 11 x64, in a clone made with core.autocrlf=true, as GitHub's
+# runners make it (src/ arrives there with CR LF, rs/ with LF since
+# .gitattributes), against the binary built in that clone with cargo (MSVC),
+# in Git Bash (node 24.8), with bun 1.4.5 and with bun 1.4.2, the same lines
+# from both: the comparison and the --handback check run in lanes, one parity
+# run per group of cases (rs/parity.gen.mjs --groups):
+#   → plain0..3: every group "all N case(s) behave the same" (569 cases, 4 skipped on win32)
+#   → handback0..1: 5 case(s) answered by the binary, 564 handed back to the JavaScript, as the cases say
+#   → unit: test result: ok. 5 passed
+#   in 457 s (bun 1.4.5) and 485 s (bun 1.4.2) on a machine with 24 threads.
+#   TypeScript against TypeScript (ts.py on both sides) was compared there at
+#   de8f69d with bun 1.4.2, for the `auth setup: ` and `cli: ` groups: all
+#   the same.
+#
+# The first CI run (pull request #5, at de8f69d, bun 1.4.5 everywhere)
+# failed on all three systems, and each failure is repaired: on Linux two
+# cases could not make the state they name (bun 1.4.5 closes a database
+# when the process ends; see "What the proof is"); on macOS one terminal
+# case differed by a CR the TypeScript doubles there (see the terminal
+# entry); on Windows the checkout had turned rs/ into CR LF (.gitattributes,
+# see `auth setup`). The repair is not pushed, so CI has not run it yet.
+#
+# which is what CI runs (proof.sh says what it starts on each system, side
+# by side):
 #
 #   node rs/parity.gen.mjs --check
 #   P=<rustify>/templates/parity/parity.mjs
-#   node $P --cases rs/parity.json --ts "sh rs/parity/ts.sh" --rs rs/target/release/onenote-cli
-#   node $P --cases rs/parity.json --rs rs/target/release/onenote-cli \
-#        --handback ONENOTE_CLI_PACKAGE_ROOT=src/index.ts
+#   node $P --cases rs/parity.json --ts "sh rs/parity/ts.sh" --rs <binary>
+#   node $P --cases rs/parity.json --rs <binary> --handback ONENOTE_CLI_PACKAGE_ROOT=src/index.ts
 #   both again with `python3 rs/parity/terminal.py` in front of each
-#   implementation, which gives it a pseudo-terminal;
+#   implementation, which gives it a pseudo-terminal (Linux and macOS);
 #   cargo test --locked --manifest-path rs/Cargo.toml
+#
+# On Windows the TypeScript side is `python -I rs/parity/ts.py` instead of
+# ts.sh: Git Bash's sh drops a TZ such as America/New_York on the way to a
+# Windows program, and the TypeScript then showed the system's local time
+# where the binary's hand-back showed the zone's (found there). There is no
+# terminal run on Windows (no pty there, and the runner has none either), and
+# no zone comparison: the search, which alone reads a zone, is not compiled
+# for Windows.
 #
 # What the proof is. onenote keeps its search index in the directory it is
 # installed in (<package>/.onenote/search.db), not in HOME, so every case
@@ -43,82 +106,123 @@
 # the TypeScript (started from there by rs/parity/ts.sh), named to the binary
 # in ONENOTE_CLI_PACKAGE_ROOT. Most cases first build an index into it with
 # bun:sqlite, from the rows in rs/parity/db/ and rs/parity/rows/ and with the
-# schema of src/cache.ts (rs/parity/make-db.ts). Compared: stdout, stderr,
-# the exit code, the listing of the working directory and HOME, the index and
+# schema of src/cache.ts (rs/parity/make-db.ts), and leave beside it an empty
+# -wal file and the -shm file: what a finished sync leaves on macOS, and on
+# Linux under bun 1.4.4 and older. Under bun 1.4.5 a sync on Linux leaves
+# the index alone, as one closed cleanly: bun 1.4.5 closes every database
+# when the process ends, also one that src/cache.ts closed with statements
+# still open, and bun's own SQLite then checkpoints the log and deletes both
+# files (macOS's SQLite keeps them, the log cut to nothing, under 1.4.4 and
+# 1.4.5 alike). make-db.ts makes each state the same way under every bun and
+# fails when the files beside the index are not as the case says. 6 cases
+# start from an index without its -wal file (5 of them closed cleanly), and
+# one from whatever the bun that runs the cases leaves (`search state: an
+# index as a sync under this bun leaves it`). Compared: stdout, stderr, the
+# exit code, the listing of the working directory and HOME, the index and
 # the files SQLite leaves beside it (sizes), the index's modification time,
-# and ~/.onenote-cli. One normalize rule is in use, in two cases that are
-# handed back: the process id in the warning bun prints under NODE_DEBUG. A
+# and ~/.onenote-cli (rs/parity/files.mjs, the same on every system). Two
+# normalize rules are in use: the process id in the warning bun prints under
+# NODE_DEBUG, in three cases that are handed back (on Windows also under
+# node_debug, since a variable's name is the same in any case there); and,
+# for every case, a CR doubled before a line end, which the TypeScript
+# writes now and then on a macOS terminal (see the terminal entry). A
 # `verified` below rests only on cases the binary answered.
 #
 # 198 of the cases come from an independent verification of the port (its
 # 196, two of them split in two because they printed more than the
 # TypeScript reliably gets through a socket), 42 from the repair that
-# followed it. That verification found the binary answering differently in
-# four situations; all four now go back to the JavaScript, and each has
-# cases: a time zone at a time for which the two time zone databases
-# differ; a variable in the environment that the runtime reads for itself
-# (NODE_DEBUG, BUN_JSC_*, MIMALLOC_VERBOSE); an index last written in the
-# last 122 ns of a second; and a package directory bun cannot load from.
+# followed it, the rest from running the cases on macOS and Windows. That
+# verification found the binary answering differently in four situations;
+# all four now go back to the JavaScript, and each has cases: a time zone at
+# a time for which the two time zone databases differ; a variable in the
+# environment that the runtime reads for itself (NODE_DEBUG, BUN_JSC_*,
+# MIMALLOC_VERBOSE); an index last written in the last 122 ns of a second;
+# and a package directory bun cannot load from. Running the cases on a Mac
+# found three more, which go back there: an index without its -wal file
+# (macOS's SQLite cannot open it read-only, and the TypeScript syncs), the
+# zone names CST6CDT, EST5EDT, MST7MDT and PST8PDT (macOS's ICU shows UTC),
+# and Cuba's winter of 2026 under the edition of the zone data that Mac had.
 #
 # Time zones are compared apart from the cases, because they are too many
 # for cases: a unit test (rs/src/time.rs,
 # every_zone_is_read_as_the_runtime_reads_it; `cargo test` runs it, and CI
-# with it) takes every zone name of the compiled-in database, starts bun
-# under that TZ (rs/parity/runtime-time.ts), and compares what both make of
-# "last synced" for every 31 hours from 1970 to 2099 and around every clock
-# change, and of `--since` spans that come back to every clock change. It
-# fails for a difference that rs/src/time.rs does not list as left to the
-# runtime, and prints the line to add. It is a test of the same sources and
-# Cargo.lock, not of the binary that is shipped.
+# with it on Linux and macOS) takes every zone name of the compiled-in
+# database, starts bun under that TZ (rs/parity/runtime-time.ts), and
+# compares what both make of "last synced" for every 31 hours from 1970 to
+# 2099 and around every clock change, and of `--since` spans that come back
+# to every clock change. It fails for a difference that rs/src/time.rs does
+# not list as left to the runtime (one list for Linux, one for macOS), and
+# prints the line to add; on macOS it also fails when the system's edition
+# of the zone data is not one listed as compared. It is a test of the same
+# sources and Cargo.lock, not of the binary that is shipped.
 #
 # Nothing in the cases reaches Microsoft: HOME is empty, so there is no
 # client id and no token, and every Graph command ends at the "Please
-# configure your Azure AD app credentials" notice. `auth login`, `auth
+# configure your Azure AD app credentials" notice (also the case that a sync
+# would start: without an index the TypeScript syncs). `auth login`, `auth
 # logout`, `init` and `open` are not run at all, and no Graph command was run
 # against a stand-in server: all of them are `missing` from a reading of the
 # code only.
 #
-# Not covered, by construction: macOS and Windows (the parity job runs on
-# Linux; there the search is not ported at all, see its entry), the static
-# musl build the pipeline ships (building it needs a C compiler for musl,
-# which the machine this was written on does not have; CI's parity job runs
-# against that build), CI itself (nothing is pushed; the parity job there
-# also needs the runner's own Rust for `cargo test`), a bun other than
-# 1.4.0, an index written by a real `onenote sync`, output longer than about
-# 280 lines (see the search entry), and a machine whose own time zone is
-# anything but UTC (see the entry for the system's time zone).
+# Not covered: a CI run of this repair (its first run, at de8f69d, is above:
+# there the zone test and the --handback check passed on the macOS runner,
+# macos-26-arm64, so its edition of the zone data is one of the two
+# compared; how long the Windows job takes there is still not known, as it
+# stopped at the check after 46 s), linux-arm64, darwin-x64 and win32-arm64
+# (no parity run), a bun other than 1.4.0 and 1.4.5 on Linux, 1.4.4 and
+# 1.4.5 on macOS, 1.4.2 and 1.4.5 on Windows, a macOS other than 27.0.1, an
+# index written by a real `onenote sync` (make-db.ts ends as src/cache.ts
+# does, but no sync was run), output longer than about 280 lines (see the
+# search entry), and a Linux machine whose own time zone is anything but UTC
+# (see the entry for the system's time zone).
 #
 # Rust-only behaviour (no TypeScript counterpart; to be blessed or removed):
 # ONENOTE_CLI_NO_NATIVE=1 hands everything back; ONENOTE_CLI_PACKAGE_ROOT
 # tells a binary outside the package where the package is; a binary without
 # the npm package beside it answers what it would hand back with one line and
 # exit 1; a bug that makes a ported command panic hands back instead of
-# crashing (it has printed nothing by then); `onenote search` writes all of
-# its output even to a reader that is slow, where the TypeScript loses lines
-# (confirmed by the verification: of 6,014 lines to a reader that waits two
-# seconds, 1,896 arrived from the TypeScript, three runs out of three. This
-# is a defect of bun's that the binary does not copy; whether a search with
-# much output into a pipe should go back to the JavaScript so that it keeps
-# losing lines is the owner's decision).
+# crashing (it has printed nothing by then); RUSTIFY_HANDBACK_TRACE=1 makes
+# the binary say on stderr when it hands back (rustify's helper v5, for the
+# install smoke test); `onenote search` writes all of its output even to a
+# reader that is slow, where the TypeScript loses lines (confirmed by the
+# verification: of 6,014 lines to a reader that waits two seconds, 1,896
+# arrived from the TypeScript, three runs out of three. This is a defect of
+# bun's that the binary does not copy; whether a search with much output
+# into a pipe should go back to the JavaScript so that it keeps losing lines
+# is the owner's decision).
 
 reconciled = "9af05e1"
 
 # ───────────────────────────── Ported ─────────────────────────────
 
 [[feature]]
-name = "search <query> (local index, on Linux)"
+name = "search <query> (local index, on Linux and macOS)"
 status = "verified"
 ts = "src/index.ts:734 command; src/index.ts:802 handler; src/cache.ts:1326 isCacheEmpty; src/cache.ts:1548 searchLocal; src/cache.ts:1461 cleanSnippet"
 rs = "rs/src/search.rs; rs/src/main.rs search"
-proof = "rs/parity.json the `search: …`, `search query: …`, `search expression: …`, `search options: …`, `search paging: …`, `search since: …`, `search tags: …`, `search text: …`, `search ties: …`, `search time: …`, `search env: …`, `search state: …` and `search rows: …` cases that are not marked handback (365; three of those, a package directory with `?` or a backslash in its name, do go back in the comparison and are unmarked only because the --handback check gives every case a stand-in directory)"
-note = "With an index that has pages: -n/--notebook, -s/--section, -a/--account, -l/--limit, -p/--offset, -g/--group, -c/--compact, -m/--max-lines, --since; the three layouts; the excerpt; the last line with its paging hint and `last synced` time. Bugs of the TypeScript are kept (each has a case: a quoted phrase is searched as two words, #discuss needs all three of its tags, pages titled in Cyrillic and other scripts are counted but never shown, a line with little ASCII is shown as `[binary content, no clean preview]`). One difference cannot be had: with stdout a pipe or socket the TypeScript loses output once the reader falls behind (src/index.ts:12 touches process.stdout, after which bun 1.4.0 drops console.log lines that do not fit the pipe: beyond 64 KB into a pipe, beyond about 280 lines into a socket such as Node's child_process gives). Rust always writes everything. The independent verification confirmed it (1,896 of 6,014 lines arrived), and two of its cases, 302 lines each, differed TypeScript against TypeScript in 17 of 48 runs on a busy machine; they are two cases each now. The cases stay below that, so nothing compares output that long. Whether a search with that much output into a pipe should go back to the JavaScript, to keep losing lines as before, is the owner's decision; today it does not."
+proof = "rs/parity.json the `search: …`, `search query: …`, `search expression: …`, `search options: …`, `search paging: …`, `search since: …`, `search tags: …`, `search text: …`, `search ties: …`, `search time: …`, `search env: …`, `search state: …` and `search rows: …` cases that are not marked handback for the system, run by rs/parity/proof.sh on Linux (376 of them) and on macOS (383); three of those on each, a package directory with `?` or a backslash in its name, do go back in the comparison and are unmarked only because the --handback check gives every case a stand-in directory"
+note = "Native on Linux and macOS, proven on both by the parity job (linux-x64, darwin-arm64); handed back on Windows (see `search on Windows`). The darwin-x64 and linux-arm64 binaries answer the same way and are not run by the parity job. With an index that has pages: -n/--notebook, -s/--section, -a/--account, -l/--limit, -p/--offset, -g/--group, -c/--compact, -m/--max-lines, --since; the three layouts; the excerpt; the last line with its paging hint and `last synced` time. Bugs of the TypeScript are kept (each has a case: a quoted phrase is searched as two words, #discuss needs all three of its tags, pages titled in Cyrillic and other scripts are counted but never shown, a line with little ASCII is shown as `[binary content, no clean preview]`). On macOS bun:sqlite is the system's SQLite (3.54.0 on macOS 27.0.1) and the zone data the system ICU's: the cases ran there against it, TypeScript against the binary, with the index as a sync leaves it, and two situations go back there (their own entries). One difference cannot be had: with stdout a pipe or socket the TypeScript loses output once the reader falls behind (src/index.ts:12 touches process.stdout, after which bun 1.4.0 drops console.log lines that do not fit the pipe: beyond 64 KB into a pipe, beyond about 280 lines into a socket such as Node's child_process gives). Rust always writes everything. The independent verification confirmed it (1,896 of 6,014 lines arrived), and two of its cases, 302 lines each, differed TypeScript against TypeScript in 17 of 48 runs on a busy machine; they are two cases each now. The cases stay below that, so nothing compares output that long. Whether a search with that much output into a pipe should go back to the JavaScript, to keep losing lines as before, is the owner's decision; today it does not."
 
 [[feature]]
-name = "search on macOS and Windows"
+name = "search on Windows"
 status = "missing"
 ts = "src/index.ts:1023 toLocaleString; src/cache.ts:6 bun:sqlite"
 rs = "rs/src/main.rs search"
-note = "Handed back whole, so users there see no difference yet. The last line prints a local time with toLocaleString(): on Linux bun's locale is en-US whatever the user's is (compared under LANG and LC_ALL), on macOS and Windows a runtime usually follows the system's language and region, and what bun prints there could not be tried from Linux. On macOS bun:sqlite is also documented to be the system's SQLite. The search modules and their dependencies (SQLite, jiff, serde_json) are compiled for Linux only. To port it: run the cases on those systems and see what the last line says under another system language."
+note = "Handed back whole, so users there see no difference yet: the search modules and their dependencies (SQLite, jiff, serde_json) are not compiled for Windows. The parity job runs every case on win32-x64 all the same: the --handback check shows that each of the 532 search cases that run there reaches the JavaScript (3 cannot be made there: a file name with `?`, one with a backslash), and the comparison that each behaves as the TypeScript started directly. What porting it would take: bun's SQLite, its time zone data and its idea of a console on Windows, none of which was compared; a Windows console is handed back even for `auth setup` (rs/src/main.rs machine)."
+
+[[feature]]
+name = "search on macOS: an index without its -wal file"
+status = "missing"
+ts = "src/cache.ts:1326 isCacheEmpty; src/cache.ts:1555"
+rs = "rs/src/search.rs openable_by_the_runtime"
+note = "macOS's own SQLite, which bun:sqlite is there, cannot open an index in WAL mode read-only while the -wal file beside it is missing (SQLITE_CANTOPEN; a missing -shm file it makes itself), seen with bun 1.4.4 on macOS 27.0.1. The TypeScript then takes the cache for empty and starts a sync. Linux's bun and the binary's SQLite make the files and read on, so on macOS the binary hands back whenever the -wal file is not there, whatever the journal mode. A sync on a Mac leaves the file there: macOS's SQLite keeps the -wal file (cut to nothing) and the -shm file when a database is closed, under bun 1.4.4 and 1.4.5 alike (seen on macOS 27.0.1, where the read-only open without the -wal file fails under both), so after a sync there the search is native. An index closed by another SQLite has none: one copied from Linux, where under bun 1.4.5 a sync leaves the index alone (see `search index: reading`). 6 cases, native on Linux and handed back on macOS, and one (`an index as a sync under this bun leaves it`) native on both, which the --handback check turns into a failure on macOS should a bun there ever leave no -wal file."
+
+[[feature]]
+name = "search on macOS: zone data of an edition that was not compared"
+status = "missing"
+ts = "src/index.ts:1023 toLocaleString"
+rs = "rs/src/time.rs compared_data, MACOS_EDITIONS_COMPARED"
+note = "On macOS bun uses the system's ICU, which reads the zone data from /var/db/timezone/icutz, a link to the edition the system has installed; macOS moves it on by itself, so two Macs can read a zone differently (seen on one Mac: 2026e in use, 2026f downloaded beside it, and ICU's own data, under ICU_TIMEZONE_FILES_DIR=/nonexistent, older still and different in Morocco and Alberta). The binary answers a search only where that link leads to an edition that was compared with every zone (2026e and 2026f), and hands back everything else, the search on a Mac without the link included. Every search prints a local time, so on such a Mac no search is native. The parity job's macOS runner has an edition that could not be known here: if it is not one of the two, the --handback check fails there (every search goes back) and the zone test says which edition it found; comparing it is one line in rs/src/time.rs."
 
 [[feature]]
 name = "search query language (#tag, tag:name, AND / OR / NOT, quotes)"
@@ -126,15 +230,15 @@ status = "verified"
 ts = "src/cache.ts:503 TAG_ALIASES; src/cache.ts:576 buildFtsParam; src/cache.ts:588 parseTagsFromQuery; src/index.ts:810 quote stripping; src/index.ts:862"
 rs = "rs/src/query.rs; rs/src/search.rs strip_quotes"
 proof = "rs/parity.json the `search: …`, `search query: …`, `search expression: …` and `search tags: …` cases; `cargo test` in rs/ (query::tests, against values printed by the TypeScript's own two functions)"
-note = "The expression itself is FTS5's: Rust hands SQLite the same MATCH text and the same SQL. An expression FTS5 rejects goes back (see the section-files entry)."
+note = "Linux and macOS. The expression itself is FTS5's: Rust hands SQLite the same MATCH text and the same SQL. An expression FTS5 rejects goes back (see the section-files entry); on macOS the TypeScript's SQLite is the system's 3.54.0 and the binary's 3.54.1, and every expression case agreed."
 
 [[feature]]
 name = "search output on a terminal (colours, clickable titles)"
 status = "verified"
 ts = "src/index.ts:12 isTTY; src/index.ts:30 colour helpers; src/index.ts:40 link"
 rs = "rs/src/search.rs Paint; rs/src/main.rs machine"
-proof = "rs/parity.json every case, run with `python3 rs/parity/terminal.py` in front of both implementations (a pseudo-terminal as stdin, stdout and stderr; what was written to it is compared byte for byte); rs/parity/terminal.py"
-note = "Linux, where the search is ported. Whether stdout is a terminal is asked the same way by both there (isatty)."
+proof = "rs/parity.json every case, run with `python3 rs/parity/terminal.py` in front of both implementations (a pseudo-terminal as stdin, stdout and stderr; what was written to it is compared byte for byte), on Linux and on macOS; rs/parity/terminal.py"
+note = "Linux and macOS, where the search is ported. Whether stdout is a terminal is asked the same way by both there (isatty). On a macOS terminal the TypeScript's output now and then has CR CR LF where a line ends, also against itself, under bun 1.4.4 and 1.4.5 alike: 12 such line ends in 11 of 1,362 of its outputs (11 of them in the 238 outputs of the nine `search ties: ` cases, of up to 150 lines; this is what differed in the first CI run's terminal run on darwin-arm64, where the order of the results was the same), none in 1,272 of the binary's. What triggers it was not found; it is no matter of output size alone (one was in a case of 41 lines). It looks the same on a terminal, and the cases take it out with one normalize rule for every case (rs/parity.gen.mjs says what that rule cannot tell apart). Not copied by the binary: it is not deterministic, and nothing a user sees. terminal.py copies the terminal's output itself: python 3.9's pty.spawn, the python3 of macOS's command line tools, waits forever once the command has ended on macOS. Not on Windows (no pty; the binary hands a search on a console back anyway)."
 
 [[feature]]
 name = "search index: reading .onenote/search.db"
@@ -142,22 +246,22 @@ status = "verified"
 ts = "src/cache.ts:500 SEARCH_DB_PATH; src/cache.ts:1555; src/cache.ts:529 schema"
 rs = "rs/src/search.rs search_index"
 proof = "rs/parity.json the `search state: an index …` and `search state: tags …` cases (an index closed cleanly, one as a finished sync leaves it, one whose rows are still in the write-ahead log, one without the full-text table), with the files left beside the index compared in every case"
-note = "Opened read-only, as the TypeScript opens it; nothing but SQLite's own -shm/-wal files is written. The indexes in the cases are built by rs/parity/make-db.ts with the TypeScript's schema, not by a sync. Ranking is SQLite's bm25: two pages whose ranks differ only in the last bit could come out in another order under another C library's log(); none of the cases is that close."
+note = "Opened read-only, as the TypeScript opens it; nothing but SQLite's own -shm/-wal files is written. The indexes in the cases are built by rs/parity/make-db.ts with the TypeScript's schema, not by a sync, and are left with an empty -wal file and the -shm file beside them, as a sync leaves them on macOS and, under bun 1.4.4 and older, on Linux; 6 cases start from an index without its -wal file, 5 of them closed cleanly, which is what a sync leaves on Linux under bun 1.4.5 (bun 1.4.5 closes the database when the process ends, and its SQLite deletes both files; the TypeScript and the binary read such an index alike, and both leave an empty -wal file and the -shm file beside it after a search). One case starts from what the bun that runs the cases leaves when a program ends as a sync does. On macOS the TypeScript reads with the system's SQLite, which needs the -wal file (see its entry). Ranking is SQLite's bm25: two pages whose ranks differ only in the last bit could come out in another order under another C library's log(); none of the cases is that close, on Linux or macOS."
 
 [[feature]]
 name = "search: the time of the last sync, and --since (time zone named in TZ)"
 status = "verified"
 ts = "src/index.ts:821 parseSince; src/index.ts:902 fmtDate; src/index.ts:1022 last synced"
 rs = "rs/src/time.rs"
-proof = "rs/src/time.rs every_zone_is_read_as_the_runtime_reads_it, run by `cargo test` in rs/ with rs/parity/runtime-time.ts: all 598 zone names of the compiled-in database against bun started under that TZ, 22.9 million answers, 1.0 million of them --since spans; rs/parity.json the `search time: …` and `search since: …` cases; the other time::tests (values printed by bun)"
-note = "Local time comes from the tz database compiled into the binary (jiff-tzdb 1.0.0: tzdb 2026f), the runtime's from ICU's (78.3 in bun 1.4.0). The two are different editions and differ on 16 zone names: every winter from November 2026 on in Western Canada (America/Vancouver, Edmonton, Winnipeg, Inuvik, Yellowknife, Rainy_River, Canada/Pacific, Mountain, Central), the winter of 2026 in Cuba (America/Havana, Cuba), from September 2026 on in Morocco (Africa/Casablanca, El_Aaiun), one day of 1992 in America/Bogota and one hour of 1979 in Asia/Tehran and Iran. The independent verification found 13 of these; the test found Bogota and Tehran. rs/src/time.rs lists zone and stretch (READ_DIFFERENTLY_BY_THE_RUNTIME), and the binary hands back whenever the index's time, the present moment for a --since span, or the moment the span comes back to lies in a listed stretch or within three days of it. So in Western Canada, Cuba (until March 2027) and Morocco every search that prints `last synced` for a current index goes back today, and users there see no speed-up until bun carries newer data. Also handed back: any time before 1970 or after 2099 (not compared; before 1970 the two databases are known to differ in many zones), a --since day that does not exist or lies before the year 1000, and a span of more than four digits. The format is en-US whatever the locale: bun 1.4.0 does not read LANG or LC_*. The test asks bun for `--since` with the runtime's memory of clock changes cleared before each question, as it is in a process that works out one date: asked in a row, bun itself answers an hour off around clock changes less than three weeks apart (America/Argentina/Tucuman in 2004 and nine more zones). What the proof cannot reach: it compares with the bun that runs the test. A user's bun with another edition of ICU's data can differ from the binary in whichever zones changed between the editions, and nothing in the binary can see which edition the runtime has. CI runs the test with the bun it installs, so a new bun or a new jiff-tzdb that changes the list fails there and prints the lines to add. Handed back among the cases: 25 for a listed stretch or a time outside 1970 to 2099, 6 for a --since day or span Rust does not read, 14 for a TZ that is not a zone's name."
+proof = "rs/src/time.rs every_zone_is_read_as_the_runtime_reads_it, run by `cargo test` in rs/ with rs/parity/runtime-time.ts on Linux and on macOS: all 598 zone names of the compiled-in database against bun started under that TZ, 22.9 million answers, 1.0 million of them --since spans (on macOS for editions 2026e and 2026f of the system's data); rs/parity.json the `search time: …` and `search since: …` cases; the other time::tests (values printed by bun)"
+note = "Linux and macOS. Local time comes from the tz database compiled into the binary (jiff-tzdb 1.0.0: tzdb 2026f), the runtime's from ICU's (78.3 inside bun 1.4.0 on Linux; on macOS the system's ICU 78.1 and the edition of the data the system has, see the entry on macOS's zone data). On macOS rs/src/time.rs has a list of its own, from editions 2026e and 2026f: Cuba's winter of 2026 (2026e), and CST6CDT, EST5EDT, MST7MDT and PST8PDT at every time (macOS's ICU does not know these names under TZ and shows UTC); Western Canada, Morocco, Bogota and Tehran, which go back on Linux, agree there and are native. What follows is about Linux. The two are different editions and differ on 16 zone names: every winter from November 2026 on in Western Canada (America/Vancouver, Edmonton, Winnipeg, Inuvik, Yellowknife, Rainy_River, Canada/Pacific, Mountain, Central), the winter of 2026 in Cuba (America/Havana, Cuba), from September 2026 on in Morocco (Africa/Casablanca, El_Aaiun), one day of 1992 in America/Bogota and one hour of 1979 in Asia/Tehran and Iran. The independent verification found 13 of these; the test found Bogota and Tehran. rs/src/time.rs lists zone and stretch (READ_DIFFERENTLY_BY_THE_RUNTIME), and the binary hands back whenever the index's time, the present moment for a --since span, or the moment the span comes back to lies in a listed stretch or within three days of it. So in Western Canada, Cuba (until March 2027) and Morocco every search that prints `last synced` for a current index goes back today, and users there see no speed-up until bun carries newer data. Also handed back: any time before 1970 or after 2099 (not compared; before 1970 the two databases are known to differ in many zones), a --since day that does not exist or lies before the year 1000, and a span of more than four digits. The format is en-US whatever the locale: bun 1.4.0 does not read LANG or LC_*. The test asks bun for `--since` with the runtime's memory of clock changes cleared before each question, as it is in a process that works out one date: asked in a row, bun itself answers an hour off around clock changes less than three weeks apart (America/Argentina/Tucuman in 2004 and nine more zones). What the proof cannot reach: it compares with the bun that runs the test. A user's bun with another edition of ICU's data can differ from the binary in whichever zones changed between the editions, and nothing in the binary can see which edition the runtime has. CI runs the test with the bun it installs, so a new bun or a new jiff-tzdb that changes the list fails there and prints the lines to add. Handed back among the cases: 25 for a listed stretch or a time outside 1970 to 2099, 6 for a --since day or span Rust does not read, 14 for a TZ that is not a zone's name."
 
 [[feature]]
 name = "search: the system's time zone (no TZ in the environment)"
 status = "partial"
 ts = "src/index.ts:1023 toLocaleString"
 rs = "rs/src/time.rs local_zone"
-note = "The common setup on a desktop. Without TZ the runtime asks ICU for the system's zone; Rust takes the name the link /etc/localtime points at (…/zoneinfo/<name>) and then reads that zone from its own database, exactly as for a name in TZ, with the same listed stretches handed back. The cases compare it only where the system's zone is UTC (2 cases; the machine the cases ran on, and CI's runners): a private mount namespace to give the two another /etc/localtime was denied to the verifier and to the repair. Compared once by hand instead, and not kept as a test: with a preloaded library that answers readlink() and realpath() for /etc/localtime (bun and the glibc build of the binary both ask through libc; the static build that is shipped cannot be given one), 46 runs under 20 system zones behaved the same, 43 answered by the binary: Asia/Tokyo, Europe/Berlin, America/New_York and 11 more in winter and summer, zones whose file is itself a link on Debian 13 (UTC, GMT, America/Montreal, Arctic/Longyearbyen, Asia/Istanbul, America/Yellowknife), and --since spans. Where the link leads to a second link ICU follows to the end and Rust stops at the first name, which are two names of one zone. Until a test of this is kept and run in CI the status stays below `verified`. Handed back: no /etc/localtime, one that is a copy and not a link (slim container images), or a name that is not in the compiled-in database; what the runtime prints there could not be tried (setting TZ makes such a machine take the Rust path). On a machine whose zone is in Western Canada, Cuba or Morocco the two `search time: the system's zone` cases are handed back and the --handback check fails on them."
+note = "The common setup on a desktop. Without TZ the runtime asks ICU for the system's zone; Rust takes the name the link /etc/localtime points at (…/zoneinfo/<name>; on macOS /var/db/timezone/zoneinfo/<name>) and then reads that zone from its own database, exactly as for a name in TZ, with the same listed stretches handed back. On macOS the 2 cases ran on a Mac whose zone is Asia/Tokyo and agreed; on Linux the cases compare it only where the system's zone is UTC (2 cases; the machine the cases ran on, and CI's runners): a private mount namespace to give the two another /etc/localtime was denied to the verifier and to the repair. Compared once by hand instead, and not kept as a test: with a preloaded library that answers readlink() and realpath() for /etc/localtime (bun and the glibc build of the binary both ask through libc; the static build that is shipped cannot be given one), 46 runs under 20 system zones behaved the same, 43 answered by the binary: Asia/Tokyo, Europe/Berlin, America/New_York and 11 more in winter and summer, zones whose file is itself a link on Debian 13 (UTC, GMT, America/Montreal, Arctic/Longyearbyen, Asia/Istanbul, America/Yellowknife), and --since spans. Where the link leads to a second link ICU follows to the end and Rust stops at the first name, which are two names of one zone. Until a test of this is kept and run in CI the status stays below `verified`. Handed back: no /etc/localtime, one that is a copy and not a link (slim container images), or a name that is not in the compiled-in database; what the runtime prints there could not be tried (setting TZ makes such a machine take the Rust path). On a machine whose zone is in Western Canada, Cuba or Morocco the two `search time: the system's zone` cases are handed back and the --handback check fails on them."
 
 [[feature]]
 name = "auth setup"
@@ -165,7 +269,7 @@ status = "verified"
 ts = "src/index.ts:1103"
 rs = "rs/src/main.rs auth_setup; rs/src/auth_setup.txt"
 proof = "rs/parity.json the `auth setup: …` cases that are not marked handback (6; one of those, a package directory with `?` in its name, does go back in the comparison and is unmarked only because the --handback check gives every case a stand-in directory)"
-note = "Prints the guide. Compiled for every platform, compared on Linux; on macOS and Windows it has never run, and the install test's smoke line (`onenote auth setup`) is all that will run it there. Only exactly `auth setup`; with any other argument it is yargs's. On a Windows console it is handed back: no console was ever compared, and Rust's standard library counts a Git Bash window as a terminal, which the runtime may not. The machine states under `search: machine states that go back` send it back too (a variable named for the runtime, a bunfig.toml, a .env file with the letters that matter, a package directory bun cannot load from); 3 cases and an unmarked one."
+note = "Prints the guide. Compiled for every platform and native on all of them; compared on Linux, macOS and Windows by the parity job (linux-x64, darwin-arm64, win32-x64: 6 cases on Linux and macOS, 5 on Windows, where the one with `?` in the package directory cannot be made), and the install test's smoke lines (`[native] onenote auth setup`, `[native] onenote-cli auth setup`) fail on any of the six platforms where the binary does not answer it itself (that test runs only in CI; in its first run, at de8f69d, both lines passed on all six). Only exactly `auth setup`; with any other argument it is yargs's. The guide is rs/src/auth_setup.txt, compiled in: the pipeline builds the win32 binaries on Windows runners, whose checkout turned it into CR LF, so the win32-x64 binary of the first CI run printed the guide with CR LF where the TypeScript, whose guide is a template literal, prints LF (all 5 Windows cases differ against that binary, in stdout; the smoke lines look for a part of the text and passed). .gitattributes now keeps rs/ at LF, and the binary built in a clone made with core.autocrlf=true passes them. On a Windows console it is handed back: no console was ever compared, and Rust's standard library counts a Git Bash window as a terminal, which the runtime may not. The machine states under `search: machine states that go back` send it back too (a variable named for the runtime, a bunfig.toml, a .env file with the letters that matter, a package directory bun cannot load from); 3 cases and an unmarked one."
 
 # ─────────────── Situations a ported command hands back ───────────────
 
@@ -193,7 +297,7 @@ name = "search: machine states that go back"
 status = "partial"
 ts = "src/auth.ts:15 autoLoadEnv"
 rs = "rs/src/runtime.rs; rs/src/time.rs; rs/src/main.rs machine, loadable"
-note = "Handed back. (1) Any variable in the environment whose name begins with BUN_, NODE_, MIMALLOC_ or ICU_, whatever its value, except BUN_INSTALL: the runtime and the libraries inside it read these for themselves (NODE_DEBUG prints a warning, BUN_JSC_* and MIMALLOC_VERBOSE report on stderr, BUN_RUNTIME_TRANSPILER_CACHE_PATH leaves files behind, NODE_ENV and BUN_ENV choose the .env files, BUN_OPTIONS and NODE_OPTIONS add options), and none of it is imitated. Worth knowing: this includes NODE_EXTRA_CA_CERTS and NODE_TLS_REJECT_UNAUTHORIZED, which machines behind a company proxy often have set, and NODE_PATH; with them every search goes back although the output would be the same (compared for 50 such names by hand, not kept as cases). BUN_INSTALL, which bun's installer puts into the shell's profile, is compared and answered natively, and so is what `bun run` and `npm run` add (NODE, npm_*). 15 cases. (2) A .env* file in the current directory, or .env.local/.env in the package directory, in which the letters TZ, BUN, NODE or ICU appear anywhere, or which is not a plain file (bun and src/auth.ts load those files, and TZ changes the printed time; files without those letters are ignored, ONENOTE_CLIENT_ID and the like included). 10 cases. (3) A bunfig.toml in the directory, the home directory or XDG_CONFIG_HOME. 4 cases. (4) No HOME (no case: the runner always sets one). (5) A TZ that is a rule, a path, lower-case or empty (the runtime reads those its own way). 14 cases. (6) A zone and time for which the two time zone databases differ: see the entry on the time of the last sync; this one is the common case in Western Canada, Cuba and Morocco. 25 cases. (7) An index last written in the last millisecond of a second: the runtime turns the file's time into milliseconds in floating point and bun 1.4.0 shows the next second from 122 ns before it; Rust leaves the whole last millisecond to it, one index in a thousand. 3 cases. (8) A package directory with `?` or a backslash in its path, or reached through a link from one: bun cannot load a program from there and the TypeScript ends with `Module not found`. 4 cases, which cannot be marked (the --handback check gives every case a stand-in directory). For the system's own time zone see its entry. ONENOTE_CACHE_DIR is not read by Rust at all: with an index that has pages the TypeScript never looks at the cache directory either (a case)."
+note = "Handed back. (1) Any variable in the environment whose name begins with BUN_, NODE_, MIMALLOC_ or ICU_, whatever its value, except BUN_INSTALL: the runtime and the libraries inside it read these for themselves (NODE_DEBUG prints a warning, BUN_JSC_* and MIMALLOC_VERBOSE report on stderr, BUN_RUNTIME_TRANSPILER_CACHE_PATH leaves files behind, NODE_ENV and BUN_ENV choose the .env files, BUN_OPTIONS and NODE_OPTIONS add options), and none of it is imitated. Worth knowing: this includes NODE_EXTRA_CA_CERTS and NODE_TLS_REJECT_UNAUTHORIZED, which machines behind a company proxy often have set, and NODE_PATH; with them every search goes back although the output would be the same (compared for 50 such names by hand, not kept as cases). BUN_INSTALL, which bun's installer puts into the shell's profile, is compared and answered natively, and so is what `bun run` and `npm run` add (NODE, npm_*). 15 cases. (2) A .env* file in the current directory, or .env.local/.env in the package directory, in which the letters TZ, BUN, NODE or ICU appear anywhere, or which is not a plain file (bun and src/auth.ts load those files, and TZ changes the printed time; files without those letters are ignored, ONENOTE_CLIENT_ID and the like included). 10 cases. (3) A bunfig.toml in the directory, the home directory or XDG_CONFIG_HOME. 4 cases. (4) No HOME (no case: the runner always sets one). (5) A TZ that is a rule, a path, lower-case or empty (the runtime reads those its own way). 14 cases. (6) A zone and time for which the two time zone databases differ: see the entry on the time of the last sync; this one is the common case in Western Canada, Cuba and Morocco. 25 cases. (7) An index last written in the last millisecond of a second: the runtime turns the file's time into milliseconds in floating point and bun 1.4.0 shows the next second from 122 ns before it; Rust leaves the whole last millisecond to it, one index in a thousand. 3 cases. (8) A package directory with `?` or a backslash in its path, or reached through a link from one: bun cannot load a program from there and the TypeScript ends with `Module not found`. 4 cases, which cannot be marked (the --handback check gives every case a stand-in directory). For the system's own time zone see its entry. On Windows the names of variables are the same in any case, so there `node_debug` is NODE_DEBUG (a case). ONENOTE_CACHE_DIR is not read by Rust at all: with an index that has pages the TypeScript never looks at the cache directory either (a case)."
 
 [[feature]]
 name = "search --online"

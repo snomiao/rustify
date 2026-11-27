@@ -9,9 +9,9 @@ full-text index, MSAL login and an ink terminal UI for `sync`.
 
 ## State
 
-- Native: `onenote search <query>` from the local index, on Linux, and
-  `onenote auth setup` on every platform. Everything else is handed to
-  `src/index.ts` before anything is printed.
+- Native: `onenote search <query>` from the local index, on Linux and
+  macOS, and `onenote auth setup` on every platform. Everything else is
+  handed to `src/index.ts` before anything is printed.
 - Proof: 562 parity cases, all the same on both sides, plain and on a
   pseudo-terminal (colours and clickable titles); 371 answered by the binary,
   191 handed back on purpose. A unit test starts bun under each of the 598
@@ -23,13 +23,27 @@ full-text index, MSAL login and an ink terminal UI for `sync`.
   million comparisons). It found four differences, all now handed back: the
   time zone data, runtime debugging variables, an index written in the last
   millisecond of a second, a package path bun cannot load.
-- Ledger: 55 features, 6 verified, 3 partial, 46 missing.
+- Since the platform rollout the parity job runs on Linux x64, macOS arm64
+  and Windows x64: 573 cases on Linux, 572 on macOS (382 and 389 answered by
+  the binary), and on Windows every search handed back as marked, with the
+  zone comparison run against the runtime on Linux and on the Mac.
+- Open: the macOS terminal run failed once in CI with the binary's output
+  empty in one case (`search tags: #star`), where the plain run was the same;
+  a re-run passed every case. The cause is not known, and a Mac did not
+  reproduce it. A second intermittent difference there, a doubled carriage
+  return in the TypeScript's own terminal output, is folded by one normalize
+  rule (CR CR LF as CR LF) for the terminal run only.
+- Ledger: 57 features, 6 verified, 3 partial, 48 missing.
 - One search measured by hand: 142 ms in TypeScript, 7 ms in Rust.
 
 ## Where the search still goes to the JavaScript
 
-- macOS and Windows: what bun's `toLocaleString()` and SQLite do there could
-  not be tried from Linux, so the search is not even compiled for them.
+- Windows: the search is not compiled there; every search goes back.
+- macOS, where bun uses the system's SQLite and ICU: an index without its
+  `-wal` file (macOS's SQLite cannot open it read-only, so the TypeScript
+  syncs), zone data of an edition that was not compared (read from where
+  `/var/db/timezone/icutz` leads), and the zone names `CST6CDT`, `EST5EDT`,
+  `MST7MDT` and `PST8PDT`, which the macOS ICU does not know.
 - The first search on a machine (no index yet: the TypeScript starts a sync),
   `--online`, and any query SQLite rejects.
 - Time zones where the binary's zone data (tzdb 2026f) and bun 1.4.0's (ICU

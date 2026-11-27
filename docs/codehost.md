@@ -16,15 +16,19 @@ page, its workers and the signaling Worker are TypeScript too and stay so.
   178 missing. Written by four readers who read every tracked file, checked
   by two critics who enumerated commands, options, variables, files, routes,
   messages and test titles mechanically, then updated by the first port.
-- Rust: snomiao/codehost PR #10. Native on Linux: `open --print`, `init`, the
+- Rust: snomiao/codehost PR #10. Native on Linux and macOS: `open --print`, `init`, the
   room-token check of `serve`, `dev` and `expose`, and `dev` registering with
   a running host daemon, answered in 11 to 17 ms against 177 to 259 ms. 440
   parity cases (300 answered by the binary, 140 handed back) on pipes and on
   a terminal, plus 52,358 helper answers and 20,000 command lines compared
   with the TypeScript. An independent verifier found four differences (project
   files bun warns about, `.env` variables that reach git, git output over
-  1 MiB); all are handed back now.
-- Still the JavaScript: everything else, everything on macOS and Windows, and
+  1 MiB); all are handed back now. The parity job runs on Linux x64, macOS
+  arm64 and Windows x64 (442 cases; on Windows all handed back as marked).
+  Running the cases on the Mac found that the binary started a `git` the
+  TypeScript cannot (a script without `#!`, or one naming a missing
+  interpreter); the binary now finds and checks `git` the way bun does.
+- Still the JavaScript: everything else, everything on Windows, and
   any project with its own `.env` in the current directory (bun loads it and
   git inherits it), so many users see no speed-up yet.
 
