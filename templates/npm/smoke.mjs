@@ -35,6 +35,10 @@
 //
 // Installs go to a temp directory. Your real global installs are not touched.
 //
+// A command under test that has not ended after 300 s (or
+// RUSTIFY_SMOKE_COMMAND_TIMEOUT_MS) is stopped and fails its check; the
+// probes of bun and node get 60 s.
+//
 // When npm cannot install the package because the install script of one of
 // its dependencies fails on this platform, the test installs that dependency
 // alone. If that fails too, the failure is not the release's doing: it is
@@ -154,7 +158,11 @@ const bad = (message) => {
   failures++;
   console.log(`  FAIL  ${message}`);
 };
-const has = (tool) => spawnSync(tool, ["--version"], { stdio: "ignore", shell: isWindows }).status === 0;
+// No probe or command under test may stall the run: a runtime that hangs
+// (bun on Windows does with a TEMP it cannot use) is stopped and reported.
+const PROBE_MS = 60_000;
+const COMMAND_MS = Number(process.env.RUSTIFY_SMOKE_COMMAND_TIMEOUT_MS) || 300_000;
+const has = (tool) => spawnSync(tool, ["--version"], { stdio: "ignore", shell: isWindows, timeout: PROBE_MS }).status === 0;
 const sh = (tool, toolArgs, env) =>
   spawnSync(tool, toolArgs, { encoding: "utf8", env: { ...process.env, ...env }, shell: isWindows });
 
@@ -209,10 +217,16 @@ function environment(userHome, { realHome = false, trace = false } = {}) {
 // get that directory first in PATH: the runtime the shim would have chosen.
 function findRuntimes() {
   const probe = environment(makeHome("probe"));
-  const starts = (tool, env) => spawnSync(tool, ["--version"], { stdio: "ignore", shell: isWindows, env }).status === 0;
+  const starts = (tool, env) => {
+    const probe = spawnSync(tool, ["--version"], { stdio: "ignore", shell: isWindows, env, timeout: PROBE_MS });
+    if (probe.error && probe.error.code === "ETIMEDOUT") {
+      console.log(`  note  \`${tool} --version\` did not end within ${PROBE_MS / 1000} s with the commands' environment; the commands under test are likely to hang the same way`);
+    }
+    return probe.status === 0;
+  };
   for (const tool of ["bun", "node"]) {
     if (!starts(tool, process.env) || starts(tool, probe)) continue;
-    const asked = spawnSync(tool, ["-p", "process.execPath"], { encoding: "utf8", shell: isWindows });
+    const asked = spawnSync(tool, ["-p", "process.execPath"], { encoding: "utf8", shell: isWindows, timeout: PROBE_MS });
     const executable = asked.status === 0 ? String(asked.stdout).trim() : "";
     const dir = executable && path.isAbsolute(executable) ? path.dirname(executable) : "";
     if (dir && starts(tool, withPath(probe, [dir]))) {
@@ -229,10 +243,12 @@ function findRuntimes() {
 
 function runOnce(bin, runArgs, env) {
   const started = process.hrtime.bigint();
-  const result = spawnSync(isWindows ? `"${bin}"` : bin, runArgs, { encoding: "utf8", shell: isWindows, env });
+  const result = spawnSync(isWindows ? `"${bin}"` : bin, runArgs, { encoding: "utf8", shell: isWindows, env, timeout: COMMAND_MS, killSignal: "SIGKILL" });
   const ms = Number(process.hrtime.bigint() - started) / 1e6;
   const [stdout, stderr] = [result.stdout || "", result.stderr || ""];
-  return { ms, code: result.status, stdout, stderr, text: `${stdout}${stderr}`, error: result.error };
+  const timedOut = Boolean(result.error && result.error.code === "ETIMEDOUT");
+  const note = timedOut ? `\n(stopped: it did not end within ${COMMAND_MS / 1000} s)` : "";
+  return { ms, code: timedOut ? "timeout" : result.status, stdout, stderr: stderr + note, text: `${stdout}${stderr}${note}`, error: result.error };
 }
 
 // The binary the platform package holds for the command `name`, or null.
