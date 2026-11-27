@@ -10,8 +10,9 @@
 # How the two fit together. The Rust binary is meant to be the installed
 # `dede`. On Linux and macOS it answers every command of dede.ts itself and
 # hands an invocation back to dede.ts only where it does not imitate the
-# situation exactly (the `missing` and `partial` entries below say which);
-# on Windows it hands everything back. It goes back before anything has been
+# situation exactly (the `missing` and `partial` entries below say which;
+# on macOS also a `get` that prints into a pipe or a socket); on Windows it
+# hands everything back. It goes back before anything has been
 # printed or changed: commands that only read collect their output and print
 # it at the end, and enc, dec and setup first read everything they are going
 # to read and foresee what they will make of it (the pre-read: rs/src/cli.rs
@@ -34,49 +35,87 @@
 # come within a third of where bun's scanner gives up or half of where
 # bun's upsert does (entry "values beyond bun's regular expressions").
 #
-# Proofs. All were run and seen passing on 2026-11-27 on Linux x64 with bun
-# 1.4.0, git 2.47.3 and node 20.19.2, against the branch at 0e8b3f9, once with
-# the glibc release binary and once with the static musl binary the pipeline
-# ships. bun 1.4.0 is what this machine has: the repository's .bun-version
-# pins 1.4.2, and the pipeline's parity job installs bun with
-# oven-sh/setup-bun@v2 without a version. Everything read off bun here (its
-# .env syntax, the colour rule, hex and base64 leniency, YAML and globs, the
-# limits of its regular expressions, how it writes into a pipe) is proven for
-# 1.4.0 only.
+# Proofs. All were run and seen passing on 2026-11-27, against the branch at
+# 00e176d, through rs/parity/proof.sh (the parity cases split into lanes run
+# side by side, each TypeScript against the binary and then the hand-back
+# check, beside the scripts below), on three systems, each with the bun it
+# has, with 1.4.2 (what .bun-version pins and the parity job installs,
+# through rustify's bun-pin.mjs) and with 1.4.5 (the latest, which the
+# install test takes):
+# - Linux x64: bun 1.4.0, 1.4.2 and 1.4.5, git 2.47.3, node 20.19.2, as root;
+#   the glibc release binary with each, and with bun 1.4.2 also the static
+#   musl binary the pipeline ships.
+# - macOS 27.0.1 arm64: bun 1.4.4, 1.4.2 and 1.4.5, Apple Git 2.54.0
+#   (Apple Git-157), python3 3.9.6; `node` there is bun 1.4.4 under node's
+#   name; a binary built there; a user without sudo.
+# - Windows 11 x64, in Git Bash: bun 1.4.2 and 1.4.5, Git for Windows
+#   2.50.0, node 24.8.0; a binary built there (MSVC), the repository cloned
+#   with core.autocrlf=true (.gitattributes keeps every file LF).
+# rs/vectors.gen.mjs --check passed with every one of these buns, so what
+# was read off bun 1.4.0 (hex and base64 leniency, scan, upsert and remove,
+# node:path) is what each of them does; the parity cases and scripts hold
+# the rest (its .env syntax, the colour rule, YAML and globs, the limits of
+# its regular expressions, how it writes into a pipe) for each.
 # - rs/parity.json (written by rs/parity.gen.mjs, with rs/parity.more.mjs, the
 #   285 cases of a first independent verifier, and rs/parity.recheck.mjs, the
-#   63 of a second check): 1,176 cases through rustify's parity runner,
+#   63 of a second check): 1,180 cases through rustify's parity runner,
 #   TypeScript against the binary. Compared: stdout, stderr, the exit code,
 #   the `after` probes (files and modes, the .enc read back with
 #   @dotenvx/primitives, the sync record checked against the files, commits)
 #   and, in every case the binary answers, the list of git calls it made, in
 #   order, noted by a git placed in front of git. No normalisation rule is
-#   used.
-# - the same cases with `--handback`: 995 answered by the binary, 181
-#   handed back, each as its case says. A `verified` below rests only on
-#   cases the binary answered.
-# - rs/cross-compat.sh: the two implementations taking turns on the same
-#   files (14 checks), dotenvx 2.31.1 reading what the binary encrypted and
-#   the binary reading what dotenvx encrypted.
-# - rs/tty-compat.py: 53 scenes on a pseudo-terminal, under several TERM,
-#   COLORTERM, CI, NO_COLOR and FORCE_COLOR values; a run with a stand-in
-#   package checks that each is handed back, or answered, as it says.
-# - rs/pipe-compat.py: 18 scenes of `dede get` into a pipe or a socket that
-#   is read only once the command has exited (empty, partly filled, full,
-#   larger, left non-blocking, shared with standard error), with the same
-#   stand-in check.
-# - rs/perm-compat.sh: 24 scenes where the file system refuses something
-#   (run as nobody, or in CI as the runner's user with sudo making what
-#   belongs to root), with the same stand-in check.
+#   used. The `get` cases print into regular files (the runner's "capture":
+#   "files"), where both implementations write a value whole on every
+#   system and every byte is compared; four keep the runner's pipes (entry
+#   "get … into a pipe or a socket"). TypeScript against TypeScript the
+#   cases are the same too: on Linux with bun 1.4.2 (1,180), on macOS with
+#   1.4.4 (1,180), on Windows with 1.4.2 (the 1,100 that run there).
+# - the same cases with `--handback`, as the cases say for each system:
+#   Linux 999 answered by the binary, 181 handed back; macOS 997 and 183
+#   (two cases of `get` printing a value into a pipe go back there); Windows
+#   all 1,100 that run handed back, 80 skipped there because they cannot
+#   mean the same (65 with a symbolic link, which Git Bash's ln -s copies;
+#   2 with a file name Windows does not keep; 11 with a PATH without git
+#   made of links; 2 with a umask). A `verified` below rests only on cases
+#   the binary answered, on Linux and macOS.
+# - rs/cross-compat.sh (Linux, macOS): the two implementations taking turns
+#   on the same files (14 checks), dotenvx 2.31.1 reading what the binary
+#   encrypted and the binary reading what dotenvx encrypted (with
+#   DOTENVX_NO_NATIVE=true: dotenvx 2.31 otherwise keeps the keys it makes in
+#   the system's key store, the macOS Keychain among them).
+# - rs/tty-compat.py (Linux, macOS): 53 scenes on a pseudo-terminal, under
+#   several TERM, COLORTERM, CI, NO_COLOR and FORCE_COLOR values; a run with
+#   a stand-in package checks that each is handed back, or answered, as it
+#   says (on macOS the scene of get into a pipe goes back).
+# - rs/pipe-compat.py (Linux, macOS): 18 scenes of `dede get` into a pipe or
+#   a socket that is read only once the command has exited (empty, partly
+#   filled, full, larger, left non-blocking, shared with standard error),
+#   with the same stand-in check; on macOS the 17 that can be made there
+#   (F_SETPIPE_SZ is Linux's), every one handed back.
+# - rs/perm-compat.sh (Linux, macOS): 24 scenes where the file system
+#   refuses something, with the same stand-in check: on Linux as root, run
+#   as nobody; on the Mac, without sudo, the 19 that need only the user's
+#   own file or directory without the permission (where the others make it
+#   root's), the 5 that need a file of another user not run. In CI it runs
+#   all 24 on Linux and macOS as the runner's user, with sudo making what
+#   belongs to root; that has not been seen on macOS yet.
 # - `cargo test` in rs/: scan, upsert and remove on 340 dotenv sources, keys
 #   and ciphertexts, node:path, UTF-8, hex and base64 decoding, globs, dates,
 #   all against values recorded from bun and @dotenvx/primitives
 #   (rs/vectors.gen.mjs writes rs/src/testdata/), the measured limits of
 #   bun's regular expressions, and the hooks directory as git names it,
 #   asked of git itself on 25 layouts of links, worktrees and .git files.
+#   28 tests on Linux and macOS, the 27 that are compiled on Windows.
+# - the project's own tests (dede.test.ts, `bun --no-env-file test`), with a
+#   throwaway HOME: 105 pass on Linux (bun 1.4.0, 1.4.2, 1.4.5) and macOS
+#   (1.4.4, 1.4.2, 1.4.5); on Windows 103 pass with 1.4.2 and 1.4.5, the two
+#   about POSIX modes skipping themselves there.
 #
-# Not covered by any of it, by construction: Windows and macOS (the parity
-# job runs on Linux; see their entries), a disk that fails between two
+# Not covered by any of it, by construction: linux-arm64 and darwin-x64,
+# where the binary answers as on Linux x64 and macOS arm64 but no case runs,
+# and win32-arm64, where it hands everything back as on Windows x64 (the
+# parity job runs on linux-x64, darwin-arm64 and win32-x64; the install test
+# runs the three smoke lines on all six); a disk that fails between two
 # writes, output into a closed pipe, and anything about timing. For a pipe
 # whose reader is slow the outcome under bun depends on what the pipe takes
 # at the moment of each write: `dede get` is handed back unless the room is
@@ -122,7 +161,7 @@ name = "get NAME [file…]"
 status = "verified"
 ts = "dede.ts:613 get; dede.ts:1044 dispatch"
 rs = "rs/src/dede.rs get; rs/src/cli.rs"
-proof = "rs/parity.json cases `get: …` (166 answered by the binary); rs/cross-compat.sh; rs/tty-compat.py (the newline after the value on a terminal); rs/pipe-compat.py (into pipes and sockets: 9 of 18 scenes answered by the binary)"
+proof = "rs/parity.json cases `get: …` (169 answered by the binary on Linux, 167 on macOS; into regular files but for four); rs/cross-compat.sh; rs/tty-compat.py (the newline after the value on a terminal); rs/pipe-compat.py (into pipes and sockets: on Linux 9 of 18 scenes answered by the binary, on macOS none)"
 note = "Raw value from the .enc, last assignment wins, several files, every refusal with its exit code. About 9 ms against 180 ms under bun on the machine it was measured on. A NAME that every JavaScript object has (constructor, toString, …) goes back: the TypeScript ends in an uncaught TypeError there. Printing into a pipe or a socket is native only where the whole value certainly fits; the next entry is the rest."
 
 [[feature]]
@@ -130,7 +169,7 @@ name = "get of a value into a pipe or a socket without certain room for it"
 status = "missing"
 ts = "dede.ts:637 process.stdout.write; dede.ts:1084 process.exit"
 rs = "rs/src/out.rs stdout_takes; rs/src/dede.rs get"
-note = "The TypeScript prints the value with process.stdout.write and then calls process.exit(). Under bun that write does not wait for a pipe or a socket: what there is no room for at that moment is lost (measured on bun 1.4.0: `dede get BIG | slow-reader` gets 65,536 bytes of a value of 70,000; into a pipe already holding 1,000 bytes, 61,808; into a full one, nothing; `bun dede.ts get BIG | wc -c` gave 65,536 in one run and 98,198 in another). This is a TypeScript defect, copied rather than fixed. At 2c2a075 the binary printed the whole value. Now it answers into a file, a terminal or /dev/null, and on Linux into a pipe with room for the value after what is waiting in it and what this run prints there first (F_GETPIPE_SZ and FIONREAD, counted in whole pages, one more for a page partly read and one per earlier write), or into a Unix stream socket with nothing waiting and at most 32 KiB to take (half its send buffer less 4 KiB, if that is less). Everything else is handed back before anything is printed: a larger value, a socket of another kind, a socket standard error shares after a warning, and on macOS any pipe or socket. In practice values up to 64 KiB into `| cmd` or `$(dede get …)`, and up to 32 KiB into a pipe node or bun gives a child (a socket), stay native. rs/pipe-compat.py: 18 scenes, 9 handed back."
+note = "The TypeScript prints the value with process.stdout.write and then calls process.exit(). Under bun that write does not wait for a pipe or a socket: what there is no room for at that moment is lost (measured on bun 1.4.0: `dede get BIG | slow-reader` gets 65,536 bytes of a value of 70,000; into a pipe already holding 1,000 bytes, 61,808; into a full one, nothing; `bun dede.ts get BIG | wc -c` gave 65,536 in one run and 98,198 in another). This is a TypeScript defect, copied rather than fixed. At 2c2a075 the binary printed the whole value. Now it answers into a file, a terminal or /dev/null, and on Linux into a pipe with room for the value after what is waiting in it and what this run prints there first (F_GETPIPE_SZ and FIONREAD, counted in whole pages, one more for a page partly read and one per earlier write), or into a Unix stream socket with nothing waiting and at most 32 KiB to take (half its send buffer less 4 KiB, if that is less). Everything else is handed back before anything is printed: a larger value, a socket of another kind, a socket standard error shares after a warning, and on macOS any pipe or socket with a value to print. In practice values up to 64 KiB into `| cmd` or `$(dede get …)`, and up to 32 KiB into a pipe node or bun gives a child (a socket), stay native on Linux. macOS: bun loses the same way there (macOS 27, bun 1.4.4: a pipe read after the exit gets 65,536 bytes of a larger value, a socket 8,192; 64,536 after 1,000 bytes already waiting), and the binary does not ask macOS for the room. What could be asked was measured on that Mac and is for the owner to weigh: fstat of a pipe's writing end gives the bytes waiting (st_size) and the buffer's size (st_blksize, 16,384 growing to 65,536), FIONREAD there gives 0, and a socket tells neither (SO_SNDBUF stays 8,192, SO_NWRITE 0). rs/pipe-compat.py: 18 scenes on Linux, 9 handed back; 17 on macOS, all handed back. Since the binary goes back after it has read the files, and git where get asks it (`git ls-files` of a plaintext beside the .enc), such a get on macOS asks git twice. The parity cases of get print into regular files, so that they hold on every system; four keep the runner's pipes, the two with a value marked handed back on darwin."
 
 [[feature]]
 name = "status [--quiet] [file…]"
@@ -372,13 +411,14 @@ note = "Handed back before anything happens: an argument that is not UTF-8, a cu
 
 [[feature]]
 name = "macOS"
-status = "ported"
+status = "verified"
 ts = "dede.ts"
 rs = "rs/src"
-note = "On macOS the binary answers every command natively, exactly as on Linux (rs/src/cli.rs platform_is_proven is cfg!(unix)), and no case has ever run there: the parity job runs on Linux, the cases need GNU stat and date, and the install test runs only the usage and two refusals of `get`. It type-checks for aarch64-apple-darwin. One difference from Linux: `dede get` into a pipe or a socket is handed back there whatever its size, since the room in a pipe is not asked of macOS. Its file system (case-insensitive names, other errors), its git (Apple's, with its own system configuration) and bun there are unproven. Under parity/README.md a command moves to Rust when a test proves it; whether macOS answers natively before such a test exists, or hands back as Windows does, is for the owner to decide before a release."
+proof = "rs/parity/proof.sh on macOS 27 arm64 with bun 1.4.4, 1.4.2 and 1.4.5 (the parity job runs it on darwin-arm64): rs/parity.json (997 answered by the binary, 183 handed back, as the cases say), rs/cross-compat.sh, rs/tty-compat.py, rs/pipe-compat.py, rs/perm-compat.sh (19 of 24 scenes, without sudo), cargo test"
+note = "On macOS the binary answers every command natively, as on Linux (rs/src/cli.rs platform_is_proven is cfg!(unix)), and hands back the same situations, and one more: a `get` that prints into a pipe or a socket (entry `get … into a pipe or a socket`). On the first runs there every case and scene behaved the same, apart from that get (93 cases went back where they said native, 6 of them asking git twice; the get cases now print into files) and apart from the proofs' own tools: GNU stat, sha256sum and sed -i in the cases had been replaced beforehand (rs/parity/files.mjs, sed -i.bak), and the runs showed node -e arguments read differently where node is bun (8 key-tree cases could not be set up), node:path's vectors taken against /tmp, which is /private/tmp there, and dotenvx trying to keep a throwaway key in the Keychain (it failed; cross-compat.sh now sets DOTENVX_NO_NATIVE=true). Apple's git, the case-insensitive file system and BSD file semantics showed no difference in these cases; no case was written for case-insensitive names in particular, and every case runs git with GIT_CONFIG_NOSYSTEM=1, so Apple's system configuration (which setup's pre-read looks for in Apple's places) is not exercised. Not run on a Mac: the 5 perm-compat scenes that need a file of another user (CI runs them with sudo, not yet seen), and darwin-x64, where the same code answers natively without a proof of its own."
 
 [[feature]]
 name = "Windows"
 status = "missing"
 ts = "dede.ts:58 WIN; dede.ts:277 rel"
-note = "Every invocation is handed back on Windows (rs/src/cli.rs platform_is_proven): its path rules, the absence of mode bits and its symlinks are not ported, and no case has run there. The crate type-checks for x86_64-pc-windows-msvc."
+note = "Every invocation is handed back on Windows (rs/src/cli.rs platform_is_proven): its path rules, the absence of mode bits and its symlinks are not ported. The parity job runs rs/parity/proof.sh on win32-x64: every case is marked handed back on win32, and with bun 1.4.2 and 1.4.5 on Windows 11 x64 the 1,100 that run reach dede.ts through the binary and behave as dede.ts started directly does; 80 are skipped there as unable to mean the same (65 with a symbolic link, which Git Bash's ln -s copies, or cannot make where there is nothing to copy; 2 with a file name Windows does not keep, a tab and a dot at the end, one of which crashed the parity runner; 11 that make a PATH without git out of links, which Git Bash makes copies without .exe; 2 with a umask). cargo test compiles and passes there (27 tests). cross-compat, tty-compat, pipe-compat and perm-compat are not run on Windows: they would compare dede.ts with itself, or need a pseudo-terminal, a pipe the binary looks at, or POSIX modes and owners. The install test's three smoke lines are marked [handback:win32]. The crate type-checks for x86_64-pc-windows-msvc and win32-arm64 has no case of its own."

@@ -270,6 +270,27 @@ test("a failing setup command is reported as broken, not as a pass", () => {
   }
 });
 
+test("a file of a case that this system cannot make is that case BROKEN, and the other cases still run", () => {
+  const dir = setup();
+  try {
+    // Longer than a file name may be on Linux, macOS and Windows.
+    const long = "n".repeat(300);
+    const r = run(dir, {
+      cases: [
+        { name: "unmakeable", args: ["echo"], files: { [`sub/${long}`]: "x" } },
+        { name: "plain", args: ["echo"], files: { "a.txt": "x" } },
+      ],
+    });
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    // Windows says ENOENT for a name that is too long.
+    assert.match(r.stdout, /BROKEN {2}unmakeable\n {6}the case's file "sub\/n+" could not be made here: (ENAMETOOLONG|ENOENT)\n/);
+    assert.match(r.stdout, /same {4}plain\n/);
+    assert.equal(r.stderr, "");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("<CWD> and <HOME> in a case stand for the directories of the run", () => {
   const dir = setup();
   try {
