@@ -215,29 +215,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      # The proof runs on the bun the project pins. setup-bun reads only
-      # package.json by itself (packageManager, then engines.bun), so a pin in
-      # .bun-version or .tool-versions is handed to it; a project that pins
-      # nothing there gets setup-bun as before. Steps run in the workspace,
-      # which is the project's checkout (rustify's scripts are in .rustify).
-      # (Scripts from an older scripts-ref have no bun-pin.mjs: then setup-bun
-      # decides, as it did there.)
-      - name: Find the bun the project pins
-        id: bun-pin
-        run: |
-          pin=.rustify/templates/parity/bun-pin.mjs
-          if [ -f "$pin" ]; then node "$pin" >> "$GITHUB_OUTPUT"; fi
       - uses: oven-sh/setup-bun@v2
-        if: steps.bun-pin.outputs.file == ''
-      - uses: oven-sh/setup-bun@v2
-        if: steps.bun-pin.outputs.file != ''
-        with:
-          bun-version-file: ${{ steps.bun-pin.outputs.file }}
-      # Prints `bun --version`; a pin to one exact version has to be it.
-      - name: bun version
-        run: |
-          pin=.rustify/templates/parity/bun-pin.mjs
-          if [ -f "$pin" ]; then node "$pin" --check; else bun --version; fi
       - uses: actions/download-artifact@v4
         with:
           name: native-linux-x64
@@ -353,9 +331,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      # Users run whatever bun they have, so this job takes setup-bun's
-      # default (the latest bun) and not the version the project pins for its
-      # parity tests. Nothing of the project is checked out here.
       - uses: oven-sh/setup-bun@v2
       - uses: actions/download-artifact@v4
         with:
