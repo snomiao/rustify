@@ -52,6 +52,8 @@ jobs:
         with:
           node-version: 24
       - run: node --test tests/unit/*.test.mjs
+      # The hand-back helper's own tests: `attempt` and the panic hook.
+      - run: cargo test --manifest-path tests/e2e/toy/Cargo.toml
 
   pipeline:
     uses: ./.github/workflows/rust-npm-build.yml
@@ -67,9 +69,10 @@ jobs:
       #
       # The marked lines ask who answered. `toy check` and `answer` are the
       # binary's own; `toy js` and `decline` go to the JavaScript; so does a
-      # panic, without a word, and with its report where the trace is on
-      # (a marked line switches it on). A panic after commit() ends the
-      # command with Rust's exit code 101.
+      # panic, also one in a worker thread, without a word, and with its
+      # report where the trace is on (a marked line switches it on). The
+      # JavaScript does not get the trace variable (`toy js trace`). A panic
+      # after commit() ends the command with Rust's exit code 101.
       #
       # `toy where` shows which variables point into the home directory the
       # test hands out: every one that is set, on every system. The JavaScript
@@ -83,7 +86,9 @@ jobs:
         [native] toy-alias answer => toy answers natively
         [native:linux,darwin,win32] toy answer => toy answers natively
         [handback] toy decline politely => js cli: decline politely
+        [handback] toy js trace => js cli: js unset
         toy panic quietly => js cli: panic quietly !> panicked
+        toy panic-thread => js cli: panic-thread !> panicked
         [handback] toy panic loudly => a bug in a ported command
         [101] toy panic-late => a bug after the first output !> js cli
         toy where rustify-smoke- HOME USERPROFILE APPDATA LOCALAPPDATA XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME => HOME:inside USERPROFILE:inside !> :outside

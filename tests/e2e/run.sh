@@ -171,12 +171,13 @@ printf '%s\n' \
   '  "devDependencies": { "typescript": "^5" },' \
   "  \"rustify\": { \"mode\": \"hybrid\", \"bins\": { \"toy\": \"toy\", \"plain\": \"toy-helper\" }, \"runtime\": \"$RUNTIME\" }" \
   '}' > "$WORK/hybrid/package.json"
-# The JavaScript prints its arguments. `which-runtime` and `homedir` are
-# answered with the runtime it runs on and the home directory it sees.
+# The JavaScript prints its arguments. `which-runtime`, `homedir` and `trace`
+# are answered with the runtime it runs on, the home directory it sees and
+# the value of RUSTIFY_HANDBACK_TRACE.
 printf '%s\n' \
   "#!/usr/bin/env $RUNTIME" \
   'import os from "node:os";' \
-  'const answers = { "which-runtime": typeof Bun === "undefined" ? "node" : "bun", homedir: os.homedir() };' \
+  'const answers = { "which-runtime": typeof Bun === "undefined" ? "node" : "bun", homedir: os.homedir(), trace: process.env.RUSTIFY_HANDBACK_TRACE ?? "unset" };' \
   'console.log("js cli:", process.argv.slice(2).map((arg) => (Object.hasOwn(answers, arg) ? answers[arg] : arg)).join(" "));' \
   > "$WORK/hybrid/dist/cli.js"
 chmod +x "$WORK/hybrid/dist/cli.js"
@@ -209,12 +210,16 @@ out="$("$TOY" decline politely 2>&1)"
 out="$("$TOY" panic quietly 2>&1)"
 [ "$out" = "js cli: panic quietly" ] && pass "a panic before anything was printed is handed back, and nothing else shows" \
   || die "toy panic printed: $out"
+out="$("$TOY" panic-thread 2>&1)"
+[ "$out" = "js cli: panic-thread" ] && pass "so is a panic in a worker thread the command started" \
+  || die "toy panic-thread printed: $out"
 set +e; out="$("$TOY" panic-late 2>&1)"; code=$?; set -e
 [[ "$code" = 101 && "$out" == "toy began to answer"* && "$out" == *"a bug after the first output"* && "$out" != *"js cli"* ]] \
   && pass "a panic after commit() is reported and ends the command (exit 101); the JavaScript is not started" \
   || die "toy panic-late exited $code and printed: $out"
-out="$(RUSTIFY_HANDBACK_TRACE=1 "$TOY" js traced 2>&1)"
-[ "$out" = "$TRACE"$'\n'"js cli: js traced" ] && pass "RUSTIFY_HANDBACK_TRACE=1: the hand-back says so on stderr, before the JavaScript starts" \
+out="$(RUSTIFY_HANDBACK_TRACE=1 "$TOY" js trace 2>&1)"
+[ "$out" = "$TRACE"$'\n'"js cli: js unset" ] \
+  && pass "RUSTIFY_HANDBACK_TRACE=1: the hand-back says so on stderr, before the JavaScript starts, which does not get the variable" \
   || die "traced hand-back printed: $out"
 out="$(RUSTIFY_HANDBACK_TRACE=1 "$TOY" check 2>&1)"
 [[ "$out" == "toy version="* && "$out" != *"$TRACE"* ]] && pass "and a native answer stays as it is" || die "traced native answer printed: $out"
@@ -282,15 +287,19 @@ XDG_CONFIG_HOME="$WORK/real-config" node "$SMOKE" --dist "$WORK/npm-dist-1.2.4" 
   | sed 's/^/  /' || die "smoke.mjs failed"
 
 echo "== smoke.mjs: who answered, in a package that still ships JavaScript"
-# --env wins over the home directory the test hands out.
-node "$SMOKE" --dist "$WORK/npm-dist-hybrid" --run "toy check" --expect "version=1.2.4" \
+# --env wins over the home directory the test hands out. The trace is on where
+# the test is started: only the marked lines may see it.
+RUSTIFY_HANDBACK_TRACE=1 node "$SMOKE" --dist "$WORK/npm-dist-hybrid" --run "toy check" --expect "version=1.2.4" \
   --env "XDG_CONFIG_HOME=$WORK/chosen-config" \
   --also "toy where chosen-config XDG_CONFIG_HOME HOME => XDG_CONFIG_HOME:inside HOME:outside" \
   --also "[native] toy check => version=1.2.4" \
   --also "[native] toy answer => toy answers natively" \
   --also "[handback] toy js handed back => js cli: js handed back" \
   --also "[handback] toy decline politely => js cli: decline politely" \
+  --also "toy where 1 RUSTIFY_HANDBACK_TRACE => RUSTIFY_HANDBACK_TRACE:unset" \
+  --also "[handback] toy js trace => js cli: js unset" \
   --also "toy panic quietly => js cli: panic quietly !> panicked" \
+  --also "toy panic-thread => js cli: panic-thread !> panicked" \
   --also "[handback] toy panic loudly => a bug in a ported command" \
   --also "[101] toy panic-late => a bug after the first output !> js cli" \
   --also "[native:$KEY] [handback:$FOREIGN] toy check => version=1.2.4" \
