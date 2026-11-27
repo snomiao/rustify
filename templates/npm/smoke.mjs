@@ -41,8 +41,10 @@
 // home directory (a version manager's shim) is asked, with the real one, where
 // it is, and that directory goes first in the commands' PATH. The installs
 // themselves run with the real environment. Not covered: variables that hold
-// credentials themselves, agents the environment points at (SSH_AUTH_SOCK),
-// the directory the test is started in, which stays the commands' working
+// credentials, or name files and directories that hold them
+// (GOOGLE_APPLICATION_CREDENTIALS, AWS_SHARED_CREDENTIALS_FILE, KUBECONFIG,
+// GNUPGHOME, …), agents the environment points at (SSH_AUTH_SOCK), the
+// directory the test is started in, which stays the commands' working
 // directory (bun reads a `.env` there), the system keychain, and Windows
 // programs that ask the system instead of the environment for their folders.
 //
@@ -50,11 +52,14 @@
 // line just like one the binary answers itself. For a line marked [native] or
 // [handback] the test sets RUSTIFY_HANDBACK_TRACE, which makes the hand-back
 // helper (templates/rust/js_fallback.rs, v5 and later) write one fixed line to
-// stderr before it starts the JavaScript. A binary with an older helper, or
-// with none, never writes that line, and its silence must not be read as a
-// native answer. So the test looks for the line's text in the installed
-// binary, and fails a marked line when it is not there. The line is taken out
-// of the output before the texts of the line are looked for.
+// stderr before it starts the JavaScript; the other lines run without that
+// variable, even when it is set where the test runs (--env can still set it).
+// A binary with an older helper, or with none, never writes that line, and its
+// silence must not be read as a native answer. So the test looks for the
+// line's text in the installed binary, and fails a marked line when it is not
+// there. A crate that no longer hands anything back may delete the helper;
+// its smoke lines then go without the markers. The line is taken out of the
+// output before the texts of the line are looked for.
 
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -163,9 +168,11 @@ const runtimeDirs = [];
 
 // The environment of a command under test: this process's, with the home
 // directory `userHome` in place of the real one (see the header), then --env,
-// then the switch that makes a hand-back visible.
+// then the switch that makes a hand-back visible. That switch is on for the
+// marked lines only: switched on where the test runs, it would also show the
+// panics a binary hands back without a word.
 function environment(userHome, { realHome = false, trace = false } = {}) {
-  let env = { ...process.env };
+  let env = withEnv(process.env, { [TRACE_ENV]: undefined });
   if (!realHome && !everyRealHome) {
     env = withEnv(env, homeVariables(userHome));
     if (runtimeDirs.length) env = withPath(env, runtimeDirs);
@@ -238,7 +245,8 @@ function cannotTell(packageDir, name) {
     } else if (!fs.readFileSync(file).includes(TRACE_LINE)) {
       why =
         `the binary behind \`${name}\` never says when it hands back: its hand-back helper is older than v5, ` +
-        "or it has none. Copy the current templates/rust/js_fallback.rs into the crate";
+        "or it has none. Copy the current templates/rust/js_fallback.rs into the crate; or, if the crate " +
+        "no longer hands anything back and has dropped the helper, take the marker off the line";
     }
     cannotTellWhy.set(key, why);
   }
