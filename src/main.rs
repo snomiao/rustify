@@ -315,6 +315,24 @@ impl Project {
             && self.rust.iter().any(|rust| is_under(path, rust) && is_under(tidy(rust), crate_dir))
     }
 
+    /// Whether a file that is not a script is still part of what the
+    /// TypeScript does: a shell script it runs, a template it writes out, data
+    /// it reads. Only under a `ts` directory other than the repository root,
+    /// where everything is the program's; at the root the same rule would
+    /// take in package.json, the README and the workflows. Nothing that
+    /// `ignore` or `keep_ts` holds, no Rust, nothing in the crate's own
+    /// directory, no `.d.ts`.
+    fn runs(&self, path: &str) -> bool {
+        let named = self.ts.iter().any(|ts| tidy(ts) != "." && is_under(path, ts));
+        named
+            && !SCRIPT_EXTENSIONS.contains(&extension(path))
+            && !path.ends_with(".d.ts")
+            && !self.ignore.iter().chain(self.keep_ts.keys()).any(|skip| is_under(path, skip))
+            && !self.is_rust(path)
+            && extension(path) != "rs"
+            && !self.crate_dir().is_some_and(|dir| is_under(path, dir))
+    }
+
     /// Whether a file belongs to the Rust port: a `.rs` file under a `rust`
     /// directory. Being listed under `rust` outranks an `ignore` entry that
     /// holds the directory (`ignore = ["rs"]` with `rust = ["rs/src"]`); an
@@ -558,7 +576,7 @@ fn changed_typescript(project: &Project, dir: &Path, commit: &str) -> Option<Vec
     Some(
         listed
             .split('\0')
-            .filter(|path| project.replaces(path) && !is_test_path(path))
+            .filter(|path| (project.replaces(path) || project.runs(path)) && !is_test_path(path))
             .map(String::from)
             .collect(),
     )
@@ -641,7 +659,7 @@ fn audit_ledger(s: &mut Section, project: &Project, dir: &Path, path: &Path) {
             }
             Some(changed) => s.todo(
                 format!(
-                    "{} TypeScript file(s) changed since the ledger was reconciled at `{commit}`: {}",
+                    "{} file(s) of the TypeScript changed since the ledger was reconciled at `{commit}`: {}",
                     changed.len(),
                     changed.iter().take(10).map(|p| format!("`{p}`")).collect::<Vec<_>>().join(", ")
                 ),
@@ -1757,6 +1775,35 @@ mod tests {
         let counted: Vec<String> = sources(&lib, |path| p.replaces(path)).into_iter().map(|f| f.path).collect();
         assert_eq!(counted, ["added.tsx", "untouched.ts"]);
         assert_eq!(changed_typescript(&p, &lib, &reconciled).unwrap(), ["added.tsx", "deleted.ts", "moved.ts"]);
+    }
+
+    #[test]
+    fn files_the_typescript_runs_count_as_changed_under_a_named_directory() {
+        let repo = Scratch::new();
+        repo.git(&["init", "--quiet"]);
+        for file in ["src/index.ts", "src/setup-repo.sh", "src/templates/config.yaml", "src/main.rs", "setup.sh", "README.md"] {
+            repo.write(file, "one\n");
+        }
+        repo.write("Cargo.toml", "[package]\nname = \"x\"\n");
+        let reconciled = repo.commit("the TypeScript");
+        for file in ["src/setup-repo.sh", "src/templates/config.yaml", "src/main.rs", "setup.sh", "README.md", "Cargo.toml"] {
+            repo.write(file, "two\n");
+        }
+        repo.commit("a script, a template, the Rust and the rest");
+
+        // A crate at the root shares src/ with the TypeScript: the shell
+        // script and the template count, the Rust and the root files do not.
+        let p = project("name = \"x\"\nmanifest = \"Cargo.toml\"\nts = [\"src\"]\nrust = [\"src\"]");
+        assert_eq!(changed_typescript(&p, &repo.dir, &reconciled).unwrap(), ["src/setup-repo.sh", "src/templates/config.yaml"]);
+
+        // At the repository root only scripts count, or every commit to the
+        // README or a workflow would ask for a new reconciliation.
+        let p = project("name = \"x\"\nts = [\".\"]");
+        assert!(changed_typescript(&p, &repo.dir, &reconciled).unwrap().is_empty());
+
+        // keep_ts and ignore leave non-scripts out as they do scripts.
+        let p = project("name = \"x\"\nts = [\"src\"]\nkeep_ts = { \"src/templates\" = \"page\" }\nignore = [\"src/setup-repo.sh\"]");
+        assert!(changed_typescript(&p, &repo.dir, &reconciled).unwrap().is_empty());
     }
 
     #[test]
