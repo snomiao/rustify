@@ -1,5 +1,8 @@
 # gchat-cli
 
+> **Set aside (2026-11-27)** by the owner: rarely used, so no more porting
+> work goes into it. What follows is the record of the port so far.
+
 The second project ported end to end. snomiao/gchat-cli PR #2, read at
 `4ced1d2`.
 
