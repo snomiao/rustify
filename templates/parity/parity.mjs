@@ -69,7 +69,9 @@
 //
 // `setup` and `after` lines are run by /bin/sh, or by the POSIX shell that
 // --shell or RUSTIFY_PARITY_SHELL names; on Windows by Git for Windows' bash
-// (see "Windows").
+// (see "Windows"). A --shell that names no shell stops every run;
+// RUSTIFY_PARITY_SHELL is looked at only when a case that runs has such lines.
+// A line whose shell cannot be started makes its case BROKEN.
 //
 // The paths of these directories are replaced by <CWD>, <HOME>, <ROOT> and
 // <REPO> before comparing (on Windows, a spelling other than the one the
@@ -415,20 +417,6 @@ function setVariable(env, name, value) {
 const impls = { ts: opts.ts ? command(opts.ts, "--ts") : null, rs: command(opts.rs, "--rs") };
 const MARKER = "__RUSTIFY_HANDED_BACK__";
 
-// The POSIX shell named for "setup" and "after" lines, if one is: --shell,
-// else RUSTIFY_PARITY_SHELL. Without one, node's /bin/sh runs them, and on
-// Windows the bash of Git for Windows (see posixShell).
-const namedShell = (() => {
-  const [where, value] = opts.shell !== undefined ? ["--shell", opts.shell] : ["RUSTIFY_PARITY_SHELL", process.env.RUSTIFY_PARITY_SHELL || null];
-  if (value === null) return null;
-  if (value === true || value === "") mistake(`${where} needs the path of a POSIX shell, such as /bin/bash or C:/Program Files/Git/usr/bin/bash.exe`);
-  const file = path.resolve(launchDir, String(value));
-  const found = [file, ...(isWindows ? [`${file}.exe`] : [])].find((name) => fs.statSync(name, { throwIfNoEntry: false })?.isFile());
-  if (!found) mistake(`${where}: there is no file ${value}; it takes the path of a POSIX shell, such as /bin/bash or C:/Program Files/Git/usr/bin/bash.exe`);
-  if (isWindows && isWslLauncher(found)) mistake(`${where}: ${found} starts WSL, which runs the lines in another operating system, with other programs and other paths; name Git for Windows' bash instead`);
-  return found;
-})();
-
 // Windows' own bash.exe, and the launchers WindowsApps holds for WSL's
 // distributions, start a Linux system, not a shell on this one.
 function isWslLauncher(file) {
@@ -512,6 +500,24 @@ const selected = spec.cases
   .map((testCase, index) => ({ testCase, index, plan: null }))
   .filter(({ testCase }) => typeof opts.filter !== "string" || testCase.name.includes(opts.filter));
 for (const entry of selected) entry.plan = planOf(entry.testCase);
+
+// The POSIX shell named for "setup" and "after" lines, if one is: --shell,
+// else RUSTIFY_PARITY_SHELL. Without one, node's /bin/sh runs them, and on
+// Windows the bash of Git for Windows (see posixShell). A mistake in --shell
+// stops every run, as one in any other option does. The variable is looked
+// at only when a case that runs here has lines: it may be set for a whole
+// machine, and a run without lines never needs it.
+const namedShell = (() => {
+  const hasLines = selected.some(({ testCase, plan }) => plan.skip === null && (testCase.setup?.length || testCase.after?.length));
+  const [where, value] = opts.shell !== undefined ? ["--shell", opts.shell] : ["RUSTIFY_PARITY_SHELL", (hasLines && process.env.RUSTIFY_PARITY_SHELL) || null];
+  if (value === null) return null;
+  if (value === true || value === "") mistake(`${where} needs the path of a POSIX shell, such as /bin/bash or C:/Program Files/Git/usr/bin/bash.exe`);
+  const file = path.resolve(launchDir, String(value));
+  const found = [file, ...(isWindows ? [`${file}.exe`] : [])].find((name) => fs.statSync(name, { throwIfNoEntry: false })?.isFile());
+  if (!found) mistake(`${where}: there is no file ${value}; it takes the path of a POSIX shell, such as /bin/bash or C:/Program Files/Git/usr/bin/bash.exe`);
+  if (isWindows && isWslLauncher(found)) mistake(`${where}: ${found} starts WSL, which runs the lines in another operating system, with other programs and other paths; name Git for Windows' bash instead`);
+  return found;
+})();
 
 // The terminal helper, looked for once: the interpreter to start it with, or
 // why a case that asks for a terminal cannot have one here.
@@ -898,8 +904,9 @@ function runIn(root, testCase, impl, plan, extraEnv) {
   const shell = (line) => runLine(here(line), cwd, lineEnv);
   for (const line of testCase.setup || []) {
     const result = shell(line);
-    // The shell could not be started (a timeout is reported as before, below).
-    if (result.error && result.error.code !== "ETIMEDOUT") return { broken: `setup \`${line}\` could not be run: ${result.error.message}` };
+    // The shell could not be started (no process: a timeout, or output past
+    // spawnSync's limit, is reported as before, below).
+    if (result.error && !result.pid) return { broken: `setup \`${line}\` could not be run: ${result.error.message}` };
     if (result.status !== 0) {
       return { broken: `setup \`${line}\` exited ${result.status}: ${result.stderr || result.stdout}` };
     }
@@ -980,6 +987,8 @@ function runIn(root, testCase, impl, plan, extraEnv) {
   if (terminals.length) observed.terminal = clean(onTerminal);
   for (const line of testCase.after || []) {
     const probe = shell(line);
+    // As for setup: otherwise both sides would show the same nothing.
+    if (probe.error && !probe.pid) return { broken: `after \`${line}\` could not be run: ${probe.error.message}` };
     observed[`after: ${line}`] = clean(`${probe.stdout}${probe.stderr}[exit ${probe.status}]`);
   }
   return { observed };

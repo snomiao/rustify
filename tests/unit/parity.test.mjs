@@ -1050,6 +1050,43 @@ test("a --shell that names no file, or WSL, stops the run before any case, with 
     assert.match(bad([], { ...process.env, RUSTIFY_PARITY_SHELL: "no/such/shell" }), /^parity: RUSTIFY_PARITY_SHELL: there is no file no\/such\/shell; /);
     const wsl = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "bash.exe");
     if (isWindows && fs.existsSync(wsl)) assert.match(bad(["--shell", wsl]), /^parity: --shell: .*bash\.exe starts WSL, which runs the lines in another operating system/i);
+
+    // The variable may be set for a whole machine: a run in which no case
+    // that runs has lines does not look at it. --shell is checked all the same.
+    const noLines = {
+      cases: [
+        { name: "no lines", args: ["echo", "x"] },
+        { name: "lines, skipped here", args: ["echo", "y"], after: ["echo hi"], skip: { [process.platform]: "not here" } },
+      ],
+    };
+    const lineless = run(dir, noLines, [], { ...process.env, RUSTIFY_PARITY_SHELL: "no/such/shell" });
+    assert.equal(lineless.status, 0, lineless.stdout + lineless.stderr);
+    assert.match(lineless.stdout, /all 1 case\(s\) behave the same/);
+    const flagged = run(dir, noLines, ["--shell", "no/such/shell"]);
+    assert.equal(flagged.status, 2, flagged.stdout + flagged.stderr);
+    assert.match(flagged.stderr, /^parity: --shell: there is no file no\/such\/shell; /);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a shell that cannot be started makes a case with setup or after lines broken, in one line", () => {
+  const dir = setup();
+  try {
+    // A file that is no program: not executable here, not an executable on Windows.
+    const shell = path.join(dir, isWindows ? "not-a-shell.exe" : "not-a-shell");
+    fs.writeFileSync(shell, "echo this is text\n", { mode: 0o644 });
+    const r = run(dir, {
+      cases: [
+        { name: "setup", args: ["echo", "x"], setup: ["true"] },
+        // Without setup lines, the after lines would otherwise compare the same nothing on both sides.
+        { name: "after only", args: ["echo", "x"], after: ["echo hi"] },
+        { name: "no lines", args: ["echo", "x"] },
+      ],
+    }, ["--shell", shell]);
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    // The reason is the runtime's own (node: spawnSync <path> EACCES; bun: EACCES: permission denied, posix_spawn '<path>').
+    assert.match(r.stdout, /^ {2}BROKEN {2}setup\n {6}setup `true` could not be run: .*\S\n {2}BROKEN {2}after only\n {6}after `echo hi` could not be run: .*\S\n {2}same {4}no lines\n2 of 3 case\(s\) differ\n$/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
