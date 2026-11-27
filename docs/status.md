@@ -6,20 +6,20 @@
 | slack-hub | 6 verified, 0 ported, 14 partial, 132 missing of 152 | JavaScript | port the missing features |
 | rechrome | 0 verified, 0 ported, 0 partial, 328 missing of 328 | JavaScript | reconcile the parity ledger |
 | otoji | started, not measured | JavaScript | write the parity ledger |
-| codehost | 0 verified, 0 ported, 0 partial, 192 missing of 192 | JavaScript | port the missing features |
+| codehost | 7 verified, 0 ported, 15 partial, 178 missing of 200 | JavaScript | port the missing features |
 | fbi-proxy | started, not measured | JavaScript | write the parity ledger |
-| onenote-cli | 6 verified, 0 ported, 3 partial, 46 missing of 55 | JavaScript | port the missing features |
-| dotenvdotenc | not started | JavaScript | write the parity ledger |
-| qqdocs | 20 verified, 2 ported, 2 partial, 27 missing of 51 | JavaScript | port the missing features |
-| winrpc | not started | nothing (not on npm) | write the parity ledger |
+| onenote-cli | 6 verified, 0 ported, 3 partial, 48 missing of 57 | JavaScript | port the missing features |
+| dotenvdotenc | 21 verified, 1 ported, 1 partial, 13 missing of 36 | JavaScript | port the missing features |
+| qqdocs | 20 verified, 1 ported, 2 partial, 28 missing of 51 | JavaScript | port the missing features |
+| winrpc | 0 verified, 0 ported, 0 partial, 37 missing of 37 | nothing (not on npm) | port the missing features |
 | chatwork-cli | not started | nothing (not on npm) | write the parity ledger |
 | genvx | 18 verified, 1 ported, 4 partial, 4 missing of 27 | JavaScript | port the missing features |
-| rustdesk.skill | not started | nothing (not on npm) | write the parity ledger |
-| wtx | not started | JavaScript | write the parity ledger |
-| gchat-cli | 12 verified, 1 ported, 1 partial, 2 missing of 16 | JavaScript | reconcile the parity ledger |
-| Comfy-AI | not started | JavaScript | write the parity ledger |
-| bunto | not started | JavaScript | write the parity ledger |
-| snocommit | not started | JavaScript | write the parity ledger |
+| rustdesk.skill | 0 verified, 0 ported, 0 partial, 26 missing of 26 | nothing (not on npm) | port the missing features |
+| wtx | 0 verified, 0 ported, 0 partial, 27 missing of 27 | JavaScript | port the missing features |
+| gchat-cli | 12 verified, 1 ported, 1 partial, 2 missing of 16 | JavaScript | port the missing features |
+| Comfy-AI | 0 verified, 0 ported, 0 partial, 22 missing of 22 | JavaScript | port the missing features |
+| bunto | 0 verified, 0 ported, 0 partial, 16 missing of 16 | JavaScript | port the missing features |
+| snocommit | 0 verified, 0 ported, 0 partial, 14 missing of 14 | JavaScript | port the missing features |
 
 ## agent-yes
 
@@ -80,7 +80,7 @@
 - `todo` no workflow uses the shared build pipeline (`snomiao/rustify/.github/workflows/rust-npm-build.yml`)
 - `todo` `package.json` has no `rustify.bins` (which npm command runs which cargo bin)
 - `info` crate `agent-yes` is not on crates.io (the name is free)
-- `info` npm has `agent-yes` 1.308.4
+- `info` npm has `agent-yes` 1.308.6
 - `warn` the newest release tag in this checkout is `v1.303.1-beta.794.1` — it is behind npm; fetch before trusting the code counts
 - `info` Cargo.toml says 1.303.1 and package.json says 1.303.1; at release the workflow stamps one version into the binary and the package
 - `todo` `bun i -g agent-yes` installs JavaScript, not the Rust binary (`agent-yes` → `dist/agent-yes.js`, `amp-yes` → `dist/amp-yes.js`, `auggie-yes` → `dist/auggie-yes.js`, … (21 commands))
@@ -438,9 +438,65 @@
 
 **Parity ledger**
 
-- `info` 192 features: 0 verified, 0 ported but unproven, 0 partial, 192 missing, 0 dropped
+- `info` 200 features: 7 verified, 0 ported but unproven, 15 partial, 178 missing, 0 dropped
+- `warn` `codehost (CLI entry point, run by bun)`: rs path `rs/src/main.rs` does not exist
+- `warn` `codehost (CLI entry point, run by bun)`: rs path `rs/src/js_fallback.rs` does not exist
+- `warn` `codehost (CLI entry point, run by bun)`: rs path `rs/src/runtime.rs` does not exist
+- `warn` `ch (second command name)`: rs path `rs/src/main.rs` does not exist
+- `warn` `option syntax accepted on every command (yargs parsing rules)`: rs path `rs/src/args.rs` does not exist
+- `warn` `room token policy and rejection messages`: proof `rs/parity.json` does not exist
+- `warn` `room token policy and rejection messages`: proof `rs/src/compare.rs` does not exist
+- `warn` `room token policy and rejection messages`: rs path `rs/src/token.rs` does not exist
+- `warn` `room token policy and rejection messages`: rs path `rs/src/js.rs` does not exist
+- `warn` `room token policy and rejection messages`: rs path `rs/src/commands/server.rs` does not exist
+- `warn` `codehost init [dir]`: proof `rs/parity.json` does not exist
+- `warn` `codehost init [dir]`: rs path `rs/src/commands/init.rs` does not exist
+- `warn` `codehost init [dir]`: rs path `rs/src/templates/config.yaml` does not exist
+- `warn` `codehost init [dir]`: rs path `rs/src/templates/setup.sh` does not exist
+- `warn` `codehost init [dir]`: rs path `rs/src/templates/setup.ps1` does not exist
+- `warn` `codehost serve [dir]`: rs path `rs/src/commands/server.rs` does not exist
+- `warn` `codehost dev [dir]`: rs path `rs/src/commands/server.rs` does not exist
+- `warn` `dev: register with the running host daemon (--standalone opts out)`: proof `rs/parity.json` does not exist
+- `warn` `dev: register with the running host daemon (--standalone opts out)`: rs path `rs/src/commands/server.rs` does not exist
+- `warn` `codehost expose <port>`: rs path `rs/src/commands/server.rs` does not exist
+- `warn` `codehost open [target]`: rs path `rs/src/commands/open.rs` does not exist
+- `warn` `deep-link paths printed by dev and open`: proof `rs/parity.json` does not exist
+- `warn` `deep-link paths printed by dev and open`: proof `rs/src/compare.rs` does not exist
+- `warn` `deep-link paths printed by dev and open`: rs path `rs/src/repo.rs` does not exist
+- `warn` `git URL to deep-link path (gitUrlToPath)`: proof `rs/src/compare.rs` does not exist
+- `warn` `git URL to deep-link path (gitUrlToPath)`: proof `rs/parity.json` does not exist
+- `warn` `git URL to deep-link path (gitUrlToPath)`: rs path `rs/src/repo.rs` does not exist
+- `warn` `~/.codehost/config.json`: rs path `rs/src/commands/open.rs` does not exist
+- `warn` `~/.codehost/daemon.json (host daemon presence)`: rs path `rs/src/commands/server.rs` does not exist
+- `warn` `~/.codehost/workspaces.json (registered workspaces)`: rs path `rs/src/commands/server.rs` does not exist
+- `warn` `repo identity from git (origin remote and branch, repo key)`: proof `rs/parity.json` does not exist
+- `warn` `repo identity from git (origin remote and branch, repo key)`: proof `rs/src/compare.rs` does not exist
+- `warn` `repo identity from git (origin remote and branch, repo key)`: rs path `rs/src/git.rs` does not exist
+- `warn` `repo identity from git (origin remote and branch, repo key)`: rs path `rs/src/repo.rs` does not exist
+- `warn` `?folder= path form (toPosixPath / fromPosixPath)`: rs path `rs/src/repo.rs` does not exist
+- `warn` `<root>/.codehost/config.yaml (workspace, allowlist, folderProvisioning)`: rs path `rs/src/templates/config.yaml` does not exist
+- `warn` `<root>/.codehost/config.yaml (workspace, allowlist, folderProvisioning)`: rs path `rs/src/commands/init.rs` does not exist
+- `warn` `<root>/.codehost/setup.sh (scaffolded provisioning hook)`: rs path `rs/src/templates/setup.sh` does not exist
+- `warn` `<root>/.codehost/setup.sh (scaffolded provisioning hook)`: rs path `rs/src/commands/init.rs` does not exist
+- `warn` `<root>/.codehost/setup.ps1 (scaffolded hook for Windows)`: rs path `rs/src/templates/setup.ps1` does not exist
+- `warn` `<root>/.codehost/setup.ps1 (scaffolded hook for Windows)`: rs path `rs/src/commands/init.rs` does not exist
+- `warn` `open --print (print the URL instead of opening the browser)`: proof `rs/parity.json` does not exist
+- `warn` `open --print (print the URL instead of opening the browser)`: proof `rs/src/compare.rs` does not exist
+- `warn` `open --print (print the URL instead of opening the browser)`: rs path `rs/src/commands/open.rs` does not exist
+- `warn` `open --print (print the URL instead of opening the browser)`: rs path `rs/src/repo.rs` does not exist
+- `warn` `open --print (print the URL instead of opening the browser)`: rs path `rs/src/git.rs` does not exist
+- `warn` `hand-back: package.json, tsconfig.json and jsconfig.json bun warns about`: rs path `rs/src/runtime.rs` does not exist
+- `warn` `hand-back: bun's .env files in the current directory`: rs path `rs/src/runtime.rs` does not exist
+- `warn` `hand-back: variables for the runtime (BUN_*, NODE_*, MIMALLOC_*, ICU_*, LD_*) and bunfig.toml`: rs path `rs/src/runtime.rs` does not exist
+- `warn` `hand-back: console.error in red (a terminal, FORCE_COLOR)`: rs path `rs/src/runtime.rs` does not exist
+- `warn` `hand-back: console.error in red (a terminal, FORCE_COLOR)`: rs path `rs/src/commands/open.rs` does not exist
+- `warn` `hand-back: console.error in red (a terminal, FORCE_COLOR)`: rs path `rs/src/commands/server.rs` does not exist
+- `warn` `hand-back: node-datachannel addon not where require finds it`: rs path `rs/src/runtime.rs` does not exist
+- `warn` `hand-back: git output over 1 MiB (bun's spawnSync limit)`: rs path `rs/src/git.rs` does not exist
+- `warn` `hand-back: everything on Windows`: rs path `rs/src/main.rs` does not exist
+- `warn` `hand-back: everything on Windows`: rs path `rs/src/js_fallback.rs` does not exist
 - `ok  ` ledger is current (reconciled at `cfba919`, no TypeScript changed since)
-- `todo` 192 feature(s) not fully ported
+- `todo` 193 feature(s) not fully ported
 - `todo` no Rust port exists yet
 
 **Delivery**
@@ -489,11 +545,13 @@
 
 **Parity ledger**
 
-- `info` 55 features: 6 verified, 0 ported but unproven, 3 partial, 46 missing, 0 dropped
-- `warn` `search <query> (local index, on Linux)`: proof `rs/parity.json` does not exist
-- `warn` `search <query> (local index, on Linux)`: rs path `rs/src/search.rs` does not exist
-- `warn` `search <query> (local index, on Linux)`: rs path `rs/src/main.rs` does not exist
-- `warn` `search on macOS and Windows`: rs path `rs/src/main.rs` does not exist
+- `info` 57 features: 6 verified, 0 ported but unproven, 3 partial, 48 missing, 0 dropped
+- `warn` `search <query> (local index, on Linux and macOS)`: proof `rs/parity.json` does not exist
+- `warn` `search <query> (local index, on Linux and macOS)`: rs path `rs/src/search.rs` does not exist
+- `warn` `search <query> (local index, on Linux and macOS)`: rs path `rs/src/main.rs` does not exist
+- `warn` `search on Windows`: rs path `rs/src/main.rs` does not exist
+- `warn` `search on macOS: an index without its -wal file`: rs path `rs/src/search.rs` does not exist
+- `warn` `search on macOS: zone data of an edition that was not compared`: rs path `rs/src/time.rs` does not exist
 - `warn` `search query language (#tag, tag:name, AND / OR / NOT, quotes)`: proof `rs/parity.json` does not exist
 - `warn` `search query language (#tag, tag:name, AND / OR / NOT, quotes)`: rs path `rs/src/query.rs` does not exist
 - `warn` `search query language (#tag, tag:name, AND / OR / NOT, quotes)`: rs path `rs/src/search.rs` does not exist
@@ -516,7 +574,7 @@
 - `warn` `search: machine states that go back`: rs path `rs/src/time.rs` does not exist
 - `warn` `search: machine states that go back`: rs path `rs/src/main.rs` does not exist
 - `ok  ` ledger is current (reconciled at `9af05e1`, no TypeScript changed since)
-- `todo` 49 feature(s) not fully ported
+- `todo` 51 feature(s) not fully ported
 - `todo` no Rust port exists yet
 
 **Delivery**
@@ -530,23 +588,134 @@
 
 **Checkout**
 
-- `info` `/code/snomiao/dotenvdotenc/tree/main` on `main` at `c566a04`
+- `info` `/code/snomiao/dotenvdotenc/tree/main` on `main` at `18f80ca`
 
 **Code**
 
-- `info` TypeScript/JS to replace: 1,047 lines in 1 files; its tests: 1,271 lines, about 94 cases
+- `info` TypeScript/JS to replace: 1,084 lines in 1 files; its tests: 1,312 lines, about 97 cases
 - `info` Rust: 0 lines in 0 files, 0 tests
 
 **Parity ledger**
 
-- `todo` no ledger at `parity/dotenvdotenc.toml`, so progress cannot be measured
+- `info` 36 features: 21 verified, 1 ported but unproven, 1 partial, 13 missing, 0 dropped
+- `warn` `get NAME [file…]`: proof `rs/parity.json` does not exist
+- `warn` `get NAME [file…]`: proof `rs/cross-compat.sh` does not exist
+- `warn` `get NAME [file…]`: proof `rs/tty-compat.py` does not exist
+- `warn` `get NAME [file…]`: proof `rs/pipe-compat.py` does not exist
+- `warn` `get NAME [file…]`: rs path `rs/src/dede.rs` does not exist
+- `warn` `get NAME [file…]`: rs path `rs/src/cli.rs` does not exist
+- `warn` `get of a value into a pipe or a socket without certain room for it`: rs path `rs/src/out.rs` does not exist
+- `warn` `get of a value into a pipe or a socket without certain room for it`: rs path `rs/src/dede.rs` does not exist
+- `warn` `status [--quiet] [file…]`: proof `rs/parity.json` does not exist
+- `warn` `status [--quiet] [file…]`: proof `rs/cross-compat.sh` does not exist
+- `warn` `status [--quiet] [file…]`: proof `rs/tty-compat.py` does not exist
+- `warn` `status [--quiet] [file…]`: rs path `rs/src/dede.rs` does not exist
+- `warn` `status [--quiet] [file…]`: rs path `rs/src/dede.rs` does not exist
+- `warn` `status [--quiet] [file…]`: rs path `rs/src/cli.rs` does not exist
+- `warn` `diff [file…]`: proof `rs/parity.json` does not exist
+- `warn` `diff [file…]`: proof `rs/cross-compat.sh` does not exist
+- `warn` `diff [file…]`: rs path `rs/src/dede.rs` does not exist
+- `warn` `diff [file…]`: rs path `rs/src/dede.rs` does not exist
+- `warn` `keys [file…]`: proof `rs/parity.json` does not exist
+- `warn` `keys [file…]`: proof `rs/cross-compat.sh` does not exist
+- `warn` `keys [file…]`: rs path `rs/src/dede.rs` does not exist
+- `warn` `keys link <path>`: proof `rs/parity.json` does not exist
+- `warn` `keys link <path>`: rs path `rs/src/dede.rs` does not exist
+- `warn` `dec [--force] [file…]`: proof `rs/parity.json` does not exist
+- `warn` `dec [--force] [file…]`: proof `rs/cross-compat.sh` does not exist
+- `warn` `dec [--force] [file…]`: proof `rs/perm-compat.sh` does not exist
+- `warn` `dec [--force] [file…]`: rs path `rs/src/dede.rs` does not exist
+- `warn` `dec [--force] [file…]`: rs path `rs/src/dede.rs` does not exist
+- `warn` `dec [--force] [file…]`: rs path `rs/src/dede.rs` does not exist
+- `warn` `dec [--force] [file…]`: rs path `rs/src/cli.rs` does not exist
+- `warn` `enc [--force] [file…], when nothing is asked (-y, or no terminal on stdin)`: proof `rs/parity.json` does not exist
+- `warn` `enc [--force] [file…], when nothing is asked (-y, or no terminal on stdin)`: proof `rs/cross-compat.sh` does not exist
+- `warn` `enc [--force] [file…], when nothing is asked (-y, or no terminal on stdin)`: proof `rs/perm-compat.sh` does not exist
+- `warn` `enc [--force] [file…], when nothing is asked (-y, or no terminal on stdin)`: rs path `rs/src/dede.rs` does not exist
+- `warn` `enc [--force] [file…], when nothing is asked (-y, or no terminal on stdin)`: rs path `rs/src/dede.rs` does not exist
+- `warn` `enc [--force] [file…], when nothing is asked (-y, or no terminal on stdin)`: rs path `rs/src/dede.rs` does not exist
+- `warn` `enc [--force] [file…], when nothing is asked (-y, or no terminal on stdin)`: rs path `rs/src/dede.rs` does not exist
+- `warn` `enc [--force] [file…], when nothing is asked (-y, or no terminal on stdin)`: rs path `rs/src/cli.rs` does not exist
+- `warn` `enc -y / --yes: commit the written .enc files`: proof `rs/parity.json` does not exist
+- `warn` `enc -y / --yes: commit the written .enc files`: proof `rs/tty-compat.py` does not exist
+- `warn` `enc -y / --yes: commit the written .enc files`: rs path `rs/src/dede.rs` does not exist
+- `warn` `guard [--all]`: proof `rs/parity.json` does not exist
+- `warn` `guard [--all]`: proof `rs/tty-compat.py` does not exist
+- `warn` `guard [--all]`: rs path `rs/src/dede.rs` does not exist
+- `warn` `guard [--all]`: rs path `rs/src/dede.rs` does not exist
+- `warn` `guard [--all]`: rs path `rs/src/dede.rs` does not exist
+- `warn` `health [--all] [file…], rules written the way the README shows`: proof `rs/parity.json` does not exist
+- `warn` `health [--all] [file…], rules written the way the README shows`: proof `rs/src/health.rs` does not exist
+- `warn` `health [--all] [file…], rules written the way the README shows`: rs path `rs/src/health.rs` does not exist
+- `warn` `setup: .gitignore rules and hooks`: proof `rs/parity.json` does not exist
+- `warn` `setup: .gitignore rules and hooks`: proof `rs/src/setup.rs` does not exist
+- `warn` `setup: .gitignore rules and hooks`: proof `rs/src/repo.rs` does not exist
+- `warn` `setup: .gitignore rules and hooks`: proof `rs/perm-compat.sh` does not exist
+- `warn` `setup: .gitignore rules and hooks`: proof `rs/tty-compat.py` does not exist
+- `warn` `setup: .gitignore rules and hooks`: rs path `rs/src/setup.rs` does not exist
+- `warn` `setup where the TypeScript would end in an uncaught error after its first write, or whose git configuration the pre-read does not read`: rs path `rs/src/setup.rs` does not exist
+- `warn` `setup where the TypeScript would end in an uncaught error after its first write, or whose git configuration the pre-read does not read`: rs path `rs/src/repo.rs` does not exist
+- `warn` `usage text, help, unknown commands; -fk, --env-keys-file, --key`: proof `rs/parity.json` does not exist
+- `warn` `usage text, help, unknown commands; -fk, --env-keys-file, --key`: proof `rs/tty-compat.py` does not exist
+- `warn` `usage text, help, unknown commands; -fk, --env-keys-file, --key`: rs path `rs/src/cli.rs` does not exist
+- `warn` `usage text, help, unknown commands; -fk, --env-keys-file, --key`: rs path `rs/src/dede.rs` does not exist
+- `warn` `where private keys come from (DOTENV_PRIVATE_KEY* in the environment, ./.env.keys, -fk / DOTENV_KEYS_FILE)`: proof `rs/parity.json` does not exist
+- `warn` `where private keys come from (DOTENV_PRIVATE_KEY* in the environment, ./.env.keys, -fk / DOTENV_KEYS_FILE)`: proof `rs/src/primitives.rs` does not exist
+- `warn` `where private keys come from (DOTENV_PRIVATE_KEY* in the environment, ./.env.keys, -fk / DOTENV_KEYS_FILE)`: rs path `rs/src/dede.rs` does not exist
+- `warn` `where private keys come from (DOTENV_PRIVATE_KEY* in the environment, ./.env.keys, -fk / DOTENV_KEYS_FILE)`: rs path `rs/src/dede.rs` does not exist
+- `warn` `where private keys come from (DOTENV_PRIVATE_KEY* in the environment, ./.env.keys, -fk / DOTENV_KEYS_FILE)`: rs path `rs/src/primitives.rs` does not exist
+- `warn` `the key tree (.env.keys.<name>.enc opened by a held key, recursively)`: proof `rs/parity.json` does not exist
+- `warn` `the key tree (.env.keys.<name>.enc opened by a held key, recursively)`: proof `rs/cross-compat.sh` does not exist
+- `warn` `the key tree (.env.keys.<name>.enc opened by a held key, recursively)`: rs path `rs/src/dede.rs` does not exist
+- `warn` `.enc files: dotenvx format, read and written (secp256k1 ECIES, AES-256-GCM)`: proof `rs/parity.json` does not exist
+- `warn` `.enc files: dotenvx format, read and written (secp256k1 ECIES, AES-256-GCM)`: proof `rs/cross-compat.sh` does not exist
+- `warn` `.enc files: dotenvx format, read and written (secp256k1 ECIES, AES-256-GCM)`: proof `rs/src/primitives.rs` does not exist
+- `warn` `.enc files: dotenvx format, read and written (secp256k1 ECIES, AES-256-GCM)`: rs path `rs/src/primitives.rs` does not exist
+- `warn` `.enc files: dotenvx format, read and written (secp256k1 ECIES, AES-256-GCM)`: rs path `rs/src/primitives.rs` does not exist
+- `warn` `.enc files: dotenvx format, read and written (secp256k1 ECIES, AES-256-GCM)`: rs path `rs/src/dede.rs` does not exist
+- `warn` `parsing and rewriting dotenv text (scan, upsert, remove of @dotenvx/primitives)`: proof `rs/src/primitives.rs` does not exist
+- `warn` `parsing and rewriting dotenv text (scan, upsert, remove of @dotenvx/primitives)`: proof `rs/parity.json` does not exist
+- `warn` `parsing and rewriting dotenv text (scan, upsert, remove of @dotenvx/primitives)`: rs path `rs/src/primitives.rs` does not exist
+- `warn` `parsing and rewriting dotenv text (scan, upsert, remove of @dotenvx/primitives)`: rs path `rs/src/primitives.rs` does not exist
+- `warn` `parsing and rewriting dotenv text (scan, upsert, remove of @dotenvx/primitives)`: rs path `rs/src/primitives.rs` does not exist
+- `warn` `values beyond bun's regular expressions (very large quoted values, very large escaped values)`: rs path `rs/src/primitives.rs` does not exist
+- `warn` `values beyond bun's regular expressions (very large quoted values, very large escaped values)`: rs path `rs/src/primitives.rs` does not exist
+- `warn` `values beyond bun's regular expressions (very large quoted values, very large escaped values)`: rs path `rs/src/dede.rs` does not exist
+- `warn` `values beyond bun's regular expressions (very large quoted values, very large escaped values)`: rs path `rs/src/dede.rs` does not exist
+- `warn` `the sync record (.git/dotenvdotenc/state.json) and the three-way merge per key`: proof `rs/parity.json` does not exist
+- `warn` `the sync record (.git/dotenvdotenc/state.json) and the three-way merge per key`: proof `rs/cross-compat.sh` does not exist
+- `warn` `the sync record (.git/dotenvdotenc/state.json) and the three-way merge per key`: rs path `rs/src/dede.rs` does not exist
+- `warn` `the sync record (.git/dotenvdotenc/state.json) and the three-way merge per key`: rs path `rs/src/dede.rs` does not exist
+- `warn` `the sync record (.git/dotenvdotenc/state.json) and the three-way merge per key`: rs path `rs/src/js.rs` does not exist
+- `warn` `a sync record that is not of the shape dede writes`: rs path `rs/src/dede.rs` does not exist
+- `warn` `a sync record that is not of the shape dede writes`: rs path `rs/src/repo.rs` does not exist
+- `warn` `what may be committed (every line sealed, no credential-like comment)`: proof `rs/parity.json` does not exist
+- `warn` `what may be committed (every line sealed, no credential-like comment)`: rs path `rs/src/dede.rs` does not exist
+- `warn` `how files are written (temp file, fsync, rename; 0600 for plaintext, keys and the record, 0644 for .enc; a loose plaintext tightened)`: proof `rs/parity.json` does not exist
+- `warn` `how files are written (temp file, fsync, rename; 0600 for plaintext, keys and the record, 0644 for .enc; a loose plaintext tightened)`: rs path `rs/src/dede.rs` does not exist
+- `warn` `how files are written (temp file, fsync, rename; 0600 for plaintext, keys and the record, 0644 for .enc; a loose plaintext tightened)`: rs path `rs/src/dede.rs` does not exist
+- `warn` `which files are a pair (names, skipped names, symlinks, committed plaintext)`: proof `rs/parity.json` does not exist
+- `warn` `which files are a pair (names, skipped names, symlinks, committed plaintext)`: rs path `rs/src/dede.rs` does not exist
+- `warn` `which files are a pair (names, skipped names, symlinks, committed plaintext)`: rs path `rs/src/dede.rs` does not exist
+- `warn` `.env files bun loads by itself before the program starts`: rs path `rs/src/env.rs` does not exist
+- `warn` `errors in red where bun takes standard error for a terminal's, or is told to (NO_COLOR, FORCE_COLOR)`: proof `rs/tty-compat.py` does not exist
+- `warn` `errors in red where bun takes standard error for a terminal's, or is told to (NO_COLOR, FORCE_COLOR)`: proof `rs/parity.json` does not exist
+- `warn` `errors in red where bun takes standard error for a terminal's, or is told to (NO_COLOR, FORCE_COLOR)`: proof `rs/src/out.rs` does not exist
+- `warn` `errors in red where bun takes standard error for a terminal's, or is told to (NO_COLOR, FORCE_COLOR)`: rs path `rs/src/out.rs` does not exist
+- `warn` `errors when standard output is a terminal and standard error is not (`dede status 2> log`)`: rs path `rs/src/out.rs` does not exist
+- `warn` `errors when standard output is a terminal and standard error is not (`dede status 2> log`)`: rs path `rs/src/out.rs` does not exist
+- `warn` `invocations whose arguments, directory or environment are not plain text, or have no HOME`: rs path `rs/src/main.rs` does not exist
+- `warn` `invocations whose arguments, directory or environment are not plain text, or have no HOME`: rs path `rs/src/cli.rs` does not exist
+- `warn` `invocations whose arguments, directory or environment are not plain text, or have no HOME`: rs path `rs/src/env.rs` does not exist
+- `warn` `macOS`: rs path `rs/src` does not exist
+- `ok  ` ledger is current (reconciled at `18f80ca`, no TypeScript changed since)
+- `todo` 14 feature(s) not fully ported
 - `todo` no Rust port exists yet
 
 **Delivery**
 
 - `warn` `rs/Cargo.toml` is missing or unreadable
 - `info` npm has `dotenvdotenc` 0.4.0
-- `warn` the newest release tag in this checkout is `v0.3.0` — it is behind npm; fetch before trusting the code counts
 - `todo` `bun i -g dotenvdotenc` installs JavaScript, not the Rust binary (`dede` → `dede.ts`)
 
 ## qqdocs
@@ -562,7 +731,7 @@
 
 **Parity ledger**
 
-- `info` 51 features: 20 verified, 2 ported but unproven, 2 partial, 27 missing, 0 dropped
+- `info` 51 features: 20 verified, 1 ported but unproven, 2 partial, 28 missing, 0 dropped
 - `warn` `tools [pattern]`: proof `rs/parity.json` does not exist
 - `warn` `tools [pattern]`: rs path `rs/src/commands/tools.rs` does not exist
 - `warn` `raw <tool> [--json], for the tools that read`: proof `rs/parity.json` does not exist
@@ -622,10 +791,10 @@
 - `warn` `output on a terminal: links, colours, dimmed text`: rs path `rs/src/env.rs` does not exist
 - `warn` `proxy and certificate variables, NODE_* and BUN_* variables, bunfig.toml`: rs path `rs/src/env.rs` does not exist
 - `warn` `the second command name: qqdoc`: rs path `rs/src/main.rs` does not exist
-- `warn` `macOS`: rs path `rs/src/env.rs` does not exist
-- `warn` `Windows`: rs path `rs/src/env.rs` does not exist
+- `warn` `the zone of a Mac without TZ`: rs path `rs/src/env.rs` does not exist
+- `warn` `the ported commands on Windows`: rs path `rs/src/env.rs` does not exist
 - `ok  ` ledger is current (reconciled at `ea064c4`, no TypeScript changed since)
-- `todo` 29 feature(s) not fully ported
+- `todo` 30 feature(s) not fully ported
 - `todo` no Rust port exists yet
 
 **Delivery**
@@ -647,11 +816,14 @@
 
 **Parity ledger**
 
-- `todo` no ledger at `parity/winrpc.toml`, so progress cannot be measured
+- `info` 37 features: 0 verified, 0 ported but unproven, 0 partial, 37 missing, 0 dropped
+- `ok  ` ledger is current (reconciled at `91cda75`, no TypeScript changed since)
+- `todo` 37 feature(s) not fully ported
 - `todo` no Rust port exists yet
 
 **Delivery**
 
+- `warn` `rs/Cargo.toml` is missing or unreadable
 - `todo` `winrpc` is not on npm
 
 ## chatwork-cli
@@ -779,11 +951,14 @@
 
 **Parity ledger**
 
-- `todo` no ledger at `parity/rustdesk.skill.toml`, so progress cannot be measured
+- `info` 26 features: 0 verified, 0 ported but unproven, 0 partial, 26 missing, 0 dropped
+- `ok  ` ledger is current (reconciled at `c759994`, no TypeScript changed since)
+- `todo` 26 feature(s) not fully ported
 - `todo` no Rust port exists yet
 
 **Delivery**
 
+- `warn` `rs/Cargo.toml` is missing or unreadable
 - `todo` `rustdesk-skill` is not on npm
 
 ## wtx
@@ -794,17 +969,20 @@
 
 **Code**
 
-- `info` TypeScript/JS to replace: 984 lines in 4 files; its tests: 103 lines, about 5 cases
+- `info` TypeScript/JS to replace: 987 lines in 5 files; its tests: 103 lines, about 5 cases
 - `info` Rust: 0 lines in 0 files, 0 tests
 - `info` `lib` stays TypeScript: React component library, runs in the browser
 
 **Parity ledger**
 
-- `todo` no ledger at `parity/wtx.toml`, so progress cannot be measured
+- `info` 27 features: 0 verified, 0 ported but unproven, 0 partial, 27 missing, 0 dropped
+- `ok  ` ledger is current (reconciled at `2c1b22f`, no TypeScript changed since)
+- `todo` 27 feature(s) not fully ported
 - `todo` no Rust port exists yet
 
 **Delivery**
 
+- `warn` `rs/Cargo.toml` is missing or unreadable
 - `warn` `wtx` on crates.io belongs to another project (https://github.com/c410-f3r/wtx) — pick a different crate name
 - `info` npm has `@snomiao/wtx` 0.3.4
 - `todo` `bun i -g @snomiao/wtx` installs JavaScript, not the Rust binary (`wtx` → `wtx.mjs`)
@@ -813,11 +991,11 @@
 
 **Checkout**
 
-- `info` `/code/snomiao/gchat-cli/tree/main` on `main` at `fd70e59`
+- `info` `/code/snomiao/gchat-cli/tree/main` on `main` at `4ced1d2`
 
 **Code**
 
-- `info` TypeScript/JS to replace: 868 lines in 11 files; its tests: 178 lines, about 18 cases
+- `info` TypeScript/JS to replace: 942 lines in 11 files; its tests: 201 lines, about 22 cases
 - `info` Rust: 0 lines in 0 files, 0 tests
 
 **Parity ledger**
@@ -857,7 +1035,7 @@
 - `warn` `--format json output`: rs path `rs/src/json.rs` does not exist
 - `warn` `answers from gws the TypeScript was not written for`: rs path `rs/src/rt.rs` does not exist
 - `warn` `answers from gws the TypeScript was not written for`: rs path `rs/src/format.rs` does not exist
-- `todo` 3 file(s) of the TypeScript changed since the ledger was reconciled at `4ced1d2`: `ts/cli.ts`, `ts/commands/tail.ts`, `ts/gws.ts`
+- `ok  ` ledger is current (reconciled at `4ced1d2`, no TypeScript changed since)
 - `todo` 3 feature(s) not fully ported
 - `todo` no Rust port exists yet
 
@@ -866,29 +1044,34 @@
 - `warn` `rs/Cargo.toml` is missing or unreadable
 - `warn` `publishConfig.bin` differs from `bin`, and npm does not apply it when publishing: the published command is what `bin` names. The hand-back must go there too
 - `info` npm has `gchat-cli` 1.2.0
-- `warn` the newest release tag in this checkout is `v1.0.0` — it is behind npm; fetch before trusting the code counts
 - `todo` `bun i -g gchat-cli` installs JavaScript, not the Rust binary (`gchat` → `ts/cli.ts`)
 
 ## Comfy-AI
 
 **Checkout**
 
-- `info` `/code/snomiao/Comfy-AI/tree/main` on `main` at `b677817`
+- `info` `/code/snomiao/Comfy-AI/tree/main` on `main` at `aa56999`
 
 **Code**
 
-- `info` TypeScript/JS to replace: 418 lines in 6 files; its tests: 0 lines, about 0 cases
+- `info` TypeScript/JS to replace: 1,017 lines in 4 files; its tests: 0 lines, about 0 cases
 - `info` Rust: 0 lines in 0 files, 0 tests
+- `info` `ts/extension` stays TypeScript: browser extension; runs in Chrome
+- `info` `ts/mock-spa.ts` stays TypeScript: development stand-in for the browser tab; not in the package
+- `info` `ts/ui` stays TypeScript: the xterm.js panel the extension and the userscript share; runs in the browser
+- `info` `ts/userscript` stays TypeScript: userscript; runs in the browser
 
 **Parity ledger**
 
-- `todo` no ledger at `parity/Comfy-AI.toml`, so progress cannot be measured
+- `info` 22 features: 0 verified, 0 ported but unproven, 0 partial, 22 missing, 0 dropped
+- `ok  ` ledger is current (reconciled at `aa56999`, no TypeScript changed since)
+- `todo` 22 feature(s) not fully ported
 - `todo` no Rust port exists yet
 
 **Delivery**
 
+- `warn` `rs/Cargo.toml` is missing or unreadable
 - `info` npm has `comfy-ai` 1.2.2
-- `warn` the newest release tag in this checkout is `v1.0.0` — it is behind npm; fetch before trusting the code counts
 - `todo` `bun i -g comfy-ai` installs JavaScript, not the Rust binary (`comfy-ai` → `dist/cli.js`)
 
 ## bunto
@@ -904,11 +1087,14 @@
 
 **Parity ledger**
 
-- `todo` no ledger at `parity/bunto.toml`, so progress cannot be measured
+- `info` 16 features: 0 verified, 0 ported but unproven, 0 partial, 16 missing, 0 dropped
+- `ok  ` ledger is current (reconciled at `dec02fd`, no TypeScript changed since)
+- `todo` 16 feature(s) not fully ported
 - `todo` no Rust port exists yet
 
 **Delivery**
 
+- `warn` `rs/Cargo.toml` is missing or unreadable
 - `info` npm has `bunto` 1.4.18
 - `todo` `bun i -g bunto` installs JavaScript, not the Rust binary (`bunto` → `bin/cli.js`)
 
@@ -916,20 +1102,23 @@
 
 **Checkout**
 
-- `info` `/code/snomiao/snocommit/tree/main` on `main` at `bf7735c`
+- `info` `/code/snomiao/snocommit/tree/main` on `main` at `a683fcd`
 
 **Code**
 
-- `info` TypeScript/JS to replace: 136 lines in 5 files; its tests: 0 lines, about 0 cases
+- `info` TypeScript/JS to replace: 288 lines in 4 files; its tests: 101 lines, about 12 cases
 - `info` Rust: 0 lines in 0 files, 0 tests
 
 **Parity ledger**
 
-- `todo` no ledger at `parity/snocommit.toml`, so progress cannot be measured
+- `info` 14 features: 0 verified, 0 ported but unproven, 0 partial, 14 missing, 0 dropped
+- `ok  ` ledger is current (reconciled at `a683fcd`, no TypeScript changed since)
+- `todo` 14 feature(s) not fully ported
 - `todo` no Rust port exists yet
 
 **Delivery**
 
+- `warn` `rs/Cargo.toml` is missing or unreadable
 - `info` npm has `snocommit` 0.1.0
-- `warn` the newest release tag in this checkout is `v1.0.2` — it is behind npm; fetch before trusting the code counts
+- `warn` the newest release tag in this checkout is `v1.3.2` — it is behind npm; fetch before trusting the code counts
 - `todo` `bun i -g snocommit` installs JavaScript, not the Rust binary (`chore` → `dist/cli-chore.js`, `docs` → `dist/cli-docs.js`, `feat` → `dist/cli-feat.js`, … (7 commands))
