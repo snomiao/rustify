@@ -1063,6 +1063,12 @@ struct CratePlan {
     next: String,
 }
 
+/// The crate's `.npmignore`, for a package without a `files` list.
+const NPMIGNORE: &str = "# The npm package ships the JavaScript and, from the release pipeline, the\n\
+# built binaries. package.json has no `files` list, so without this file npm\n\
+# and bun would pack the whole directory, this crate included.\n\
+*\n";
+
 fn plan_crate(project: &Project, home: &Path, dir: &Path) -> Result<CratePlan, String> {
     let name = &project.name;
     let manifest = project.manifest.clone().unwrap_or_else(|| "rs/Cargo.toml".to_string());
@@ -1123,6 +1129,14 @@ fn plan_crate(project: &Project, home: &Path, dir: &Path) -> Result<CratePlan, S
         }
         None => Some(gitignore),
     };
+    // Without a `files` list npm and bun pack the whole directory, the crate
+    // included. A crate in a directory of its own can say so for itself; a
+    // crate at the root shares the package's directory, and the pipeline's
+    // packer leaves nothing out there.
+    let npmignore = crate_dir.join(".npmignore");
+    if !package["files"].is_array() && crate_dir != dir && !npmignore.exists() {
+        files.push((npmignore, NPMIGNORE.as_bytes().to_vec()));
+    }
     let bins: Vec<String> = commands.iter().map(|c| format!("\"{c}\": \"{crate_name}\"")).collect();
     let next = format!(
         "\nThe binary hands every command to {entry}, so nothing changes for users yet.\n\nNext:\n  1. add to package.json:\n       \"rustify\": {{ \"mode\": \"hybrid\", \"bins\": {{ {} }}, \"rootEnv\": \"{root_env}\" }}\n  2. set `manifest = \"{manifest}\"` and `rust = [...]` for {name} in projects.toml\n  3. `rustify vendor {name}` adds the release workflow\n  4. build it (`cargo build --release --manifest-path {manifest}`) and commit Cargo.lock\nNothing was committed.",
@@ -1378,6 +1392,20 @@ mod tests {
         // A crate in a directory of its own gets a .gitignore of its own.
         assert_eq!(written("name = \"w\"", "rs/.gitignore").unwrap(), b"/target\n");
         assert_eq!(written("name = \"w\"", ".gitignore"), None);
+
+        // A package without a `files` list would ship a crate in a directory
+        // of its own: it gets an .npmignore. A crate at the root does not.
+        assert_eq!(written("name = \"w\"", "rs/.npmignore").unwrap(), NPMIGNORE.as_bytes());
+        assert!(NPMIGNORE.lines().last() == Some("*"));
+        fs::write(checkout.dir.join(".gitignore"), b"dist\n").unwrap();
+        assert_eq!(written(root, ".npmignore"), None);
+        // One the project already has is kept.
+        checkout.write("rs/.npmignore", "src\n");
+        assert_eq!(written("name = \"w\"", "rs/.npmignore"), None);
+        fs::remove_file(checkout.dir.join("rs/.npmignore")).unwrap();
+        // A package with a `files` list ships only what it lists.
+        checkout.write("package.json", "{ \"name\": \"w\", \"bin\": { \"w\": \"cli.ts\" }, \"files\": [\"cli.ts\"] }\n");
+        assert_eq!(written("name = \"w\"", "rs/.npmignore"), None);
     }
 
     #[test]
