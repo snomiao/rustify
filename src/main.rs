@@ -192,8 +192,30 @@ fn positional(args: &[String]) -> Vec<&String> {
         .collect()
 }
 
+/// The variables through which git tells the commands a hook runs which
+/// repository, index and object store to use. They outrank `-C`.
+const GIT_LOCATION_VARIABLES: &[&str] = &[
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+];
+
+/// `git -C <dir>`, reading that checkout even when started from a git hook
+/// of another repository.
+fn git_command(dir: &Path) -> Command {
+    let mut git = Command::new("git");
+    for name in GIT_LOCATION_VARIABLES {
+        git.env_remove(name);
+    }
+    git.arg("-C").arg(dir);
+    git
+}
+
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git").arg("-C").arg(dir).args(args).output().ok()?;
+    let out = git_command(dir).args(args).output().ok()?;
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim_end().to_string())
 }
 
@@ -1444,15 +1466,7 @@ mod tests {
         }
 
         fn git(&self, args: &[&str]) -> String {
-            let mut git = Command::new("git");
-            // Set by git for a hook, these would point the commands below at
-            // the repository the tests were started from.
-            for name in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY"] {
-                git.env_remove(name);
-            }
-            let out = git
-                .arg("-C")
-                .arg(&self.dir)
+            let out = git_command(&self.dir)
                 .args(["-c", "user.name=rustify test", "-c", "user.email=test@example.invalid"])
                 .args(["-c", "commit.gpgsign=false"])
                 .args(args)
@@ -1558,6 +1572,22 @@ mod tests {
         assert!(body.contains("Rust: 4 lines in 2 files, 1 tests"), "{body}");
         assert!(!body.contains("no Rust port exists yet"), "{body}");
         assert_eq!(section.port, "1 verified, 0 ported, 0 partial, 0 missing of 1");
+    }
+
+    #[test]
+    fn the_audit_reads_the_checkout_it_is_given_when_run_from_a_git_hook() {
+        // A hook of another repository runs with these two set. The test
+        // above runs again in a process of its own that has them.
+        let other = Scratch::new();
+        other.git(&["init", "--quiet"]);
+        let out = Command::new(env::current_exe().unwrap())
+            .args(["--exact", "tests::the_audit_sees_a_port_that_lives_in_an_ignored_directory"])
+            .env("GIT_DIR", other.dir.join(".git"))
+            .env("GIT_INDEX_FILE", other.dir.join(".git/index"))
+            .output()
+            .expect("the test binary");
+        let report = String::from_utf8_lossy(&out.stdout);
+        assert!(out.status.success() && report.contains(" 1 passed;"), "{report}");
     }
 
     #[test]
