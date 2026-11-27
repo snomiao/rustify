@@ -37,7 +37,9 @@ fn main() {
         //           return;
         //       }
         //   }
-        #[allow(clippy::match_single_binding)] // until the first arm is added
+        // Until the match has two arms of its own, clippy would rather see no
+        // match, or an `if let`.
+        #[allow(clippy::match_single_binding, clippy::single_match)]
         match args.first().map(String::as_str) {
             _ => {}
         }
