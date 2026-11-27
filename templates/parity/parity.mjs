@@ -189,8 +189,8 @@
 // a port's code differs by operating system, not by processor, and the node
 // that runs the runner can be of another architecture than the binary (x64
 // under emulation on an ARM machine), so such a mark could hold for the wrong
-// one. A name the runner does not know is a mistake, so a misspelt one
-// (windows, macos) cannot hold nowhere without anyone noticing.
+// one. A name the runner does not know is a mistake that stops the run, so
+// a misspelt one (windows, macos) cannot quietly hold on no system at all.
 //
 // A skipped case shows as "skip" where it would have been compared, and at
 // the end of every run, in both modes, the runner says how many cases were
@@ -222,7 +222,8 @@
 //   slashes, with doubled backslashes as JSON writes them, as MSYS tools print
 //   them (/c/Users/…, and /tmp/rustify-parity-…/… when the runner was started
 //   from Git Bash: the shell that runs the lines then shares that Git Bash's
-//   mounts, whose /tmp is the runner's temp directory), long or in 8.3
+//   mounts, whose /tmp is that Git Bash's temp directory, so the runner asks
+//   the shell once where its /tmp is), long or in 8.3
 //   (C:\Users\RUNNER~1\…, as GitHub's runners give the temp directory), in any
 //   mix of upper and lower case. The run's directory itself is made in the
 //   long spelling. The \\?\ that Rust's std::fs::canonicalize puts in front of
