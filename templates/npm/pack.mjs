@@ -91,20 +91,35 @@ const SHARED_FIELDS = ["description", "license", "author", "homepage", "reposito
 
 // The files the package manager would put in the tarball of the package in
 // `dir`, by asking it. npm is what CI has; bun is enough on a bun-only machine.
+// npm 9 runs a package's `prepare` script during `npm pack --dry-run` whatever
+// --ignore-scripts says, and such scripts install git hooks (husky, lefthook)
+// into the repository the package lives in. So a package with one of those
+// scripts is listed by bun, which leaves them alone, whenever bun is there.
 function packedFiles(dir) {
   const shell = process.platform === "win32";
   const options = { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], shell };
+  const byNpm = () => JSON.parse(execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], options))[0].files.map((f) => f.path);
+  const byBun = () => {
+    const text = execFileSync("bun", ["pm", "pack", "--dry-run", "--ignore-scripts"], options);
+    const files = [...text.matchAll(/^packed \S+ (.+)$/gm)].map((m) => m[1].trim());
+    if (!files.length) throw new Error("bun listed no files");
+    return files;
+  };
+  let scripts = {};
   try {
-    const listed = JSON.parse(execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], options));
-    return listed[0].files.map((f) => f.path);
-  } catch (npmError) {
+    scripts = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")).scripts || {};
+  } catch {}
+  const runsScripts = ["prepare", "prepack", "postpack"].some((name) => scripts[name]);
+  const order = runsScripts ? [byBun, byNpm] : [byNpm, byBun];
+  let firstError;
+  for (const list of order) {
     try {
-      const text = execFileSync("bun", ["pm", "pack", "--dry-run", "--ignore-scripts"], options);
-      const files = [...text.matchAll(/^packed \S+ (.+)$/gm)].map((m) => m[1].trim());
-      if (files.length) return files;
-    } catch {}
-    fail(`cannot list the files of ${dir}: ${npmError.message.split("\n")[0]}`);
+      return list();
+    } catch (error) {
+      firstError ??= error;
+    }
   }
+  fail(`cannot list the files of ${dir}: ${String(firstError.message).split("\n")[0]}`);
 }
 
 // The binaries without a command that the build for `key` carries: every

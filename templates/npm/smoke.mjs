@@ -13,6 +13,10 @@
 //
 // Options:
 //   --installer bun|npm   default: both, when available
+//   --run "[N] <command> [args]"
+//                         the command run first, through the launcher; a
+//                         leading [N] says it is meant to exit N (default 0),
+//                         for a program that never exits 0 on its own
 //   --expect <text>       text the output must contain (default: the version);
 //                         write --expect=<text> if the text starts with --
 //   --env NAME=value      set for the commands under test; repeatable
@@ -30,6 +34,12 @@
 //   --real-home           every command under test gets your own home directory
 //
 // Installs go to a temp directory. Your real global installs are not touched.
+//
+// When npm cannot install the package because the install script of one of
+// its dependencies fails on this platform, the test installs that dependency
+// alone. If that fails too, the failure is not the release's doing: it is
+// reported as a note (a warning on GitHub) and the npm checks are skipped.
+// Otherwise it is a failure.
 //
 // The commands under test get a home directory of their own, empty at first,
 // one per installer: HOME and USERPROFILE point at it, on Windows HOMEDRIVE,
@@ -67,7 +77,7 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { TRACE_ENV, TRACE_LINE, homeVariables, parseLine, withEnv, withPath } from "./smoke-command.mjs";
+import { TRACE_ENV, TRACE_LINE, dependencyScriptFailure, homeVariables, parseLine, parseRun, withEnv, withPath } from "./smoke-command.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const isWindows = process.platform === "win32";
@@ -113,7 +123,16 @@ if ((plan.unsupported || []).includes(hostKey)) {
   console.log(`== ${plan.name}@${plan.version} on ${hostKey}\n  skip  the project does not ship a build for ${hostKey}`);
   process.exit(0);
 }
-const [command, ...args] = String(opts.run).split(/\s+/).filter(Boolean);
+// --run: a leading [N] says the command is meant to exit N (default 0).
+let runLine;
+try {
+  runLine = parseRun(String(opts.run), hostKey, platformKeys);
+} catch (error) {
+  console.error(`smoke.mjs: ${error.message}`);
+  process.exit(2);
+}
+const { name: command, args, code: runCode } = runLine;
+const runRealHome = runLine.realHome;
 const expect = opts.expect || plan.version;
 // Install scripts of the release itself, read from what was packed.
 const ownInstallScripts = (() => {
@@ -257,7 +276,7 @@ function check(installer, registry) {
   const spec = `${plan.name}@${plan.version}`;
   const home = path.join(work, installer);
   const userHome = makeHome(installer);
-  const env = environment(userHome);
+  const env = environment(userHome, { realHome: runRealHome });
   const run = (file) => runOnce(file, args, env);
   let install;
   let bin;
@@ -273,7 +292,19 @@ function check(installer, registry) {
     packageDir = path.join(home, isWindows ? "" : "lib", "node_modules", plan.name);
   }
   if (install.status !== 0) {
-    return bad(`${installer}: install of ${spec} failed\n${install.stdout || ""}${install.stderr || ""}`);
+    const output = `${install.stdout || ""}${install.stderr || ""}`;
+    const failure = installer === "npm" ? dependencyScriptFailure(output, plan.name) : null;
+    if (failure && failsAlone(failure.top, registry)) {
+      // Not the release's doing: the dependency cannot be installed here at
+      // all. Users of npm on this platform get the same error today.
+      const message =
+        `npm cannot install ${spec} on ${hostKey}: the install script of its dependency ${failure.dependency} fails ` +
+        `(${failure.reason}), and installing ${failure.top} alone fails the same way, so the native package is not the cause`;
+      console.log(`  note  ${message}`);
+      if (process.env.GITHUB_ACTIONS) console.log(`::warning::${message}`);
+      return;
+    }
+    return bad(`${installer}: install of ${spec} failed\n${output}`);
   }
   // bun does not run install scripts on a global install. The release must
   // not need one of its own; a dependency's is not the release's business.
@@ -286,7 +317,7 @@ function check(installer, registry) {
   ok(`${installer}: installed ${spec}`);
 
   const first = run(bin);
-  if (first.code !== 0 || !first.text.includes(expect)) {
+  if (first.code !== runCode || !first.text.includes(expect)) {
     return bad(
       `${installer}: "${opts.run}" exited ${first.code}${first.error ? ` (${first.error.message})` : ""} ` +
         `and should print "${expect}". Output:\n${first.text}`,
@@ -295,7 +326,7 @@ function check(installer, registry) {
   ok(`${installer}: first run works — ${first.text.trim().split("\n")[0].slice(0, 160)}`);
 
   const second = run(bin);
-  if (second.code !== 0 || !second.text.includes(expect)) {
+  if (second.code !== runCode || !second.text.includes(expect)) {
     return bad(`${installer}: second run exited ${second.code}. Output:\n${second.text}`);
   }
   // Binaries the package ships without a command must have arrived as well.
@@ -348,7 +379,7 @@ function check(installer, registry) {
     ? sh("bun", ["i", "-g", spec, "--registry", registry], { BUN_INSTALL: home, BUN_INSTALL_CACHE_DIR: path.join(work, "bun-cache") })
     : sh("npm", ["i", "-g", "--prefix", home, spec, "--registry", registry]);
   const afterReinstall = [run(bin), run(bin)];
-  if (again.status !== 0 || afterReinstall.some((r) => r.code !== 0 || !r.text.includes(expect))) {
+  if (again.status !== 0 || afterReinstall.some((r) => r.code !== runCode || !r.text.includes(expect))) {
     bad(`${installer}: the command broke after installing the same version again\n${afterReinstall.map((r) => r.text).join("\n")}`);
   } else {
     ok(`${installer}: still works after installing the same version again`);
@@ -364,6 +395,19 @@ function check(installer, registry) {
   );
   timings.push({ installer, first: first.ms, installed, direct });
   extras(installer, home, packageDir, userHome);
+}
+
+// Whether the package's own dependency `top`, in the range the package asks
+// for, also fails to install with npm when installed alone.
+function failsAlone(top, registry) {
+  let range = "";
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(dist, "main", "package.json"), "utf8"));
+    range = (manifest.dependencies || {})[top] || (manifest.optionalDependencies || {})[top] || "";
+  } catch {}
+  const spec = range ? `${top}@${range}` : top;
+  const alone = sh("npm", ["i", "-g", "--prefix", path.join(work, "npm-alone"), spec, "--registry", registry]);
+  return alone.status !== 0;
 }
 
 // The additional commands given with --also.

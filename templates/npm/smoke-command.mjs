@@ -81,6 +81,53 @@ export function parseLine(text, hostKey, platformKeys) {
 // store, agents the environment points at (SSH_AUTH_SOCK, the desktop's
 // session bus), and on Windows the folders a program gets from the system
 // (SHGetKnownFolderPath) instead of from the environment.
+// Reads the `--run` command: `[marker]... <command> [args]`. The markers it
+// takes are `[<exit code>]`, for a command that is meant to fail (a program
+// that never exits 0 on its own), and `[real-home]`. Who answers belongs on
+// an `--also` line: the first runs go through the launcher, which this test
+// checks for itself.
+export function parseRun(text, hostKey, platformKeys) {
+  const parsed = parseLine(`${text} => `, hostKey, platformKeys);
+  if (parsed.who || /\[(native|handback)(:[^\]]*)?\]/.test(text)) {
+    throw new Error(`--run takes no [native] or [handback] marker; put it on an --also line: ${text}`);
+  }
+  return parsed;
+}
+
+// An npm install that failed inside a dependency's own install script, read
+// from npm's output: which dependency of `packageName` (`dependency`, the one
+// whose script failed, and `top`, the package's own dependency that brought it
+// in), and npm's reason. null when the failure is anything else: the package
+// itself, one of its platform packages, or not an install script at all.
+export function dependencyScriptFailure(output, packageName) {
+  const text = String(output);
+  const line = (label) => (text.match(new RegExp(`^npm (?:error|ERR!) ${label} (.+)$`, "m")) || [])[1];
+  const where = line("path");
+  if (!where || !line("command")) return null;
+  const parts = where.trim().split(/[\\/]/);
+  const scoped = (i) => (parts[i] && parts[i].startsWith("@") ? `${parts[i]}/${parts[i + 1]}` : parts[i]);
+  const width = (i) => (parts[i] && parts[i].startsWith("@") ? 2 : 1);
+  // node_modules/<packageName>/node_modules/<top>[/node_modules/<more>...]
+  let own = -1;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (parts[i] === "node_modules" && scoped(i + 1) === packageName) own = i;
+  }
+  if (own < 0) return null;
+  const after = own + 1 + width(own + 1);
+  if (parts[after] !== "node_modules" || !parts[after + 1]) return null;
+  const top = scoped(after + 1);
+  let last = after;
+  for (let i = after; i < parts.length - 1; i++) if (parts[i] === "node_modules") last = i;
+  const dependency = scoped(last + 1);
+  if (top.startsWith(`${packageName}-`) || dependency.startsWith(`${packageName}-`)) return null;
+  const skip = /^npm (?:error|ERR!) (?:code|path|command|errno|syscall|signal|A complete log|$)/;
+  const reason = text
+    .split("\n")
+    .map((l) => l.trimEnd())
+    .find((l) => /^npm (?:error|ERR!) /.test(l) && !skip.test(l) && !/^npm (?:error|ERR!) \s*$/.test(l));
+  return { dependency, top, reason: reason ? reason.replace(/^npm (?:error|ERR!) /, "") : "its install script failed" };
+}
+
 export function homeVariables(home, platform = process.platform) {
   const variables = {
     HOME: home,
