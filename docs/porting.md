@@ -3,9 +3,9 @@
 How a TypeScript CLI becomes a Rust one here without ever shipping a
 behaviour change. Read [purpose.md](purpose.md) first.
 
-Two projects have been through it: genvx (every command, 316 cases) and
-slack-hub's `search` (164 cases). What they ran into is written into the
-steps below.
+Six projects have been through it: genvx, gchat-cli, slack-hub (`search` and
+`news`), dotenvdotenc, qqdocs and onenote-cli, between 300 and 800 cases
+each. What they ran into is written into the steps below.
 
 ## The model
 
@@ -25,26 +25,81 @@ At every step the published package is correct. Progress is the number of
 ## What "the TypeScript" means
 
 The thing to match is the published command as its runtime runs it, not the
-source file read in isolation. That includes what the runtime does before the
-first line of the program:
+source file read in isolation. Check first which file that is: `npm view
+<package> bin`. npm ignores `publishConfig.bin`, so a package that sets it
+still runs what `bin` names (slack-hub and gchat-cli run `ts/cli.ts`, not the
+`dist/cli.js` they also ship). That file is what the binary hands back to.
 
-- bun loads `.env`, `.env.local`, `.env.development` and
-  `.env.development.local` from the current directory into the environment,
-  with its own syntax (`$VAR` expansion, `export`, quoting), and honours
-  `bunfig.toml`, `BUN_OPTIONS` and `NODE_OPTIONS`;
-- on a terminal, `console.error` may colour its output;
+Then find out what the runtime does around the program. Every item below was
+found by a port or by the verification of one, and each was visible to a user.
+
+**Before the first line of the program, bun**
+
+- loads `.env`, `.env.local`, `.env.development` and `.env.development.local`
+  from the current directory into the environment (other names under another
+  `NODE_ENV`), with its own syntax (`$VAR` expansion, `export`, quoting,
+  multi-line values). A project's own tests often run with `--no-env-file`
+  and never see this;
+- reads `bunfig.toml` from the directory and from the user's configuration,
+  and takes options from `BUN_OPTIONS` and `NODE_OPTIONS`;
+- reads `package.json`, `tsconfig.json` and `jsconfig.json` from the current
+  directory and every directory above it, and reports one it cannot parse on
+  stderr;
+- writes to stderr when a variable meant for it is set: `NODE_DEBUG`,
+  `BUN_JSC_*`, `MIMALLOC_VERBOSE`. The rule the ports ended up with: any
+  `BUN_*` (except `BUN_INSTALL`, which the installer sets for nearly
+  everyone), `NODE_*`, `MIMALLOC_*` or `ICU_*` variable goes back;
+- cannot load a program from a path with `?` or `\` in it.
+
+**While it runs, bun**
+
+- prints `console.error` in red whenever stdout *or* stderr is a terminal,
+  reads `NO_COLOR` and `FORCE_COLOR` in its own way, and decides this before
+  it loads `.env`;
+- formats dates with `toLocaleString()` as en-US on Linux whatever `LANG` and
+  `LC_*` say. What it does on macOS and Windows has to be tried there;
+- takes local time from the time zone data it carries (ICU's), not from the
+  system's. A Rust binary reads the system's zone files or a database
+  compiled into it, and the three editions disagree wherever a country
+  changed its rules recently: in late 2026, bun 1.4.0 against tzdb 2026f
+  differed for Western Canada, Cuba and Morocco. Compare every zone name the
+  binary accepts against the runtime, keep the comparison as a test, and hand
+  back where they differ;
+- cuts the output of a child started with `spawnSync` off near 1 MiB and
+  reports a failure;
+- can lose output: once the program has read `process.stdout.isTTY`, lines
+  written with `console.log` to a pipe that is read slowly are dropped (bun
+  1.4.0; 1,896 of 6,014 lines arrived in one measurement). The TypeScript is
+  then not deterministic for large output, no case can compare it, and
+  whether the binary should copy the loss is the owner's decision.
+
+**JavaScript itself**
+
+- writes a number in the shortest form that reads back the same, and where
+  two such forms are equally near it takes the even digit
+  (`1459077941253781.25` is written `…781.2`); Rust's formatting takes the
+  other;
+- finds `constructor`, `toString` and `__proto__` in every plain object, so a
+  lookup by a user's key (`obj[name]`) answers for those names too;
+- parses dates leniently: `2026-02-30` is March 2nd.
+
+**The argument parser**
+
 - yargs prints `unknown` for `--version` when the package was installed
   globally with bun (it looks for the package relative to its own location,
   which in bun's flat `node_modules` is not the package), and the version
   when installed with npm;
-- a bundled entry can differ from the source it was built from. Check which
-  file the *published* package runs: `npm view <package> bin`. npm ignores
-  `publishConfig.bin`, so a package that sets it still runs what `bin` names
-  (slack-hub and gchat-cli run `ts/cli.ts`, not the `dist/cli.js` they also
-  ship). That file is what the binary hands back to.
+- yargs prints the command's help when the last word is `help` (`mycli search
+  help`), in the user's language;
+- without a `.fail()` handler, yargs answers every error a command throws
+  with the command's whole help text followed by the runtime's error report:
+  source excerpt, stack trace, paths of the installed files. That cannot be
+  reproduced, so such errors are handed back, and a command that writes
+  cannot be ported at all until the project reports its errors itself (see
+  "What to hand back").
 
 Find out which of these the project's users can observe before deciding what
-a case has to cover. For genvx this was the largest part of the work.
+a case has to cover. It is the largest part of the work.
 
 ## 1. Start the crate
 
@@ -62,6 +117,31 @@ and commit `Cargo.lock`. Add `manifest = "rs/Cargo.toml"` and `rust =
 ["rs/src"]` for the project in `projects.toml`, or the audit keeps reporting
 that it has no Rust. The pull request's run builds six platforms and
 install-tests them.
+
+A project whose TypeScript lies at the repository root is `ts = ["."]`, and
+the audit then counts every script in the repository as TypeScript to
+replace. Only the scripts inside the `rust` directories of a crate that has a
+directory of its own (`rs/src` for `rs/Cargo.toml`) are taken for the port's
+own; a case generator elsewhere in `rs/` is not, so add `ignore = ["rs"]`.
+The Rust is still counted: a directory listed under `rust` counts even when
+an `ignore` entry holds it.
+
+```toml
+manifest = "rs/Cargo.toml"
+ts = ["."]
+rust = ["rs/src"]
+ignore = ["rs", "skills"]
+```
+
+A crate at the repository root (`manifest = "Cargo.toml"`) shares its `src`
+with the TypeScript, so there the file extension alone tells the two apart:
+with `ts = ["."]` and `rust = ["src"]`, `src/index.ts` is TypeScript to
+replace and `src/main.rs` is Rust. For such a crate the scaffold adds
+`/target` to the project's own `.gitignore` and keeps everything else in it.
+
+If `package.json` has no `files` list, the package ships its whole directory,
+the crate included: add `rs/.npmignore` containing `*`, and check with `npm
+pack --dry-run`.
 
 Use `build:`, `test:` or `ci:` commit types for all of this, and for every
 port commit after it: the project's users get nothing new until the owner
@@ -119,9 +199,43 @@ project that has such a harness can keep its own test instead of
 `parity.mjs`; what matters is that one test runs both implementations and
 compares everything they print and do.
 
-What the runner cannot express needs its own small test beside it: a terminal
-(prompts, colours), one implementation reading what the other wrote, a chosen
-working directory.
+What the runner cannot express needs its own small test beside it: one
+implementation reading what the other wrote, a chosen working directory.
+
+Patterns the ports needed, all built from a wrapper command put in front of
+both implementations (`--ts "sh rs/parity/run.sh bun cli.ts" --rs "sh
+rs/parity/run.sh rs/target/release/mycli"`):
+
+- **The service's address is a constant in the code.** The wrapper starts a
+  stand-in on a free port for this one run and tells the program where it is
+  through the environment. `--ts "bun --preload …"` is not enough: it does not
+  reach the JavaScript the binary hands back to, and those cases would talk
+  to the real service. For the handed-back JavaScript the wrapper puts a
+  `bun` shim first on `PATH`. The binary needs to be pointed at the stand-in
+  too; a variable that accepts only `http://127.0.0.1:<port>` is the smallest
+  way, and it is Rust-only behaviour that the owner has to bless or have
+  removed.
+- **A case that is handed back after a request** shows every request twice in
+  the stand-in's log. Compare the distinct requests, and let the stand-in
+  answer by what was asked, not by turn.
+- **What the program asks another program** (git): the wrapper puts a shim of
+  that program first on `PATH`, which logs its arguments and calls the real
+  one; an `after` probe prints the log.
+- **The program keeps state in its own install directory** (onenote-cli's
+  search index): give each case its own copy of the package. Never point
+  `<PROJECT>_PACKAGE_ROOT` at a checkout that can hold a developer's real
+  data.
+- **A value that must not be in the cases file** (dotenvdotenc refuses to
+  commit a file holding a private key): the wrapper computes it.
+
+On a machine other runs share, give the run a temp directory of its own
+(`TMPDIR=$(mktemp -d)`), and never delete `rustify-parity-*` by pattern: the
+directories of runs in progress are among them, and a run that loses its
+directory reports differences that look like bugs in the port.
+
+Never run the project's command by hand, outside the runner, unless `HOME`
+points at a throwaway directory: on a signed-in machine a harmless-looking
+command can read real credentials or start real work.
 
 ## 3. Port the command
 
@@ -136,6 +250,18 @@ argument parser's configuration. Then write the Rust so the cases pass.
   reported to the owner; fixes are separate changes made to both sides.
 - **When in doubt, hand back.** A handed-back command is merely not faster. A
   wrong native command is a bug in a release.
+
+### Dependencies
+
+Few, well-known crates, and nothing that links a library of the system: the
+binary is built for six platforms and shipped as one static file. Crypto and
+TLS in pure Rust (rustls). Two things need a C compiler all the same: `ring`
+underneath rustls, and SQLite when it is compiled in. The pipeline builds
+both for every platform it targets. A development machine usually cannot:
+`cargo check --target <another platform>` stops in their build scripts. Put
+what needs them behind a cargo feature, or compile it only for the platforms
+it is ported for, so that the rest of the crate can still be type-checked
+for every target, and take the first run of the pipeline as the test.
 
 ### What to hand back
 
@@ -156,8 +282,38 @@ hands back, before it has printed or changed anything:
   JavaScript simply does the work again.
 
 Say in the ledger which situations go back and how common they are. If the
-common setup goes back (slack-hub's `settings.yml`), users get no speed-up
-yet, and that is worth knowing before anything is announced.
+common setup goes back (slack-hub's `settings.yml`, a qqdocs command typed at
+a terminal, an onenote-cli search in a time zone where the runtime's data
+differs), users get no speed-up yet, and that is worth knowing before
+anything is announced.
+
+### Handing back safely
+
+A hand-back starts the whole invocation again in the JavaScript, so it is
+correct only while nothing of the first attempt can be seen.
+
+- **Work out the whole answer, then print it.** A ported command returns its
+  output, or declines; `main` prints. Nothing reaches stdout or stderr on the
+  way.
+- **Read everything, then write.** A command that changes files first reads
+  all it is going to need (every file, every answer from `git`), so that
+  whatever it does not implement shows before the first write. After the
+  first write there is no way back: stop with a message that names
+  `<PROJECT>_NO_NATIVE=1`, and treat reaching that message as a bug.
+- **A panic is a decline.** A bug in the port must not cost users their
+  command. While nothing has been printed or changed, a panic hands back,
+  silently.
+- **A hand-back after a request repeats the request.** The JavaScript does
+  all of the work again. For a command that only reads this is safe, and it
+  costs: qqdocs sent 62 requests where the TypeScript sends 31, against a
+  daily quota, and only half were counted locally. Record the cost in the
+  ledger. After a request that creates, changes or deletes, it is never
+  acceptable.
+- **So a command that writes to a service** can be ported only when every
+  failure after the request can be reported natively, in the TypeScript's
+  own words. With yargs's default error report it cannot (see "What the
+  TypeScript means"); the project first needs an error handler of its own,
+  which is a change to the TypeScript for its owner to make.
 
 ## 4. Switch the command over
 
@@ -211,6 +367,9 @@ It runs on Linux against the freshly built binary and has to pass before
 anything can be published. The job installs nothing by itself, hence the
 `bun install`. The workflow's `paths:` must list the TypeScript as well as the
 Rust, or a change to the TypeScript alone never reruns the comparison.
+`rustify vendor` writes those lines from `projects.toml`: one pattern per
+script extension for TypeScript at the root, `Cargo.toml`, `Cargo.lock`,
+`build.rs` and the `rust` directories for a crate at the root.
 
 Add a line to `smoke-extra` for the command too, so that every platform runs
 it once after installing: `<command> [args] => <text>`, with a leading `[2] `
@@ -222,8 +381,45 @@ only; the smoke lines are all that Windows and macOS get.
 
 In `parity/<project>.toml` set the feature to `verified`, with `proof`
 pointing at the cases file, and move `reconciled` forward. `rustify audit
-<project>` shows the new count. See `parity/README.md` for how to record a
+<project>` shows the new count. It asks for a new reconciliation when a file of the
+TypeScript has changed since `reconciled`: a script it counts, or any other
+file under a named `ts` directory (a shell script the program runs, a
+template it writes out). At the repository root only scripts count, so a
+change to `package.json`, a workflow or the README does not ask for one.
+Nothing under `ignore`, `keep_ts` or the crate counts. See `parity/README.md` for how to record a
 command that is native in its plain use and handed back in some situations.
+
+## 8. Have someone else try to break it
+
+The author of a port tests what they thought of. All three ports that were
+handed to an independent verifier afterwards passed every proof their author
+had written, and all three behaved differently from the TypeScript somewhere:
+a time zone table, the word `help`, a number that rounds two ways, a file the
+runtime reads from the directories above.
+
+Whoever verifies works on a fresh clone, does not change the port, and:
+
+1. reproduces every proof from the commands the author gives;
+2. writes new cases aimed at what the author may have missed (boundary
+   values, empty and huge input, unusual but valid orders of flags, non-ASCII
+   and CRLF content, files that are missing or unreadable, everything the
+   runtime reads before the program starts), and runs them TypeScript against
+   TypeScript first, then against the binary, then with `--handback`;
+3. compares mechanically wherever the inputs can be generated: the argument
+   gate against the project's own yargs chain (about 220,000 command lines
+   for qqdocs: the only mismatches had `help` as the last word), the helper
+   functions against the JavaScript they replace, every time zone name
+   against the runtime;
+4. reads every point where the binary hands back: is it before anything was
+   printed or changed, and is every native arm behind `<PROJECT>_NO_NATIVE`?
+5. reads the ledger against the code: is any status higher than what is
+   proven?
+
+Every difference is then repaired in one of two ways: the Rust is made to
+behave like the TypeScript, or the situation is handed back. The verifier's
+cases go into the committed cases file, the ones now handed back marked so.
+A difference that comes from a defect in the TypeScript (output lost on a
+slow reader) is not copied silently; it goes to the owner.
 
 ## Order of work
 

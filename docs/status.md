@@ -6,21 +6,21 @@
 | slack-hub | 6 verified, 0 ported, 14 partial, 132 missing of 152 | JavaScript | port the missing features |
 | rechrome | 0 verified, 0 ported, 0 partial, 328 missing of 328 | JavaScript | reconcile the parity ledger |
 | otoji | started, not measured | JavaScript | write the parity ledger |
-| codehost | not started | JavaScript | write the parity ledger |
+| codehost | 0 verified, 0 ported, 0 partial, 192 missing of 192 | JavaScript | port the missing features |
 | fbi-proxy | started, not measured | JavaScript | write the parity ledger |
-| onenote-cli | not started | JavaScript | write the parity ledger |
+| onenote-cli | 6 verified, 0 ported, 3 partial, 46 missing of 55 | JavaScript | port the missing features |
 | dotenvdotenc | not started | JavaScript | write the parity ledger |
-| qqdocs | not started | JavaScript | write the parity ledger |
-| winrpc | unknown | unknown | clone the repository |
+| qqdocs | 20 verified, 2 ported, 2 partial, 27 missing of 51 | JavaScript | port the missing features |
+| winrpc | not started | nothing (not on npm) | write the parity ledger |
 | chatwork-cli | not started | nothing (not on npm) | write the parity ledger |
 | genvx | 18 verified, 1 ported, 4 partial, 4 missing of 27 | JavaScript | port the missing features |
-| rustdesk.skill | unknown | unknown | clone the repository |
-| wtx | unknown | unknown | clone the repository |
+| rustdesk.skill | not started | nothing (not on npm) | write the parity ledger |
+| wtx | not started | JavaScript | write the parity ledger |
 | gchat-cli | 12 verified, 1 ported, 1 partial, 2 missing of 16 | JavaScript | reconcile the parity ledger |
 | Comfy-AI | not started | JavaScript | write the parity ledger |
-| bunto | unknown | unknown | clone the repository |
+| bunto | not started | JavaScript | write the parity ledger |
 | snocommit | not started | JavaScript | write the parity ledger |
-| comfy-codesearch-cli | unknown | unknown | clone the repository |
+| comfy-codesearch-cli | not started | JavaScript | write the parity ledger |
 
 ## agent-yes
 
@@ -384,7 +384,7 @@
 - `warn` `PCM hooks of the in-page bridge (used by `rech audio stream`): startPcm, feedPcm, endPcmInput, readPcm`: ts path `audio-bridge-browser.ts` does not exist
 - `warn` `PCM hooks of the in-page bridge (used by `rech audio stream`): startPcm, feedPcm, endPcmInput, readPcm`: ts path `audio-stream-server.ts` does not exist
 - `warn` `Windows: warning when serve runs outside the user's active desktop session`: ts path `docs/windows-sessions.md` does not exist
-- `todo` 21 TypeScript file(s) changed since the ledger was reconciled at `c4ef27e`: `.github/workflows/rust-npm-release.yml`, `.gitignore`, `README.md`, `audio-bridge-browser.ts`, `audio-bridge-client.ts`, `audio-bridge-files.ts`, `audio-bridge-server.ts`, `audio-bridge.ts`, `audio-stream-client.ts`, `audio-stream-server.ts`
+- `todo` 16 file(s) of the TypeScript changed since the ledger was reconciled at `c4ef27e`: `audio-bridge-browser.ts`, `audio-bridge-client.ts`, `audio-bridge-files.ts`, `audio-bridge-server.ts`, `audio-bridge.ts`, `audio-stream-client.ts`, `audio-stream-server.ts`, `audio-stream.ts`, `daemon-manager.ts`, `rechrome.ts`
 - `todo` 328 feature(s) not fully ported
 - `todo` no Rust port exists yet
 
@@ -425,23 +425,29 @@
 
 **Checkout**
 
-- `info` `/code/snomiao/codehost/tree/main` on `main` at `d3e1033`
+- `info` `/code/snomiao/codehost/tree/main` on `main` at `cfba919`
 
 **Code**
 
-- `info` TypeScript/JS to replace: 10,512 lines in 68 files; its tests: 1,694 lines, about 147 cases
+- `info` TypeScript/JS to replace: 7,230 lines in 57 files; its tests: 1,877 lines, about 164 cases
 - `info` Rust: 0 lines in 0 files, 0 tests
-- `info` `worker` stays TypeScript: Cloudflare Worker
+- `info` `src/App.tsx` stays TypeScript: legacy web terminal page; runs in a browser
+- `info` `src/components` stays TypeScript: legacy web terminal page (xterm.js); runs in a browser
+- `info` `src/main.tsx` stays TypeScript: page entry; runs in a browser
+- `info` `src/web` stays TypeScript: the codehost.dev page, its Service Worker and SharedWorker; runs in a browser
+- `info` `worker` stays TypeScript: Cloudflare Worker (signaling room, /cdn proxy); the daemon only talks to it
 
 **Parity ledger**
 
-- `todo` no ledger at `parity/codehost.toml`, so progress cannot be measured
+- `info` 192 features: 0 verified, 0 ported but unproven, 0 partial, 192 missing, 0 dropped
+- `ok  ` ledger is current (reconciled at `cfba919`, no TypeScript changed since)
+- `todo` 192 feature(s) not fully ported
 - `todo` no Rust port exists yet
 
 **Delivery**
 
+- `warn` `rs/Cargo.toml` is missing or unreadable
 - `info` npm has `codehost` 0.40.0
-- `warn` the newest release tag in this checkout is `v0.34.0` — it is behind npm; fetch before trusting the code counts
 - `todo` `bun i -g codehost` installs JavaScript, not the Rust binary (`ch` → `src/cli/index.ts`, `codehost` → `src/cli/index.ts`)
 
 ## fbi-proxy
@@ -484,7 +490,34 @@
 
 **Parity ledger**
 
-- `todo` no ledger at `parity/onenote-cli.toml`, so progress cannot be measured
+- `info` 55 features: 6 verified, 0 ported but unproven, 3 partial, 46 missing, 0 dropped
+- `warn` `search <query> (local index, on Linux)`: proof `rs/parity.json` does not exist
+- `warn` `search <query> (local index, on Linux)`: rs path `rs/src/search.rs` does not exist
+- `warn` `search <query> (local index, on Linux)`: rs path `rs/src/main.rs` does not exist
+- `warn` `search on macOS and Windows`: rs path `rs/src/main.rs` does not exist
+- `warn` `search query language (#tag, tag:name, AND / OR / NOT, quotes)`: proof `rs/parity.json` does not exist
+- `warn` `search query language (#tag, tag:name, AND / OR / NOT, quotes)`: rs path `rs/src/query.rs` does not exist
+- `warn` `search query language (#tag, tag:name, AND / OR / NOT, quotes)`: rs path `rs/src/search.rs` does not exist
+- `warn` `search output on a terminal (colours, clickable titles)`: proof `rs/parity.json` does not exist
+- `warn` `search output on a terminal (colours, clickable titles)`: proof `rs/parity/terminal.py` does not exist
+- `warn` `search output on a terminal (colours, clickable titles)`: rs path `rs/src/search.rs` does not exist
+- `warn` `search output on a terminal (colours, clickable titles)`: rs path `rs/src/main.rs` does not exist
+- `warn` `search index: reading .onenote/search.db`: proof `rs/parity.json` does not exist
+- `warn` `search index: reading .onenote/search.db`: rs path `rs/src/search.rs` does not exist
+- `warn` `search: the time of the last sync, and --since (time zone named in TZ)`: proof `rs/src/time.rs` does not exist
+- `warn` `search: the time of the last sync, and --since (time zone named in TZ)`: proof `rs/parity.json` does not exist
+- `warn` `search: the time of the last sync, and --since (time zone named in TZ)`: rs path `rs/src/time.rs` does not exist
+- `warn` `search: the system's time zone (no TZ in the environment)`: rs path `rs/src/time.rs` does not exist
+- `warn` `auth setup`: proof `rs/parity.json` does not exist
+- `warn` `auth setup`: rs path `rs/src/main.rs` does not exist
+- `warn` `auth setup`: rs path `rs/src/auth_setup.txt` does not exist
+- `warn` `search: rows a sync does not write`: rs path `rs/src/search.rs` does not exist
+- `warn` `search: rows a sync does not write`: rs path `rs/src/time.rs` does not exist
+- `warn` `search: machine states that go back`: rs path `rs/src/runtime.rs` does not exist
+- `warn` `search: machine states that go back`: rs path `rs/src/time.rs` does not exist
+- `warn` `search: machine states that go back`: rs path `rs/src/main.rs` does not exist
+- `ok  ` ledger is current (reconciled at `9af05e1`, no TypeScript changed since)
+- `todo` 49 feature(s) not fully ported
 - `todo` no Rust port exists yet
 
 **Delivery**
@@ -512,6 +545,7 @@
 
 **Delivery**
 
+- `warn` `rs/Cargo.toml` is missing or unreadable
 - `info` npm has `dotenvdotenc` 0.4.0
 - `warn` the newest release tag in this checkout is `v0.3.0` — it is behind npm; fetch before trusting the code counts
 - `todo` `bun i -g dotenvdotenc` installs JavaScript, not the Rust binary (`dede` → `dede.ts`)
@@ -529,7 +563,70 @@
 
 **Parity ledger**
 
-- `todo` no ledger at `parity/qqdocs.toml`, so progress cannot be measured
+- `info` 51 features: 20 verified, 2 ported but unproven, 2 partial, 27 missing, 0 dropped
+- `warn` `tools [pattern]`: proof `rs/parity.json` does not exist
+- `warn` `tools [pattern]`: rs path `rs/src/commands/tools.rs` does not exist
+- `warn` `raw <tool> [--json], for the tools that read`: proof `rs/parity.json` does not exist
+- `warn` `raw <tool> [--json], for the tools that read`: rs path `rs/src/commands/raw.rs` does not exist
+- `warn` `ls / list [folder], in a pipe or a file`: proof `rs/parity.json` does not exist
+- `warn` `ls / list [folder], in a pipe or a file`: rs path `rs/src/commands/ls.rs` does not exist
+- `warn` `search <query>`: proof `rs/parity.json` does not exist
+- `warn` `search <query>`: rs path `rs/src/commands/search.rs` does not exist
+- `warn` `read <ref>, with the five-minute document cache`: proof `rs/parity.json` does not exist
+- `warn` `read <ref>, with the five-minute document cache`: rs path `rs/src/commands/read.rs` does not exist
+- `warn` `info <ref>`: proof `rs/parity.json` does not exist
+- `warn` `info <ref>`: rs path `rs/src/commands/info.rs` does not exist
+- `warn` `info <ref>`: rs path `rs/src/commands/mod.rs` does not exist
+- `warn` `perm get <ref>`: proof `rs/parity.json` does not exist
+- `warn` `perm get <ref>`: rs path `rs/src/commands/perm.rs` does not exist
+- `warn` `space list`: proof `rs/parity.json` does not exist
+- `warn` `space list`: rs path `rs/src/commands/space.rs` does not exist
+- `warn` `space ls <space>`: proof `rs/parity.json` does not exist
+- `warn` `space ls <space>`: rs path `rs/src/commands/space.rs` does not exist
+- `warn` `canvas read <ref>`: proof `rs/parity.json` does not exist
+- `warn` `canvas read <ref>`: rs path `rs/src/commands/canvas.rs` does not exist
+- `warn` `canvas find <ref> <query>`: proof `rs/parity.json` does not exist
+- `warn` `canvas find <ref> <query>`: rs path `rs/src/commands/canvas.rs` does not exist
+- `warn` `sync`: proof `rs/parity.json` does not exist
+- `warn` `sync`: rs path `rs/src/commands/sync.rs` does not exist
+- `warn` `usage [--tier]`: proof `rs/parity.json` does not exist
+- `warn` `usage [--tier]`: rs path `rs/src/commands/usage.rs` does not exist
+- `warn` `usage [--tier]`: rs path `rs/src/usage.rs` does not exist
+- `warn` `usage calibrate`: proof `rs/parity.json` does not exist
+- `warn` `usage calibrate`: rs path `rs/src/commands/usage.rs` does not exist
+- `warn` `usage calibrate`: rs path `rs/src/usage.rs` does not exist
+- `warn` `--help, --version, completion, usage errors, and the word `help``: rs path `rs/src/args.rs` does not exist
+- `warn` `--help, --version, completion, usage errors, and the word `help``: rs path `rs/src/commands/mod.rs` does not exist
+- `warn` `the MCP call: one JSON-RPC POST per call, the answer from structuredContent or content[0].text`: proof `rs/parity.json` does not exist
+- `warn` `the MCP call: one JSON-RPC POST per call, the answer from structuredContent or content[0].text`: rs path `rs/src/mcp.rs` does not exist
+- `warn` `errors from the service, and trying again with a back-off`: rs path `rs/src/mcp.rs` does not exist
+- `warn` `answers of another shape than the TypeScript was written for`: rs path `rs/src/commands/mod.rs` does not exist
+- `warn` `answers of another shape than the TypeScript was written for`: rs path `rs/src/json.rs` does not exist
+- `warn` `the token: TENCENT_DOCS_TOKEN, .env files in the current directory, ~/.qqdocs/.env.local`: proof `rs/parity.json` does not exist
+- `warn` `the token: TENCENT_DOCS_TOKEN, .env files in the current directory, ~/.qqdocs/.env.local`: rs path `rs/src/env.rs` does not exist
+- `warn` `a .env file in syntax bun interprets, or one that steers bun`: rs path `rs/src/env.rs` does not exist
+- `warn` `a token in .env.local beside the package or in the two directories above it`: rs path `rs/src/env.rs` does not exist
+- `warn` `a directory inside a JavaScript project: package.json, tsconfig.json, jsconfig.json here or above`: rs path `rs/src/env.rs` does not exist
+- `warn` `config.yaml: the tier`: proof `rs/parity.json` does not exist
+- `warn` `config.yaml: the tier`: rs path `rs/src/env.rs` does not exist
+- `warn` `config.yaml beyond plain `key: value` lines`: rs path `rs/src/env.rs` does not exist
+- `warn` `the call counter: ~/.qqdocs/usage.json, its lock, the inferred tier`: proof `rs/parity.json` does not exist
+- `warn` `the call counter: ~/.qqdocs/usage.json, its lock, the inferred tier`: rs path `rs/src/usage.rs` does not exist
+- `warn` `the call counter: ~/.qqdocs/usage.json, its lock, the inferred tier`: rs path `rs/src/clock.rs` does not exist
+- `warn` `the call counter: ~/.qqdocs/usage.json, its lock, the inferred tier`: rs path `rs/src/env.rs` does not exist
+- `warn` `the local day in a zone that is not UTC: every zone named after a place`: rs path `rs/src/env.rs` does not exist
+- `warn` `the quota warning after a command`: proof `rs/parity.json` does not exist
+- `warn` `the quota warning after a command`: rs path `rs/src/usage.rs` does not exist
+- `warn` `the quota warning after a command`: rs path `rs/src/main.rs` does not exist
+- `warn` `JSON the JavaScript way: --json output, request bodies, the files under ~/.qqdocs`: proof `rs/parity.json` does not exist
+- `warn` `JSON the JavaScript way: --json output, request bodies, the files under ~/.qqdocs`: rs path `rs/src/json.rs` does not exist
+- `warn` `output on a terminal: links, colours, dimmed text`: rs path `rs/src/env.rs` does not exist
+- `warn` `proxy and certificate variables, NODE_* and BUN_* variables, bunfig.toml`: rs path `rs/src/env.rs` does not exist
+- `warn` `the second command name: qqdoc`: rs path `rs/src/main.rs` does not exist
+- `warn` `macOS`: rs path `rs/src/env.rs` does not exist
+- `warn` `Windows`: rs path `rs/src/env.rs` does not exist
+- `ok  ` ledger is current (reconciled at `ea064c4`, no TypeScript changed since)
+- `todo` 29 feature(s) not fully ported
 - `todo` no Rust port exists yet
 
 **Delivery**
@@ -539,7 +636,24 @@
 - `todo` `bun i -g qqdocs` installs JavaScript, not the Rust binary (`qqdoc` → `bin/qqdocs.ts`, `qqdocs` → `bin/qqdocs.ts`)
 
 ## winrpc
-- `todo` no checkout found under `/code/snomiao/winrpc`
+
+**Checkout**
+
+- `info` `/code/snomiao/winrpc/tree/main` on `main` at `91cda75`
+
+**Code**
+
+- `info` TypeScript/JS to replace: 1,802 lines in 11 files; its tests: 457 lines, about 34 cases
+- `info` Rust: 0 lines in 0 files, 0 tests
+
+**Parity ledger**
+
+- `todo` no ledger at `parity/winrpc.toml`, so progress cannot be measured
+- `todo` no Rust port exists yet
+
+**Delivery**
+
+- `todo` `winrpc` is not on npm
 
 ## chatwork-cli
 
@@ -549,7 +663,7 @@
 
 **Code**
 
-- `info` TypeScript/JS to replace: 1,534 lines in 15 files; its tests: 644 lines, about 47 cases
+- `info` TypeScript/JS to replace: 1,534 lines in 15 files; its tests: 0 lines, about 0 cases
 - `info` Rust: 0 lines in 0 files, 0 tests
 
 **Parity ledger**
@@ -559,6 +673,7 @@
 
 **Delivery**
 
+- `warn` `rs/Cargo.toml` is missing or unreadable
 - `todo` `chatwork-cli` is not on npm
 
 ## genvx
@@ -653,10 +768,47 @@
 - `todo` `bun i -g genvx` installs JavaScript, not the Rust binary (`genvx` → `src/cli.ts`)
 
 ## rustdesk.skill
-- `todo` no checkout found under `/code/snomiao/rustdesk.skill`
+
+**Checkout**
+
+- `info` `/code/snomiao/rustdesk.skill/tree/main` on `main` at `c759994`
+
+**Code**
+
+- `info` TypeScript/JS to replace: 1,317 lines in 8 files; its tests: 389 lines, about 45 cases
+- `info` Rust: 0 lines in 0 files, 0 tests
+
+**Parity ledger**
+
+- `todo` no ledger at `parity/rustdesk.skill.toml`, so progress cannot be measured
+- `todo` no Rust port exists yet
+
+**Delivery**
+
+- `todo` `rustdesk-skill` is not on npm
 
 ## wtx
-- `todo` no checkout found under `/code/snomiao/wtx`
+
+**Checkout**
+
+- `info` `/code/snomiao/wtx/tree/main` on `main` at `2c1b22f`
+
+**Code**
+
+- `info` TypeScript/JS to replace: 984 lines in 4 files; its tests: 103 lines, about 5 cases
+- `info` Rust: 0 lines in 0 files, 0 tests
+- `info` `lib` stays TypeScript: React component library, runs in the browser
+
+**Parity ledger**
+
+- `todo` no ledger at `parity/wtx.toml`, so progress cannot be measured
+- `todo` no Rust port exists yet
+
+**Delivery**
+
+- `warn` `wtx` on crates.io belongs to another project (https://github.com/c410-f3r/wtx) — pick a different crate name
+- `info` npm has `@snomiao/wtx` 0.3.4
+- `todo` `bun i -g @snomiao/wtx` installs JavaScript, not the Rust binary (`wtx` → `wtx.mjs`)
 
 ## gchat-cli
 
@@ -706,7 +858,7 @@
 - `warn` `--format json output`: rs path `rs/src/json.rs` does not exist
 - `warn` `answers from gws the TypeScript was not written for`: rs path `rs/src/rt.rs` does not exist
 - `warn` `answers from gws the TypeScript was not written for`: rs path `rs/src/format.rs` does not exist
-- `todo` 3 TypeScript file(s) changed since the ledger was reconciled at `4ced1d2`: `ts/cli.ts`, `ts/commands/tail.ts`, `ts/gws.ts`
+- `todo` 3 file(s) of the TypeScript changed since the ledger was reconciled at `4ced1d2`: `ts/cli.ts`, `ts/commands/tail.ts`, `ts/gws.ts`
 - `todo` 3 feature(s) not fully ported
 - `todo` no Rust port exists yet
 
@@ -741,7 +893,25 @@
 - `todo` `bun i -g comfy-ai` installs JavaScript, not the Rust binary (`comfy-ai` → `dist/cli.js`)
 
 ## bunto
-- `todo` no checkout found under `/code/snomiao/bunto`
+
+**Checkout**
+
+- `info` `/code/snomiao/bunto/tree/main` on `main` at `dec02fd`
+
+**Code**
+
+- `info` TypeScript/JS to replace: 784 lines in 18 files; its tests: 0 lines, about 0 cases
+- `info` Rust: 0 lines in 0 files, 0 tests
+
+**Parity ledger**
+
+- `todo` no ledger at `parity/bunto.toml`, so progress cannot be measured
+- `todo` no Rust port exists yet
+
+**Delivery**
+
+- `info` npm has `bunto` 1.4.18
+- `todo` `bun i -g bunto` installs JavaScript, not the Rust binary (`bunto` → `bin/cli.js`)
 
 ## snocommit
 
@@ -766,4 +936,23 @@
 - `todo` `bun i -g snocommit` installs JavaScript, not the Rust binary (`chore` → `dist/cli-chore.js`, `docs` → `dist/cli-docs.js`, `feat` → `dist/cli-feat.js`, … (7 commands))
 
 ## comfy-codesearch-cli
-- `todo` no checkout found under `/code/snomiao/comfy-codesearch-cli`
+
+**Checkout**
+
+- `info` `/code/snomiao/comfy-codesearch-cli/tree/main` on `main` at `7ea1fb8`
+
+**Code**
+
+- `info` TypeScript/JS to replace: 141 lines in 1 files; its tests: 0 lines, about 0 cases
+- `info` Rust: 0 lines in 0 files, 0 tests
+
+**Parity ledger**
+
+- `todo` no ledger at `parity/comfy-codesearch-cli.toml`, so progress cannot be measured
+- `todo` no Rust port exists yet
+
+**Delivery**
+
+- `warn` `rs/Cargo.toml` is missing or unreadable
+- `info` npm has `comfy-codesearch` 1.0.0
+- `todo` `bun i -g comfy-codesearch` installs JavaScript, not the Rust binary (`comfy-codesearch` → `cli.ts`)

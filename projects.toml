@@ -65,8 +65,10 @@ name = "codehost"
 repo = "snomiao/codehost"
 npm = "codehost"
 crate = "codehost"
-ts = ["src"]
-keep_ts = { "worker" = "Cloudflare Worker" }
+manifest = "rs/Cargo.toml"
+ts = ["src", "packages/ws-provision/src"]
+rust = ["rs/src"]
+keep_ts = { "worker" = "Cloudflare Worker (signaling room, /cdn proxy); the daemon only talks to it", "src/web" = "the codehost.dev page, its Service Worker and SharedWorker; runs in a browser", "src/main.tsx" = "page entry; runs in a browser", "src/App.tsx" = "legacy web terminal page; runs in a browser", "src/components" = "legacy web terminal page (xterm.js); runs in a browser" }
 
 [[project]]
 name = "fbi-proxy"
@@ -92,7 +94,10 @@ name = "dotenvdotenc"
 repo = "snomiao/dotenvdotenc"
 npm = "dotenvdotenc"
 crate = "dotenvdotenc"
+manifest = "rs/Cargo.toml"
 ts = ["."]
+rust = ["rs/src"]
+ignore = ["rs", "skills"]
 
 [[project]]
 name = "qqdocs"
@@ -115,7 +120,9 @@ name = "chatwork-cli"
 repo = "snomiao/chatwork-cli"
 npm = "chatwork-cli"
 crate = "chatwork-cli"
-ts = ["."]
+manifest = "rs/Cargo.toml"
+ts = ["ts"]
+rust = ["rs/src"]
 
 [[project]]
 name = "genvx"
@@ -176,4 +183,7 @@ name = "comfy-codesearch-cli"
 repo = "snomiao/comfy-codesearch-cli"
 npm = "comfy-codesearch"
 crate = "comfy-codesearch"
+manifest = "rs/Cargo.toml"
 ts = ["."]
+rust = ["rs/src"]
+ignore = ["rs"]
