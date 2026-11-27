@@ -97,7 +97,9 @@ jobs:
         [real-home] toy where rustify-smoke- HOME USERPROFILE => HOME: !> :inside
       package: tests/e2e/toy/package.json
       # Stands for a project's parity tests: the freshly built binary is there
-      # and runs, and so is the parity runner.
+      # and runs, and so is the parity runner, on every system a project may
+      # ask for (Git Bash on Windows).
+      parity-platforms: '["linux-x64", "linux-arm64", "darwin-arm64", "darwin-x64", "win32-x64", "win32-arm64"]'
       parity: |
         "$RUSTIFY_BIN_DIR/toy" --version | grep -q "version=0.0.0-ci."
         node "$RUSTIFY_PARITY" --cases tests/e2e/toy/parity.json --ts "$RUSTIFY_BIN_DIR/toy" --rs "$RUSTIFY_BIN_DIR/toy"
