@@ -1,5 +1,9 @@
 # genvx
 
+> **Set aside (2026-11-27).** genvx is deprecated in favour of
+> dotenvdotenc (snomiao/genvx PR #3); no more porting work goes into it. What
+> follows is the record of the pilot port.
+
 The first project ported end to end, and the pilot for
 [porting.md](porting.md). snomiao/genvx PR #2, read at `8809766`.
 

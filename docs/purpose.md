@@ -35,6 +35,17 @@ lists is public, and says only the line when one is not.
 
 Start with `agent-yes` and `slack-hub`.
 
+### Set aside by the owner
+
+No more porting work goes into these, though they stay in `projects.toml`
+and their ledgers stay as a record (2026-11-27):
+
+- `genvx`: deprecated in favour of `dotenvdotenc`, which the owner uses
+  instead (deprecation note: snomiao/genvx PR #3). Its Rust port, snomiao/genvx
+  PR #2, stays as it is.
+- `gchat-cli` and `chatwork-cli`: rarely used. gchat-cli's port (snomiao/gchat-cli
+  PR #2) stays as it is; chatwork-cli's was never pushed.
+
 ## Where things are
 
 - [Latest status](status.md) — written by `rustify audit --write`
