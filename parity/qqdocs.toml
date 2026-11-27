@@ -1,0 +1,471 @@
+# Parity ledger for qqdocs. Format and rules: parity/README.md.
+#
+# Written with the port, on the project's branch build/rust-port (the crate
+# is rs/ there; read this ledger with `rustify audit qqdocs --at <that
+# worktree>`). The TypeScript was read in full at ea064c4 and is untouched:
+# bin/qqdocs.ts, src/index.ts, src/env.ts, src/config.ts.
+#
+# How the two fit together. The Rust binary is meant to be the installed
+# command. It answers the commands that only read (and `usage`), in the plain
+# spellings of their arguments; every other invocation goes to bin/qqdocs.ts,
+# which bun runs as before. Status here is what the binary does on its own,
+# so what goes back is `missing`.
+#
+# Where the binary answers at all. Only on a machine it can vouch for, and
+# that is a small part of the machines today. All of these have to hold:
+# - neither standard output nor standard error is a terminal;
+# - the machine's zone is UTC by name (TZ is UTC, Etc/UTC or Etc/GMT±N, or
+#   TZ is not set and /etc/localtime links to UTC), and it is not Windows;
+# - there is no package.json, tsconfig.json or jsconfig.json in the current
+#   directory or in any directory above it;
+# - no proxy, NODE_* or BUN_* variable, no bunfig.toml, and any .env file and
+#   config.yaml in the plain forms.
+# So: CI jobs, containers and servers that run in UTC, outside a JavaScript
+# project. A person's own computer, set to the zone they live in, gets the
+# JavaScript for every command, as does any command run from inside a
+# JavaScript or TypeScript project. Each of these has its own entry below
+# with the reason; the second and third were added after an independent
+# verification showed the binary answering differently there.
+#
+# What stays in the JavaScript, and why. Every command that creates, changes
+# or deletes something. The TypeScript reports a failed call through yargs:
+# the command's help, then the error as bun prints it, with a source excerpt
+# and a stack trace of the installed files. That text cannot be reproduced,
+# and after a write the invocation can no longer be handed back (the
+# JavaScript would write a second time). For a command that reads, handing
+# back is safe: nothing has been printed, counted or stored, and the
+# JavaScript asks the service again (see "errors" for what that costs).
+#
+# Proofs. All were run and seen passing on Linux x64 (glibc build) with
+# bun 1.4.0 and node 20 on 2026-11-27, against the release binary built from
+# build/rust-port at 8c1c6f5:
+# - rs/parity.json (written by rs/parity.gen.mjs): 910 cases through
+#   rustify's parity runner, TypeScript against TypeScript first (all the
+#   same), then TypeScript against the binary. 304 of them, named `x …`, were
+#   written by the verification. No case reaches the service:
+#   rs/parity/with-mock.mjs runs each side against a stand-in on 127.0.0.1
+#   that answers from the case's own script and records every request. The
+#   TypeScript, whose endpoint is a constant, is pointed there by a bun
+#   preload (rs/parity/seam.ts) that also ends the process on any other
+#   address; the binary by QQDOCS_PARITY_MCP_URL. Compared: stdout, stderr,
+#   the exit code, every request (the body byte for byte, Content-Type, the
+#   token, which calls went out at the same time) and everything under the
+#   home directory (names, modes, contents). Normalised: the two timestamps
+#   the program writes itself (`cachedAt`, `syncedAt`). Six cases leave the
+#   home directory out: in five the TypeScript's own count there depends on
+#   timing (see "the call counter"), in one HOME is empty.
+# - the same cases with `--handback QQDOCS_PACKAGE_ROOT=bin/qqdocs.ts`, which
+#   shows who answered: 567 cases were answered by the binary and 343 were
+#   handed back, each as its case says. Of the 343, 255 go back at once (a
+#   command that is not ported, a spelling that is yargs's, a state of the
+#   machine) and 88 after the stand-in answered with something the binary
+#   leaves to the TypeScript; those compare which requests were made, not
+#   how many. A `verified` below rests only on cases the binary answered.
+#   One case (`usage: the system's zone when TZ is not set`) is answered by
+#   the binary only where the machine's own zone is UTC, as here and, it is
+#   assumed, on the machines of CI.
+# - `cargo test` in rs/: 27 unit tests and rs/tests/handback.rs (13 tests
+#   with the binary alone and a stand-in bun) for what the cases cannot set
+#   up.
+# - run once by hand, not part of CI: number_to_string against bun's own
+#   spelling of 3.2 million doubles (ties, powers of two and their
+#   neighbours, subnormals; no difference); the argument gate against the
+#   project's own yargs chain on 120,000 generated command lines (the
+#   verification's harness; 26,424 taken by the binary, no difference);
+#   `usage calibrate` under every zone name the binary answers for at 24
+#   shifted hours of the day (672 runs, the same file each time; see "the
+#   call counter").
+#
+# Not covered by any proof: the real service (never contacted), a terminal,
+# macOS and Windows (the parity job runs on Linux), the musl build the
+# pipeline ships (built in CI only; this machine has no C compiler for it),
+# bun versions other than 1.4.0.
+#
+# Rust-only behaviour, with no TypeScript counterpart, for the owner to bless
+# or remove:
+# - QQDOCS_NO_NATIVE=1 hands every invocation back (the template's way out).
+# - QQDOCS_PACKAGE_ROOT tells the binary where the package is.
+# - QQDOCS_PARITY_MCP_URL replaces the endpoint, for the parity cases. It is
+#   compiled into the release binary, because the cases run against the
+#   binary that ships. Only `http://127.0.0.1:<port>/…` is accepted; with any
+#   other value a ported command prints one line and exits 2 without
+#   contacting anything. Whoever can set it in a user's environment makes
+#   the binary send that user's token, in clear text, to a port on the same
+#   machine. And it is the binary's alone: when a command is handed back
+#   while it is set, the JavaScript knows nothing of it and asks the real
+#   service (the cases prevent that with a bun of their own on PATH).
+# - A binary without the npm package beside it answers what it would hand
+#   back with one line and exit code 1.
+# - A panic before anything was printed or written hands the invocation back.
+# - What the service can see: the binary's requests carry
+#   `User-Agent: qqdocs/<version>` and `Accept-Encoding: gzip`, where bun
+#   sends `User-Agent: Bun/<version>`, `Accept-Encoding: gzip, deflate, br,
+#   zstd` and `Connection: keep-alive`. Method, address, Content-Type,
+#   Authorization and body are the same (compared in every case).
+# - A command that is handed back after it has asked the service asks again
+#   from the start in the JavaScript, and the binary's own calls are not in
+#   usage.json (see "errors").
+# - The first call ever does not wait two seconds (see "the call counter").
+
+reconciled = "ea064c4"
+
+# ───────────────────────────── Commands ─────────────────────────────
+
+[[feature]]
+name = "tools [pattern]"
+status = "verified"
+ts = "bin/qqdocs.ts:60; src/index.ts:1107 cmdTools; src/index.ts:267 listTools"
+rs = "rs/src/commands/tools.rs"
+proof = "rs/parity.json the `tools:` and `x tools:` cases (55 run by Rust)"
+note = "The pattern is compared in lower case. Rust lower-cases ASCII and leaves characters without case (Chinese) alone; text with other cased letters (É) goes back, where JavaScript's own tables decide. A description cut at 100 characters in the middle of a character outside the basic plane goes back too. `tools help` is yargs's (see `--help`)."
+
+[[feature]]
+name = "raw <tool> [--json], for the tools that read"
+status = "verified"
+ts = "bin/qqdocs.ts:63; src/index.ts:1119 cmdRaw; src/index.ts:1424 parseJsonObject"
+rs = "rs/src/commands/raw.rs"
+proof = "rs/parity.json the `raw:` and `x raw:` cases (20 run by Rust), and `x number: raw sends 1459077941253781.25 as JavaScript writes it`"
+note = "Taken by name for the twelve tools the TypeScript itself reads with: get_content, manage.folder_list, manage.get_privilege, manage.import_progress, manage.query_file_info, manage.query_folder_meta, manage.recent_online_file, manage.search_file, query_space_list, query_space_node, smartcanvas.find, smartcanvas.read. The arguments are sent the way JSON.parse and JSON.stringify would."
+
+[[feature]]
+name = "raw <tool>, for every other tool"
+status = "missing"
+ts = "src/index.ts:1119 cmdRaw"
+note = "Goes back at once (5 cases). A failed call is handed to the JavaScript, which calls again; that must not happen to a tool that creates or deletes, and Rust cannot know what a tool it has never heard of does. A new reading tool has to be added to the list in rs/src/commands/raw.rs."
+
+[[feature]]
+name = "ls / list [folder], in a pipe or a file"
+status = "verified"
+ts = "bin/qqdocs.ts:67; src/index.ts:681 cmdDocsLs; src/index.ts:776 plain mode; src/index.ts:239 resolveFolderId; src/index.ts:665 fetchDates; src/index.ts:655 formatRelativeDate"
+rs = "rs/src/commands/ls.rs"
+proof = "rs/parity.json the `ls:` and `x ls:` cases (115 run by Rust)"
+note = "Recent documents (-n/--count, -p/--page), a folder by id, `root` or a path of titles, --json, and -d/--dates with its calls made at the same time. `fetching…` on standard error is written when the command has succeeded, not before the request: the same bytes in a pipe or a file. With --dates a document whose call fails has no date and is not counted, as in the TypeScript (27 cases: a JSON-RPC error, a status that is not 2xx, an answer that is not JSON, and the statuses the TypeScript asks again for, up to four attempts); one of them shows 31 requests for 30 documents on both sides. Only a failure that is the runtime's to judge still goes back with --dates (the connection, a redirect, a Retry-After that is a date; 5 cases), and then the JavaScript makes all the calls again. A last-modified time in another notation than a number or plain digits goes back."
+
+[[feature]]
+name = "ls on a terminal (the cached list, redrawn in place)"
+status = "missing"
+ts = "src/index.ts:695"
+note = "On a terminal `ls` prints ~/.qqdocs/cache.json first, fetches, and rewrites the lines with cursor movements, links, owner and date, and stores the fresh list. Not ported; see `output on a terminal`."
+
+[[feature]]
+name = "search <query>"
+status = "verified"
+ts = "bin/qqdocs.ts:74; src/index.ts:804 cmdDocsSearch; src/index.ts:261 searchDocs"
+rs = "rs/src/commands/search.rs"
+proof = "rs/parity.json the `search:` and `x search:` cases (45 run by Rust)"
+note = "With --json. The query goes out exactly as typed (quotes, blanks, digits, decomposed Unicode). The query `help` is yargs's (see `--help`)."
+
+[[feature]]
+name = "read <ref>, with the five-minute document cache"
+status = "verified"
+ts = "bin/qqdocs.ts:78; src/index.ts:816 cmdDocsRead; src/index.ts:293 readDoc; src/index.ts:1534 loadDocCache; src/index.ts:1543 getCachedDoc; src/index.ts:1551 setCachedDoc"
+rs = "rs/src/commands/read.rs"
+proof = "rs/parity.json the `read:` and `x read:` cases (69 run by Rust), one of which reads what the TypeScript cached"
+note = "The info and the content call go out at the same time, as in the TypeScript. ~/.qqdocs/doc-cache.json is written byte for byte the same (stale entries pruned, key order, number format). When the info call fails the content is printed without a title line and remembered so, as in the TypeScript (8 cases, with the same requests and counts); only when its connection fails does the command go back, and the JavaScript then makes both calls again. A failed content call is an error the TypeScript reports. The very first run on a machine (no ~/.qqdocs yet) goes back: there the TypeScript's two counts overwrite each other."
+
+[[feature]]
+name = "rename / mv <ref> <title>"
+status = "missing"
+ts = "bin/qqdocs.ts:81; src/index.ts:838 cmdDocsRename"
+note = "Changes the document. Handed back (2 cases, and rs/tests/handback.rs)."
+
+[[feature]]
+name = "open <ref>"
+status = "missing"
+ts = "bin/qqdocs.ts:85; src/index.ts:860 cmdDocsOpen; src/index.ts:1612 openUrlInBrowser"
+note = "Starts the default browser. Handed back; no parity case runs it. That it reaches the JavaScript with its arguments is checked by rs/tests/handback.rs and by a unit test of rs/src/commands/mod.rs."
+
+[[feature]]
+name = "cp / copy <ref> [--title]"
+status = "missing"
+ts = "bin/qqdocs.ts:88; src/index.ts:848 cmdDocsCopy"
+note = "Creates a document. Handed back (2 cases)."
+
+[[feature]]
+name = "delete / rm <ref> (confirm code, then --confirm)"
+status = "missing"
+ts = "bin/qqdocs.ts:92; src/index.ts:870 cmdDocsDelete; src/index.ts:314 createDeleteConfirmCode"
+note = "Handed back (2 cases), the first step too, although it only reads: the two steps share the document cache and belong together."
+
+[[feature]]
+name = "info <ref>"
+status = "verified"
+ts = "bin/qqdocs.ts:96; src/index.ts:942 cmdDocsInfo; src/index.ts:1509 printObject"
+rs = "rs/src/commands/info.rs; rs/src/commands/mod.rs print_object"
+proof = "rs/parity.json the `info:` and `x info:` cases (16 run by Rust)"
+note = "With --json. An answer that is not an object goes back unless --json prints it."
+
+[[feature]]
+name = "import / upload <path>"
+status = "missing"
+ts = "bin/qqdocs.ts:100; src/index.ts:997 cmdDocsImport; src/index.ts:422 importLocalFile; src/index.ts:1489 uploadImportBytes"
+note = "Creates a document; uploads the file to an address the service names. Handed back (2 cases)."
+
+[[feature]]
+name = "perm get <ref>"
+status = "verified"
+ts = "bin/qqdocs.ts:117; src/index.ts:1076 cmdDocsPermission; src/index.ts:1322 describeDocPermissionPolicy"
+rs = "rs/src/commands/perm.rs"
+proof = "rs/parity.json the `perm get:` and `x perm get:` cases (25 run by Rust)"
+
+[[feature]]
+name = "perm set <ref> <policy>"
+status = "missing"
+ts = "bin/qqdocs.ts:120; src/index.ts:1086 cmdDocsSetPermission"
+note = "Changes the document. Handed back (1 case)."
+
+[[feature]]
+name = "space list"
+status = "verified"
+ts = "bin/qqdocs.ts:126; src/index.ts:1129 cmdSpaceList; src/index.ts:454 listSpaces"
+rs = "rs/src/commands/space.rs list"
+proof = "rs/parity.json the `space list:` and `x space list:` cases (19 run by Rust)"
+note = "-p/--page, --scope, --order, --asc."
+
+[[feature]]
+name = "space create <title>"
+status = "missing"
+ts = "bin/qqdocs.ts:137; src/index.ts:1146 cmdSpaceCreate"
+note = "Creates a space. Handed back (1 case)."
+
+[[feature]]
+name = "space ls <space>"
+status = "verified"
+ts = "bin/qqdocs.ts:141; src/index.ts:1155 cmdSpaceLs; src/index.ts:1453 printSpaceNodes"
+rs = "rs/src/commands/space.rs ls"
+proof = "rs/parity.json the `space ls:` and `x space ls:` cases (11 run by Rust)"
+note = "--parent, -p/--page."
+
+[[feature]]
+name = "space mkdir <space> <title>"
+status = "missing"
+ts = "bin/qqdocs.ts:146; src/index.ts:1167 cmdSpaceMkdir"
+note = "Creates a node. Handed back (1 case)."
+
+[[feature]]
+name = "space mkdoc <space> <title>"
+status = "missing"
+ts = "bin/qqdocs.ts:152; src/index.ts:1176 cmdSpaceMkdoc"
+note = "Creates a node. Handed back (1 case)."
+
+[[feature]]
+name = "space link <space> <title> <url>"
+status = "missing"
+ts = "bin/qqdocs.ts:163; src/index.ts:1189 cmdSpaceLink"
+note = "Creates a node. Handed back (1 case)."
+
+[[feature]]
+name = "space rm <space> <node>"
+status = "missing"
+ts = "bin/qqdocs.ts:175; src/index.ts:1203 cmdSpaceRm"
+note = "Deletes a node. Handed back (1 case)."
+
+[[feature]]
+name = "space move <ref> <space>"
+status = "missing"
+ts = "bin/qqdocs.ts:180; src/index.ts:1217 cmdSpaceMove"
+note = "Moves a document. Handed back (1 case)."
+
+[[feature]]
+name = "canvas read <ref>"
+status = "verified"
+ts = "bin/qqdocs.ts:187; src/index.ts:1231 cmdCanvasRead; src/index.ts:573 readCanvas; src/index.ts:586 readCanvasAll"
+rs = "rs/src/commands/canvas.rs read"
+proof = "rs/parity.json the `canvas read:` and `x canvas read:` cases (18 run by Rust)"
+note = "--page, --size, --next, and --all following the tokens (a hundred pages at most)."
+
+[[feature]]
+name = "canvas find <ref> <query>"
+status = "verified"
+ts = "bin/qqdocs.ts:194; src/index.ts:1247 cmdCanvasFind"
+rs = "rs/src/commands/canvas.rs find"
+proof = "rs/parity.json the `canvas find:` and `x canvas find:` cases (7 run by Rust)"
+
+[[feature]]
+name = "canvas edit <ref> <action>"
+status = "missing"
+ts = "bin/qqdocs.ts:198; src/index.ts:1259 cmdCanvasEdit; src/index.ts:614 editCanvas"
+note = "Changes the document. Handed back (1 case)."
+
+[[feature]]
+name = "flowchart <title>"
+status = "missing"
+ts = "bin/qqdocs.ts:205; src/index.ts:980 cmdFlowchart"
+note = "Creates a document. Handed back (2 cases)."
+
+[[feature]]
+name = "sync"
+status = "verified"
+ts = "bin/qqdocs.ts:216; src/index.ts:1600 cmdDocsSync; src/index.ts:1575 syncDocs"
+rs = "rs/src/commands/sync.rs"
+proof = "rs/parity.json the `sync:` and `x sync:` cases (8 run by Rust)"
+note = "The two calls go out at the same time; ~/.qqdocs/cache.json is the same byte for byte. Rust writes the file before it prints `Syncing…`, so that a failed write can still be reported by the JavaScript. The very first run on a machine goes back, as for `read`."
+
+[[feature]]
+name = "usage [--tier]"
+status = "verified"
+ts = "bin/qqdocs.ts:217; src/index.ts:1820 cmdDocsUsage; src/index.ts:1786 formatUsageLines"
+rs = "rs/src/commands/usage.rs run; rs/src/usage.rs lines"
+proof = "rs/parity.json the `usage:` and `x usage:` cases (35 run by Rust)"
+note = "Needs no token and no network. A negative count goes back (the TypeScript's progress bar throws)."
+
+[[feature]]
+name = "usage calibrate"
+status = "verified"
+ts = "bin/qqdocs.ts:218; src/index.ts:1836 cmdDocsUsageCalibrate"
+rs = "rs/src/commands/usage.rs calibrate; rs/src/usage.rs calibrate"
+proof = "rs/parity.json the `calibrate:` and `x calibrate:` cases (23 run by Rust)"
+note = "--today, --month, --tier, as whole numbers written plainly."
+
+[[feature]]
+name = "create <title>"
+status = "missing"
+ts = "bin/qqdocs.ts:225; src/index.ts:950 cmdDocsCreate; src/index.ts:327 createDoc"
+note = "Creates a document. Handed back (1 case)."
+
+[[feature]]
+name = "--help, --version, completion, usage errors, and the word `help`"
+status = "missing"
+ts = "bin/qqdocs.ts:240 demandCommand, completion, strict, help, showHelpOnFail"
+rs = "rs/src/args.rs; rs/src/commands/mod.rs parse"
+note = "yargs's, and they stay there: its text follows the user's locale and the terminal's width. Rust takes a command line only in the plain spellings (rs/src/args.rs: `--name value`, `--name=value`, `-n value`, bare flags, each once, numbers as plain digits) and hands back the rest: unknown or repeated options, `-n5`, `--no-json`, `--json=true`, values starting with a dash or a quote, empty arguments, options before the command or between a command and its subcommand. --version is handed back on purpose: yargs reads it from package.json (and prints `unknown` when installed with bun). yargs also prints a command's help when the last word that is not an option or an option's value is `help` (`qqdocs search help`, `qqdocs ls -d help`); which word that is depends on what yargs knows about the options at each of its passes, so Rust hands back every command line that has the word `help` as an argument anywhere (24 `help:` cases, 20 of them handed back; `Help`, `helpdesk` and `--parent=help` are ordinary). Before the verification the binary ran `search help` as a search. 91 cases are handed back as yargs's, these 20 among them."
+
+# ───────────────────────── Shared behaviour ─────────────────────────
+
+[[feature]]
+name = "the MCP call: one JSON-RPC POST per call, the answer from structuredContent or content[0].text"
+status = "verified"
+ts = "src/index.ts:98 mcpRequest; src/index.ts:127 mcpCall; src/index.ts:144 mcpListTools"
+rs = "rs/src/mcp.rs"
+proof = "rs/parity.json: the request log compared in every case, and the `service:` cases the binary answers (5)"
+note = "Method, address, Content-Type, Authorization and body are compared and equal. Not the same, and not compared: User-Agent, Accept-Encoding, Connection (see the top of this file). The client is ureq with rustls and Mozilla's roots, as bun brings its own roots; no proxy, no redirects. Never run against the real service."
+
+[[feature]]
+name = "errors from the service, and trying again with a back-off"
+status = "partial"
+ts = "src/index.ts:65 fetchWithRetry; src/index.ts:111; src/index.ts:1625 computeRetryDelayMs; src/index.ts:1637 parseRetryAfterMs"
+rs = "rs/src/mcp.rs fetch, request, retry_delay"
+note = "Reproduced only where the TypeScript catches the error and goes on: the dates of `ls --dates` and the title of `read` (35 cases the binary answers). There a JSON-RPC error, a status that is not 2xx, an answer that is not a JSON object and a result without content are the failure they are in the TypeScript (with the call counted or not as there), and 408, 425, 429, 500, 502, 503 and 504 are asked again up to four times, after the seconds Retry-After names or half a second doubled each time plus up to a quarter at random. Everywhere else the error ends the command and the TypeScript reports it in bun's words: Rust makes one attempt and hands the invocation back, and the JavaScript starts over (18 `service:` cases, and one or more per command). What that costs: the JavaScript repeats every call the binary had already made, so the service sees those twice plus the binary's one failed attempt, and only the JavaScript's calls are counted in usage.json. For a command of one call that is one request more; for `read` by title or `canvas read --all` it can be several calls that count against the day's quota twice. Common whenever the quota is used up or the token is wrong. Also handed back, in every place: no connection, a redirect, a Retry-After that is a date, a body that starts with a byte order mark."
+
+[[feature]]
+name = "answers of another shape than the TypeScript was written for"
+status = "partial"
+ts = "src/index.ts:127 mcpCall (typed as any, never checked)"
+rs = "rs/src/commands/mod.rs template, prop; rs/src/json.rs"
+note = "A null where an object is expected, a list that is not a list, a title that is an object: the TypeScript throws a TypeError in bun's words or prints JavaScript's own text for the value. Rust prints what a template literal makes of text, numbers, booleans, null and a missing field (`undefined`), and hands back everything else, after the calls it has made (see `errors` for what that costs; in some of these the TypeScript itself ends without an error). Covered per command by its `late` cases."
+
+[[feature]]
+name = "the token: TENCENT_DOCS_TOKEN, .env files in the current directory, ~/.qqdocs/.env.local"
+status = "verified"
+ts = "src/index.ts:58 getToken; src/env.ts:9 loadEnv; bin/qqdocs.ts:1 (bun loads .env files before the program starts)"
+rs = "rs/src/env.rs startup, read_plain_dotenv, token_of_env_local"
+proof = "rs/parity.json the `token:` and `x token:` cases (39 run by Rust)"
+note = "The order: the environment, then what bun loads from the current directory (.env.development.local, .env.local, .env.development, .env), then ~/.qqdocs/.env.local as src/env.ts reads it (quotes and a trailing comment stay part of the token there). A missing or empty token is the TypeScript's error to report and goes back; so does a token that is not plain ASCII."
+
+[[feature]]
+name = "a .env file in syntax bun interprets, or one that steers bun"
+status = "missing"
+ts = "bin/qqdocs.ts:1"
+rs = "rs/src/env.rs read_plain_dotenv"
+note = "Any of the four files bun loads from the current directory has to be in the plain subset (KEY=value, quoted or not, comments), whether or not it holds the token. `$VAR`, escapes, `export`, values over several lines, the same key twice, or a variable such as NODE_ENV, TZ, HOME, a proxy or QQDOCS_*: the invocation goes back (22 cases). Projects with elaborate .env files are common, so running qqdocs inside one may see no speed-up."
+
+[[feature]]
+name = "a token in .env.local beside the package or in the two directories above it"
+status = "missing"
+ts = "src/env.ts:13"
+rs = "rs/src/env.rs startup"
+note = "src/env.ts also looks there (for running from a checkout or a monorepo). Rust does not read those: if one of the three files exists the invocation goes back. Checked by rs/tests/handback.rs, not by a parity case."
+
+[[feature]]
+name = "a directory inside a JavaScript project: package.json, tsconfig.json, jsconfig.json here or above"
+status = "missing"
+ts = "bin/qqdocs.ts:1 (bun reads them before the program starts)"
+rs = "rs/src/env.rs startup, PROJECT_FILES"
+note = "Found by the verification. bun reads these three files in the current directory and in every directory above it, whatever script it runs, and writes what it finds wrong with them to standard error before the program's own output: a file it cannot parse, a key given twice, a `type` it does not know, an `exports` it does not accept. It takes comments and trailing commas, so what it accepts in silence is its parsers' to say. Rust therefore hands back whenever a file of one of these names exists in the current directory or above it, in any state (20 cases handed back, and rs/tests/handback.rs for directories further up; one more case shows that files of other names change nothing). Files of other names (package-lock.json, bun.lock, tsconfig.base.json) and project files below the current directory or above the installed package are not read by bun and change nothing. This is common: a command run from anywhere inside a JavaScript or TypeScript project gets the JavaScript. A narrower rule (taking a package.json that is plain JSON with fields bun does not warn about) would need its own proof."
+
+[[feature]]
+name = "config.yaml: the tier"
+status = "verified"
+ts = "src/config.ts:33 loadConfig; src/config.ts:24 configSearchPaths"
+rs = "rs/src/env.rs plain_config_tier"
+proof = "rs/parity.json the cases about config.yaml (15 run by Rust: `usage:`, `x usage:`, two `ls:` and one `x search:`)"
+note = "The four places in order (.qqdocs/config.yaml and .qqdocs.config.yaml in the current directory, then in the home directory); `tier` is the only key the program uses."
+
+[[feature]]
+name = "config.yaml beyond plain `key: value` lines"
+status = "missing"
+ts = "src/config.ts:36"
+rs = "rs/src/env.rs plain_config_tier"
+note = "The TypeScript parses the file with the yaml package. Rust reads blank lines, `#` lines and `key: value` with a bare word on each side; quotes, a comment after a value, lists, nesting, CRLF, a tier that is not free, member or plus: the invocation goes back (14 cases). The file the program itself suggests (`tier: member`) is read."
+
+[[feature]]
+name = "the call counter: ~/.qqdocs/usage.json, its lock, the inferred tier"
+status = "verified"
+ts = "src/index.ts:1685 loadUsage; src/index.ts:1694 localDateStr; src/index.ts:1722 withUsageLock; src/index.ts:1748 incrementUsage"
+rs = "rs/src/usage.rs; rs/src/clock.rs; rs/src/env.rs fixed_zone"
+proof = "rs/parity.json: the home directory compared in every case; the `ls:` cases on counting, pruning, the tiers and the lock; the `zone:` and `x machine: TZ=` cases the binary answers (34: UTC, Etc/UTC and every Etc/GMT±N), and `usage: the system's zone when TZ is not set`"
+note = "Rust counts when the command has succeeded, the TypeScript after each call; the file is the same in the end. The count is kept per local day, which Rust works out by arithmetic for the zones that are a fixed number of hours from UTC (see the next entry for all others). For those, `usage calibrate` under bun and under the binary wrote the same file under all 28 of those zone names at 24 hours of the day, with the clock shifted by a preloaded library (672 runs by hand, over three calendar days, the binary answering every one). A counter file of another shape than the program writes goes back. Rust-only: on the first call ever the TypeScript waits two seconds for a lock file it cannot create (no ~/.qqdocs yet); Rust does not wait. Where the TypeScript's own count depends on timing, the cases do not compare it: two calls at once on that first run overwrite each other's count (`read`, `sync`: handed back), and when one of two calls at once fails the process ends while the other's count is still being written (lost, or a lock file left behind). The verification measured a third: with about a thousand calls at once (`ls -n 1000 --dates`) the TypeScript's lock gives up after two seconds and loses counts (946 of 1001), where Rust counts all."
+
+[[feature]]
+name = "the local day in a zone that is not UTC: every zone named after a place"
+status = "missing"
+ts = "src/index.ts:1694 localDateStr"
+rs = "rs/src/env.rs fixed_zone"
+note = "Found by the verification. JavaScript takes the local day from the zone data inside its runtime (ICU, in bun), not from /usr/share/zoneinfo; the two are of different releases and disagree wherever a zone's rules changed in between. For America/Vancouver, bun 1.4.0 and tzdata 2026b are an hour apart, and between 07:00 and 08:00 UTC the binary (which then read the system's files) counted calls on another day than the TypeScript. The binary cannot know which release a user's bun carries, so it now answers only where the zone is a fixed number of hours from UTC by its very name: TZ set to UTC, Etc/UTC, Etc/GMT+1…+12 or Etc/GMT-1…-14, or TZ not set and /etc/localtime a link to UTC or Etc/UTC (with /etc/timezone, if there is one, saying the same). Everything else goes back before anything is looked at, for every ported command, since each of them reads or writes the counter (43 cases): Asia/Shanghai, Europe/London, any other place; TZ in another notation; no link at /etc/localtime; and Windows altogether. This is the common case for a person's own computer: there the binary answers nothing yet. For the owner to decide: accept the system's zone files as the source of the day (one hour off, for part of the day, wherever the two data sets differ), or count by UTC day on both sides."
+
+[[feature]]
+name = "the quota warning after a command"
+status = "verified"
+ts = "bin/qqdocs.ts:248; src/index.ts:1804 printUsageWarningIfNeeded"
+rs = "rs/src/usage.rs warning; rs/src/main.rs finish"
+proof = "rs/parity.json the `ls:` cases at 78%, 80%, 95% and over, with an inferred tier and a tier from config.yaml, and the cases where the word `usage` silences it"
+note = "Copied as it is: the colour is switched on although there is no terminal, and never off; any argument that is the word `usage` (a search query, a folder name) silences the warning."
+
+[[feature]]
+name = "JSON the JavaScript way: --json output, request bodies, the files under ~/.qqdocs"
+status = "verified"
+ts = "src/index.ts:102; src/index.ts:687; src/index.ts:1560; src/index.ts:1766"
+rs = "rs/src/json.rs"
+proof = "rs/parity.json `ls: --json keeps JavaScript's key order and number format`, `info: JavaScript's key order and number format`, `raw: the arguments go out the way JavaScript writes them`, the six `x number:` cases, and the files compared in every case"
+note = "Doubles in JavaScript's number format, index-like keys first, a repeated key keeping its first place and last value, JavaScript's escapes. The digits of a number are worked out from the definition in ECMAScript (the fewest that read back, the closest, the even one of two equally close) and no longer taken from Rust's own formatting, which takes the upper of two equally close spellings: the verification found 1459077941253781.25 written …81.3 where JavaScript writes …81.2. Checked by hand against bun on 3.2 million doubles. A string holding half a surrogate pair, a key `__proto__` and nesting deeper than 256 go back."
+
+[[feature]]
+name = "output on a terminal: links, colours, dimmed text"
+status = "missing"
+ts = "src/index.ts:1501 isTTY; src/index.ts:1504 formatLink; src/index.ts:653 dim; src/index.ts:1777 usageColor; src/index.ts:1812"
+rs = "rs/src/env.rs startup"
+note = "When standard output or standard error is a terminal, every invocation goes back, before anything else is looked at (rs/tests/handback.rs). The parity runner has no terminal, so nothing printed there could be compared. This is the common case for a person typing the command: they see no speed-up yet."
+
+[[feature]]
+name = "proxy and certificate variables, NODE_* and BUN_* variables, bunfig.toml"
+status = "missing"
+ts = "bin/qqdocs.ts:1"
+rs = "rs/src/env.rs steers_the_runtime"
+note = "HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, SSL_CERT_FILE, SSL_CERT_DIR, any NODE_* variable, any BUN_* variable other than BUN_INSTALL*, a bunfig.toml in the current directory or the user's configuration: bun and its fetch act on these in their own ways, and the invocation goes back (9 cases). A machine behind a proxy sees no speed-up."
+
+[[feature]]
+name = "the second command name: qqdoc"
+status = "ported"
+ts = "bin/qqdocs.ts:8 resolveScriptName"
+rs = "rs/src/main.rs"
+note = "package.json installs bin/qqdocs.ts under both names. The TypeScript uses the name only for yargs's help text, which stays in the JavaScript, and under bun it sees its real path whichever name was typed. The binary does not look at its own name. No parity case runs it as `qqdoc`; rs/tests/handback.rs shows that the binary under both names answers the same and hands the same script back, and the install rehearsal runs `qqdoc --help` and `qqdoc usage`."
+
+[[feature]]
+name = "macOS"
+status = "ported"
+ts = "src/index.ts:1519; src/index.ts:1606"
+rs = "rs/src/env.rs home_dir, fixed_zone"
+note = "Never run there. The crate without its HTTPS client type-checks for aarch64-apple-darwin (cargo check --no-default-features); with it, ring needs a C compiler for the target, which only the pipeline has. The zone is read from the name /etc/localtime links to, as on Linux, so a Mac set to a place's zone gets the JavaScript. The pipeline's install test runs `usage` and `usage calibrate` on every platform; it cannot tell whether the binary or the JavaScript answered."
+
+[[feature]]
+name = "Windows"
+status = "missing"
+ts = "src/index.ts:1519; src/index.ts:1606"
+rs = "rs/src/env.rs fixed_zone, home_dir"
+note = "Every ported command goes back on Windows: the binary has no way there to tell that the zone is UTC, and how bun maps Windows' zones is its own. The crate without its HTTPS client type-checks for x86_64-pc-windows-msvc. Never run there."
+
+[[feature]]
+name = "the library: `import … from \"qqdocs\"`"
+status = "missing"
+ts = "src/index.ts:214"
+note = "package.json exports src/index.ts, and the README documents the functions (listRecent, readDoc, createDoc, …). A Rust binary replaces the command, not this. As long as the package ships src/ nothing changes; before the JavaScript can go, the owner has to decide what becomes of the library."

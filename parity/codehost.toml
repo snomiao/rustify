@@ -1,0 +1,1449 @@
+# Parity ledger for codehost (commands `codehost` and `ch`). Format and rules:
+# parity/README.md.
+#
+# First full pass, 2026-11-27, written by reading the code at cfba919 (v0.40.0)
+# in a clean read-only checkout. Nothing was run: not codehost, not a test, no
+# daemon, no installer; nothing was installed and no network service was
+# contacted (the signaling server at signal.codehost.dev is live and has real
+# peers). Every note comes from the source and from what the tests assert; no
+# test was seen to pass, so none is cited as a proof.
+#
+# What was read. Four readers each read a slice and listed what they found
+# (about 330 findings, many seen from two or three sides); they are merged here:
+#   commands  src/cli/index.ts, the ten files of src/cli/commands/, config,
+#             registry, workspaces, init, daemonize, self-update, open-url, git,
+#             proc, tempenv and their six test files, package.json, the release
+#             and deploy workflows, README.md, CLAUDE.md, TODO.md, docs/, public/
+#   daemon    rtc-daemon, run-server, provision-server, approver, oxmgr,
+#             oxmgr-heal, fallback-daemon, vscode, vscode-install, tunnel, the
+#             three plugin modules, src/server.ts, src/terminal-ws.ts
+#   wire      src/tunnel/, src/shared/, src/provision/, packages/ws-provision/
+#   web       src/web/, src/App.tsx, src/components/, worker/, the vite configs
+# The merger then read line by line, before writing, the 45 files of the daemon
+# and wire slices (the hand-over did not confirm them as read in full), and
+# also every file under src/cli that is not a test, daemonize.test.ts,
+# registry.test.ts, tempenv.test.ts, worker/index.ts, worker/room.ts,
+# src/web/sw.ts, rtc-client.ts, room-client.ts, tunnel-host.ts, config.ts and
+# history.ts, src/tunnel/transport.ts and rtc-datachannel.ts, public/, both
+# workflows and package.json. One file on the hand-over list does not exist at
+# this commit: src/provision/index.test.ts (the library's tests are
+# packages/ws-provision/src/index.test.ts and git-auth.test.ts).
+# Resting on one reader only, not re-read by the merger: src/web/discovery.tsx
+# (1,981 lines; searched, not read), conn-broker.ts, conn-shared-worker.ts,
+# tunnel-websocket.ts, src/components/Terminal.tsx, src/App.tsx, docs/ and
+# TODO.md (searched), CHANGELOG.md, and the bodies of config.test.ts,
+# init.test.ts and workspaces.test.ts (their test titles were read).
+# Not in the checkout at all: node_modules. Two dependencies decide
+# user-visible behaviour, @snomiao/daemon-kit (the TEMP/TMP repair, the pm2
+# helpers) and oxmgr. Their versions 0.2.0 and 0.4.0 were read in bun's install
+# cache on the reading machine, which matches package.json's ranges but is not
+# the checkout; the notes that rest on them say so.
+#
+# Second pass, the same day and under the same rules: two critics listed the
+# surface again from other angles (one by commands, environment reads,
+# subprocesses, files and exits; the other by test titles, routes, wire
+# messages and compatibility remarks). Their findings were merged, each one
+# confirmed in the code or turned down, and the ledger brought up to them:
+# four new entries, 33 existing ones extended or corrected. Claims that rest
+# on a dependency read in bun's cache (yargs 17.7.2, daemon-kit 0.2.0, the docs
+# in bun-types 1.4.5) or on runtime behaviour that was assumed, not run, say so
+# in their notes.
+#
+# How it fits together. `codehost serve|dev|expose` is one foreground process
+# (src/cli/run-server.ts). It starts the local target (`code serve-web` on a
+# loopback port under /vs/<peerId>; for expose an existing port), joins the
+# token's room on the signaling Worker over a WebSocket as a `server` peer, and
+# answers the WebRTC offers of browser tabs. Every data channel a tab opens
+# gets a tunnel host (src/tunnel/host.ts) that replays framed HTTP requests and
+# WebSockets against the local port; `serve` first offers each request to its
+# own routes under /__codehost/ (provisioning, provision-config, plugins).
+# The page (src/web, served from codehost.dev by Cloudflare Pages, never by the
+# daemon) is the other peer: its Service Worker turns /vs/<peerId>/* into
+# tunnel requests. The Worker (worker/) only keeps the room roster and relays
+# signals. `-d` and `setup` re-launch the same foreground command under a
+# process manager: oxmgr (an npm dependency with a native binary), else pm2 or
+# a Scheduled Task on Windows, else a background supervisor (unref'd, not
+# detached). Machine state is under ~/.codehost; a served root keeps its
+# provisioning hook in <root>/.codehost. packages/ws-provision is a separate library, exported as
+# codehost/provision, of which the commands use only the git credential probes.
+#
+# Status. codehost has no Rust code, so every feature below is `missing`.
+# Nothing is `dropped`: that is the owner's decision.
+#
+# Grain. One entry per command, per file the program keeps, per route, and per
+# behaviour with its own module or test file. Minor flags and the environment
+# variables that only switch one feature are in that feature's entry (the
+# variable is in the entry's name). Tunnel frames are grouped by exchange
+# (request, response, WebSocket open, messages, close, error), each opcode
+# named. What only runs in the browser has one summarising entry per area, at
+# the end. The legacy web terminal, which no command starts, has six entries.
+# Repository tooling has no entries: the package.json scripts (cli, dev,
+# dev:server, dev:signal, build, build:lib, deploy:signal, deploy:pages, start,
+# test, typecheck), the release workflow (semantic-release publishes to npm on
+# every push to main with no build, typecheck or test step) and the deploy
+# workflow (page and Worker to Cloudflare on every push to main), the vite
+# configs, portless.json and the three tsconfigs. What they mean for the
+# published package is in the `npm package contents` entry.
+#
+# Candidates to stay TypeScript (the owner decides; nothing is `dropped`):
+#   - the codehost.dev page: src/web, src/main.tsx, src/style.css, index.html,
+#     the Service Worker, the SharedWorker, the page half of the tunnel
+#     (src/tunnel/client.ts, rtc-datachannel.ts); runs in a browser
+#   - the embeddable room client (src/web/room-client.ts, dist/room-client.js)
+#   - the signaling Worker (worker/, already keep_ts)
+#   - the shared modules the page and the Worker import, which therefore stay
+#     whatever the daemon is written in: src/shared/signaling.ts,
+#     signaling-client.ts, rtc.ts, token.ts, repo.ts, tags.ts and
+#     src/tunnel/protocol.ts, transport.ts. A Rust daemon needs its own copy of
+#     the daemon's part and both copies must be kept in step
+#   - the five package.json exports and @snomiao/ws-provision: TypeScript
+#     source that other JavaScript programs import (agent-yes's `ay ws` is
+#     named as a consumer); a binary cannot satisfy an import
+#   - the provisioning library behind codehost/provision (provision,
+#     createBranch, forkWorktree, statusOf, watchStatus, parseSpec,
+#     parseSource): no codehost command calls it; its default setup script runs
+#     through Bun Shell
+#   - the self-heals of npm native addons: node-datachannel (nothing to repair
+#     once a Rust build links its own WebRTC stack) and oxmgr's binary inside
+#     node_modules
+#   - the pm2 backend on Windows (pm2 is a JavaScript program driven through
+#     @snomiao/daemon-kit)
+#   - help and usage-error text, which yargs writes and translates by locale
+#   - the installers public/install.sh and install.ps1: already shell, they
+#     change only with the install method
+#   - the legacy web terminal (src/server.ts, src/terminal-ws.ts, src/App.tsx,
+#     src/components/Terminal.tsx): whether it is part of the product at all
+#
+# Traps for an exact port, found while reading:
+#   - every command, `--help` and `open --print` included, first loads the
+#     native node-datachannel addon: index.ts imports serve, which imports
+#     run-server, which imports rtc-daemon, whose top level loads it. A failed
+#     load starts a download (prebuild-install) before any argument is parsed.
+#     A Rust command has no such step, and the TypeScript may be run as the
+#     reference only where the addon is already in place
+#   - the running executable is taken to be bun and the script to be
+#     src/cli/index.ts: the daemon command line (`<execPath> <argv[1]> serve
+#     ...`), the supervisor command, the Scheduled Task .cmd, pm2, oxmgr
+#     (`<execPath> node_modules/oxmgr/bin/oxmgr.js`), prebuild-install, oxmgr's
+#     installer and the self-update (`<execPath> add -g codehost@<v>`). Those
+#     command lines are already stored on users' machines (oxmgr's table,
+#     ~/.codehost/daemons.json, tasks/*.cmd, pm2's dump) and keep starting bun
+#     and the TypeScript entry until each daemon is launched again; a release
+#     that moves src/cli/index.ts breaks them at their next restart
+#   - oxmgr, prebuild-install and pm2 are found through node_modules
+#     (require.resolve); self-update finds the package through the script's
+#     own directory, and --version through yargs's own location (see that
+#     entry). A native binary has neither
+#   - a Rust copy of the shared modules is a second implementation of
+#     JavaScript semantics: string length in UTF-16 units and JavaScript's \s
+#     (token policy), encodeURIComponent's escape set (room URL, #t=,
+#     user@machine), JSON.stringify leaving out undefined (absent fields are
+#     omitted, never null), TextDecoder's lossy decoding. Two patterns use
+#     lookaheads that the Rust regex crate does not have (src/shared/repo.ts:259,
+#     packages/ws-provision/src/index.ts:163)
+#   - the daemon decides whether its metadata changed by comparing JSON text,
+#     so key order is behaviour; the room keeps about 2 KB per peer and a
+#     larger hello makes the daemon vanish from the roster without an error
+#   - the tunnel's HTTP client is bun's fetch: `decompress: false` (a bun
+#     extension), no redirects followed, and its header casing and joining,
+#     its statusText and its error strings (`proxy error: <text>`) reach the page
+#   - the room token is stored and printed in clear: ~/.codehost/config.json,
+#     daemon.json, the argv in daemons.json, the process command line
+#     (`--token=`), on Windows the pm2 launcher
+#     ~/.daemon-kit/launchers/<name>.cmd (never removed), the `room token:` and
+#     `connect:` lines and so every daemon log. All files
+#     are written with default permissions
+#   - deployed daemons run many npm versions, and the page and the Worker are
+#     deployed on every push to main, independently of npm: the signaling and
+#     tunnel protocols allow additive changes only (CLAUDE.md)
+#
+# Found while reading (read, not run; under exact parity each is reproduced
+# unless the owner decides otherwise):
+#   - `codehost update` returns early when any `code` is on PATH, although
+#     serve rejects a system `code` that cannot serve-web and uses the managed
+#     one (commands/update.ts:12, vscode-install.ts:58)
+#   - `serve <dir>` remembers the dir before the risky-root question, so
+#     answering N to the HOME warning still leaves HOME remembered
+#     (commands/serve.ts:138, :151)
+#   - the daemon label splits the dir on `/` only: a Windows path becomes the
+#     whole label, `/` gives codehost-server, the hostname fallback cannot be
+#     reached (daemonize.ts:50); `expose -d` is named after the current
+#     directory, not the port (commands/expose.ts:66)
+#   - self-update accepts an npm global install but upgrades with
+#     `<bun> add -g`, and compares versions as strings (self-update.ts:34, :37, :73)
+#   - `list` can print the fallback daemons and then `No codehost daemons
+#     running.` (commands/list.ts:22, oxmgr.ts:180)
+#   - an approval prompt whose client has left stays on screen, and the next
+#     line typed answers the next client in the queue (approver.ts:98, :142)
+#   - comments promise `logon resurrect` for the pm2 backend; the code only
+#     has pm2 save its list (fallback-daemon.ts:11, :106)
+#   - a malformed tunnel frame throws inside an async handler that nobody
+#     awaits (tunnel/host.ts:96, :109)
+#   - the readiness wait throws without stopping the `code` it started
+#     (vscode.ts:60); the managed binary is moved out of the temp directory
+#     with a rename (vscode-install.ts:192), which fails across filesystems
+#     under Node's semantics
+#   - provisioning: neither the HTTP method nor the `host` parameter is
+#     checked, a malformed config.yaml turns the allowlist off, the timeout
+#     kills only the script's own process, the credential hint always probes
+#     github.com
+#   - the one-line installers run `codehost setup` with no dir: on a fresh
+#     machine, outside a git repository, setup exits 1 (`no workspace root
+#     configured.`) right after installing, although README says the
+#     installer starts a server (public/install.sh:80, commands/setup.ts:71)
+#   - the Ctrl-C / SIGTERM handlers exist only once VS Code has answered
+#     (run-server.ts:87, :236), and a VS Code that exits after that goes
+#     unnoticed while the daemon stays in the room (vscode.ts:60)
+#   - `codehost open git@github.com:o/r` is taken for a `<user>@<machine>/`
+#     path, not a repository (commands/open.ts:75)
+#   - serve's proxy plugins receive the tunnel's forced `accept-encoding:
+#     gzip` and probably relay bodies that bun has already inflated under a
+#     `content-encoding: gzip` header (tunnel/host.ts:176, plugins/preview.ts:34)
+#   - a signal sent while the signaling socket is reconnecting either vanishes
+#     or, during CONNECTING, probably throws uncaught (signaling-client.ts:273)
+#   - README.md is behind the code: its CLI section lists five of the ten
+#     commands, says serve defaults to the current directory and that daemon
+#     mode needs `npm i -g oxmgr`, and gives the frame limit as 16 KiB (64 KiB
+#     in src/tunnel/protocol.ts:42). docs/provisioning.md calls the
+#     .codehost/setup.sh hook future work and places setup-repo.sh in
+#     src/provision/. README's development command `serve . -t test` is
+#     refused by the token policy (README.md:118); the token it gives as an
+#     example of what is rejected, `Str0ng-Token-99`, passes the policy and is
+#     the tests' valid token (README.md:59); it says only setup self-heals the
+#     native module that a bare bunx cannot fetch, but every command does
+#     (README.md:51). docs/provisioning.md:114 says a hostile input cannot
+#     escape ~/ws, which holds only for specs that came from the parsers.
+#     packages/ws-provision/README.md:17 passes `wsRoot: "~/ws"`, which is not
+#     expanded (it clones under a relative directory named `~`). TODO.md lists
+#     ideas (serve --login, port-forwarding subdomains, docker up, presence)
+#     that are not implemented and have no entries here
+
+reconciled = "cfba919"
+
+# ═════ The program ═══════════════════════════════════════════════════════════
+
+# ───────────── Entry, parsing, help ─────────────
+
+[[feature]]
+name = "codehost (CLI entry point, run by bun)"
+status = "missing"
+ts = "src/cli/index.ts:17; package.json:12 bin"
+note = "The bin `codehost` is ./src/cli/index.ts itself, a TypeScript file starting with `#!/usr/bin/env bun`: no build step, bun must be on PATH, node cannot run it. yargs with the script name fixed to `codehost` and the usage line `codehost <command> [options]` registers setup, init, serve, dev, expose, open, list, stop, update and the hidden __supervise, in that order. Its first import repairs TEMP/TMP; its imports then load the native WebRTC addon before any argument is parsed (see the header), for every command. Bun-only APIs are used throughout (Bun.which, Bun.spawn, Bun.sleep, Bun.listen, Bun.write, Bun.CryptoHasher, import.meta.dir)."
+
+[[feature]]
+name = "ch (second command name)"
+status = "missing"
+ts = "package.json:13"
+note = "A second bin name for the same ./src/cli/index.ts. Help and usage still say `codehost`, because the script name is fixed."
+
+[[feature]]
+name = "no command, unknown command, unknown option, missing required option (exit 1)"
+status = "missing"
+ts = "src/cli/index.ts:30 demandCommand; src/cli/index.ts:31 strict"
+note = "A bare `codehost` (`Specify a command, e.g. `codehost serve``), an unknown command or option, a missing required option (`Missing required argument: token`) or a value outside --approve's choices makes yargs print the help and the message on stderr and exit 1. yargs translates its own messages (`Missing required argument`, `Unknown argument`, `Invalid values`) by the locale (see --help), not codehost's demandCommand text. An error thrown inside a command's handler has its own entry. A failed native load is not one of them: it happens while the modules load, before yargs exists, and bun reports it without help (see `node-datachannel native module self-heal`). The wording and layout are yargs 17's; not verified by running."
+
+[[feature]]
+name = "error thrown inside a command: the command's help, a blank line, the error with its stack (exit 1)"
+status = "missing"
+ts = "src/cli/index.ts:35; src/cli/vscode.ts:84; src/cli/vscode.ts:99; src/cli/vscode-install.ts:47"
+note = "Every handler is async. When its promise rejects, yargs 17.7.2 (read in bun's cache: build/lib/command.js:214-222, build/lib/usage.js:27-71) writes the failing command's full help to stderr, an empty line, then console.error of the Error object, which bun prints with its stack, and exits 1. Reached by: VS Code not ready in time or exited before it was ready, CODEHOST_CODE_BIN naming a missing file, no VS Code manifest and nothing cached, a failed archive download or checksum, a served directory that does not exist (see serve and dev), and `update` when its download fails. Under a daemon this help text lands in the log at every failed start, and the exit 1 is what oxmgr's on-failure, pm2 and the supervisor restart on. Read, not run."
+
+[[feature]]
+name = "--help / -h (help language: LC_ALL, LC_MESSAGES, LANG, LANGUAGE)"
+status = "missing"
+ts = "src/cli/index.ts:32; src/cli/index.ts:17"
+note = "yargs-generated help, global and per command (`codehost serve --help`): each command's describe line, positionals, options, defaults, choices and the `ls` alias; `__supervise` is hidden. Exit 0. yargs translates its built-in headings and its own error messages into the language of the first of LC_ALL, LC_MESSAGES, LANG and LANGUAGE that is set, cut at the first `.` or `:`, default en_US (yargs-factory.js:1072-1080 in bun's cache), so the TypeScript's own output differs between machines and environments. Candidate to stay JavaScript."
+
+[[feature]]
+name = "--version"
+status = "missing"
+ts = "src/cli/index.ts:34"
+note = "Prints the version yargs finds, exit 0. yargs 17.7.2 does not look in codehost's own directory: it starts from the directory above the last `node_modules` in its own path (lib/platform-shims/esm.mjs:24) and reads the first package.json found walking up from there, printing `unknown` when that has no version (yargs-factory.js:1082-1117; both read in bun's cache). That is codehost's package.json (0.40.0 at this commit) in a development checkout and wherever yargs sits in codehost's own node_modules. After `bun add -g codehost` with yargs 17 hoisted to ~/.bun/install/global/node_modules it is ~/.bun/install/global/package.json, which has no version, so it would print `unknown`, and probably likewise under bunx; on the reading machine another global package hoists yargs 18, so codehost's yargs 17 is nested and the version comes out right. Read, not run. A release stamps package.json (semantic-release), so a compiled-in version has to be kept equal to it, and exact parity would include the `unknown`."
+
+[[feature]]
+name = "option syntax accepted on every command (yargs parsing rules)"
+status = "missing"
+ts = "src/cli/index.ts:17; src/cli/daemonize.ts:86"
+note = "yargs 17 parses `--flag value` and `--flag=value`, the short forms -t, -d, -f, -h, `--no-daemon`, camel-case spellings (`--newToken`), a repeatable and greedy `--allow` (it takes the bare words that follow it, a positional dir included), and `--port` as a number. A value that starts with `-` has to be given with `=`, which is why the daemon command line always uses `--flag=value`. From knowledge of yargs, not verified by running."
+
+# ───────────── Commands ─────────────
+
+[[feature]]
+name = "codehost setup [dir]"
+status = "missing"
+ts = "src/cli/commands/setup.ts:27; src/cli/commands/setup.ts:108; src/cli/commands/setup.ts:132"
+note = "One-shot onboarding. Picks the dir (explicit, else the current directory if it is inside a git work tree, else the remembered root, else three stderr lines and exit 1), asks about a risky root, resolves and prints the room token, makes sure a VS Code CLI exists (`checking VS Code…`, `using VS Code: <bin>`), scaffolds <dir>/.codehost when the dir is not a git repo (printing `scaffolded <dir>/.codehost (config.yaml + setup hook — edit freely)` when anything was written; this also creates a dir that does not exist yet) and remembers an explicit root, then always starts a background daemon (`dev` for a git repo, `serve` otherwise). It closes with an empty line, `✓ server \"<name>\" is live, serving <dir>`, the connect URL, an empty line, `try it:` and three lines `  · on that page this machine appears as a host — Connect opens VS Code`, `  · paste any github.com repo URL there — it clones into your workspace and opens` and `  · another machine? run the same installer there, then “+ Add” its token on the page` (curly quotes), the GitHub auth line and `manage: codehost list · codehost stop <name>`; every line but the empty ones starts with `[codehost] `. Options: -t/--token, --new-token, --name, --signal, --port, --approve auto|confirm, --allow (repeatable). Exit 1 on an invalid token, on `aborted`, or when the daemon could not be launched. It reports the server as live without checking that it registered, and `inside a git work tree` is true for any subdirectory of a repository."
+
+[[feature]]
+name = "setup: room token resolution (-t, saved token, --new-token, generated)"
+status = "missing"
+ts = "src/cli/commands/setup.ts:157 resolveToken"
+note = "An explicit -t is trimmed, checked against the token policy and saved to ~/.codehost/config.json. Otherwise the saved token is reused, unless --new-token. Otherwise a token is generated and saved, and `generated a new room token (saved to ~/.codehost/config.json)` is printed. The saved token is not re-validated when it is reused."
+
+[[feature]]
+name = "generated room tokens"
+status = "missing"
+ts = "src/shared/token.ts:66 generateToken"
+note = "24 characters, each a cryptographically random byte taken modulo a 59-character alphabet (upper case without I and O, lower case without l, digits 2-9, `-` and `_`), followed by the fixed suffix `aA1-`: 28 characters in all. A token may therefore start with `-`."
+
+[[feature]]
+name = "room token policy and rejection messages"
+status = "missing"
+ts = "src/shared/token.ts:42 validateToken; src/shared/token.ts:16 TOKEN_REQUIREMENTS; src/cli/commands/serve.ts:124"
+note = "serve, dev, expose and `setup -t` trim the token and reject it unless it is 12 to 256 characters (JavaScript string length), has no whitespace (JavaScript's \\s), mixes at least 3 of lowercase, uppercase, digits and other characters, and is not one of changeme1234, password1234, codehost1234, letmein12345 ignoring case. On rejection two stderr lines and exit 1: `[codehost] <reason>` and `[codehost] room token requires: at least 12 characters, no spaces, mixing at least 3 of: lowercase, uppercase, digits, symbols`. The reasons: `token must be at least 12 characters`, `token must be at most 256 characters`, `token must not contain whitespace`, `token must mix at least 3 of: lowercase, uppercase, digits, symbols`, `token is too common; choose a unique secret` (reachable only through a case variant such as Changeme1234, since the listed strings have two character classes). The page and the Worker enforce the same function; `open` does not validate. No test file."
+
+[[feature]]
+name = "setup: GitHub auth readiness report"
+status = "missing"
+ts = "src/cli/commands/setup.ts:143"
+note = "setup ends with `✓ GitHub auth: ready — private repos will clone`, or `⚠ GitHub auth: none found — private repos won't clone until you run:` and `gh auth login && gh auth setup-git`, with `(install gh first: https://cli.github.com)` appended when gh is absent. It rests on the two probes of the entry `GitHub credential probe`."
+
+[[feature]]
+name = "codehost init [dir]"
+status = "missing"
+ts = "src/cli/commands/init.ts:10; src/cli/init.ts:98 scaffoldCodehost"
+note = "Writes <dir>/.codehost/config.yaml, setup.sh (mode 0755) and setup.ps1; dir defaults to `.`. Existing files are kept unless -f/--force. Prints `scaffolded:` with the written paths and `edit .codehost/setup.sh, then run: codehost serve <dir>`, or `.codehost/ already set up in <dir> (use --force to overwrite)` when nothing was written. Exit 0. init.test.ts: three files, valid YAML with the default layout, shell variables kept literal, a second run writes nothing."
+
+[[feature]]
+name = "codehost serve [dir]"
+status = "missing"
+ts = "src/cli/commands/serve.ts:76"
+note = "Serves a workspace root: joins the token's room as a `root` server, starts `code serve-web` in the dir, bridges browser data channels to it, answers the provisioning routes (github.com is the default git host) and loads the agent-yes, preview and meta plugins. Options: -t/--token (required), --name (default the hostname), --signal, -d/--daemon, --port, --approve auto|confirm, --allow (repeatable). An explicit dir is resolved against the current directory and remembered; with no dir the remembered root is used and created if missing, else `no workspace root configured.` and two more stderr lines, exit 1. An explicit dir that does not exist is not created: serve remembers it, writes daemon.json, prints and opens the connect URL, and fails only when `code serve-web` is started there (bun is assumed to throw on a missing working directory; read, not run), which ends as a handler error with exit 1; the next bare serve creates it. With -d the daemon is started in the missing directory. In the foreground it runs until Ctrl-C; with -d it starts the daemon, announces the connect URL and exits 0 or 1."
+
+[[feature]]
+name = "remembered workspace root"
+status = "missing"
+ts = "src/cli/config.ts:41 rememberedRoot; src/cli/config.ts:47 rememberRoot; src/cli/commands/serve.ts:135; src/cli/commands/setup.ts:111"
+note = "`serve <dir>` always saves the resolved dir as `root` in ~/.codehost/config.json, before the risky-root question; `setup <dir>` saves it only when the dir is not a git repo. A bare serve or setup reuses it and prints `no dir given — serving remembered workspace root <dir>` (setup: `using`). There is no fallback to ~/ws or to the current directory."
+
+[[feature]]
+name = "risky workspace root warning and confirmation ($HOME or /)"
+status = "missing"
+ts = "src/cli/commands/serve.ts:33 confirmRiskyRoot; src/cli/commands/serve.ts:54 rootWarning"
+note = "serve and setup warn on stderr when the root is exactly the home directory (`warning: serving your HOME directory as the workspace root …`) or `/` (`serving the filesystem root …`). When stdin and stdout are both terminals they ask `serve it anyway? [y/N]`; anything but y or yes prints `aborted` and exits 1. Without a terminal they warn and go on, which is what a daemon does at every restart. `dev` has no such check."
+
+[[feature]]
+name = "codehost dev [dir]"
+status = "missing"
+ts = "src/cli/commands/dev.ts:29"
+note = "Serves one folder (default `.`) as a `repo` server with its git identity, so deep links resolve to it. The options of serve plus --standalone. It runs its own peer and VS Code only when no host daemon is live or --standalone is given; -d makes it a daemon (always with --standalone). No risky-root check, and the dir is not remembered. A dir that does not exist is not created: a standalone dev fails like serve when VS Code is started there (handler error, exit 1), while registering with a host daemon succeeds and advertises nothing until the directory appears."
+
+[[feature]]
+name = "dev: register with the running host daemon (--standalone opts out)"
+status = "missing"
+ts = "src/cli/commands/dev.ts:98; src/cli/registry.ts:48 liveDaemon; src/cli/registry.ts:60 registerWorkspace"
+note = "When ~/.codehost/daemon.json names a live serve, dev (with -d too) only appends its dir to workspaces.json and prints `host daemon already serving \"<root>\" (pid N)`, `registered <dir> with it — no second daemon needed`, `open: https://codehost.dev<deep link>#t=<the daemon's token>`, a note when that token differs from -t, and `(use --standalone to force an own daemon instead)`; exit 0. The link's host is always codehost.dev here and its token is the daemon's, read from daemon.json. Apart from the native-addon load that every command does at startup (see the header), which may download, it makes no network request."
+
+[[feature]]
+name = "codehost expose <port>"
+status = "missing"
+ts = "src/cli/commands/expose.ts:18; src/tunnel/host.ts:230"
+note = "Tunnels an existing local HTTP/WebSocket server, reachable at codehost.dev/vs/<peerId>/ with that prefix stripped before forwarding. No VS Code and no in-daemon HTTP routes: /__codehost/* HTTP requests go to the exposed server like any other path. The tunnel's own preview WebSocket route is active all the same: a WsOpen to /__codehost/port/<PORT>/… connects to that loopback port (see `preview WebSocket route`). Options: -t/--token (required), --name (default `localhost:<port>`), --signal, -d/--daemon; no --approve or --allow, so every client with the token is admitted, and can open a WebSocket to any loopback port of the host. A port that is not an integer from 1 to 65535 prints `invalid port: <n>` and exits 1. It advertises name and cwd `localhost:<port>`, host, user and hostId, and no kind. -d uses the current directory as the daemon's working directory and its last segment as the daemon's label, and does not print the connect URL."
+
+[[feature]]
+name = "codehost open [target]"
+status = "missing"
+ts = "src/cli/commands/open.ts:16; src/cli/commands/open.ts:57 buildUrl; src/cli/commands/open.ts:72 pathFromTarget"
+note = "Builds a codehost URL, prints `[codehost] <url>` and opens the default browser unless --print. The target may be a full URL that is not a repository (opened as it is, without a token), an existing deep-link path (gh/, git/, host/, dev/ or `<user>@<machine>/…`), a git URL with a scheme or an scp-style remote without a user (`github.com:o/r`), `owner/repo[/tree/branch]` (github.com), or anything else (it becomes `/dev/<target>`). The deep-link test comes first and takes anything with an `@` before its first `/`, so the usual remote `git@github.com:o/r.git` is opened as the path `/git@github.com:o/r.git`, not as a repository link (checked by evaluating both patterns). With no target it uses the git repository of the current directory, or the home page with `no git repo found here; opening the codehost home page` on stderr. Options: -t/--token (default the saved token), --anon, --page (default https://codehost.dev, trailing slashes removed), --print. The token is appended as `#t=<url-encoded token>`. Needs no daemon. Apart from the native-addon load that every command does at startup (see the header), which may download, it makes no network request; it reads ~/.codehost/config.json and asks git about the current directory."
+
+[[feature]]
+name = "codehost list (alias ls)"
+status = "missing"
+ts = "src/cli/commands/list.ts:5"
+note = "Prints `Managed daemons (no oxmgr):` with one line per live fallback daemon (`  <name>  [pm2|task|pid N]  <cwd>  (log: <path>)`) and a blank line; then, off Windows and only if oxmgr runs, oxmgr's table reduced to the codehost rows. With neither, `No codehost daemons running.`. Exit 1 only when oxmgr's own list fails, otherwise 0. Listing removes dead entries from ~/.codehost/daemons.json."
+
+[[feature]]
+name = "codehost stop <name>"
+status = "missing"
+ts = "src/cli/commands/stop.ts:9"
+note = "Takes the full name or only the label (which is slugged and prefixed with `codehost-`). A fallback daemon is tried first, under the full name and then under the name as given: `stopped <full name>`, exit 0. On Windows an unknown name prints `no daemon named <full name>` (the `codehost-` form, not the name as typed: `stop foo` prints `codehost-foo`) and exits 1; elsewhere the name goes to oxmgr, whose delete status is the exit code, and which may first download oxmgr's binary to repair it."
+
+[[feature]]
+name = "codehost update"
+status = "missing"
+ts = "src/cli/commands/update.ts:4"
+note = "Forces a refresh of the managed VS Code CLI, ignoring the 24-hour throttle, and prints `up to date: <bin>`. It only prints a message when CODEHOST_CODE_BIN is set (`CODEHOST_CODE_BIN is set; nothing to update (<path>)`) or when any `code` is on PATH (`using system `code` on PATH; update it with your package manager.`), even a `code` that serve would reject. It does not update codehost itself."
+
+[[feature]]
+name = "codehost __supervise --name=<daemon> (hidden supervisor loop)"
+status = "missing"
+ts = "src/cli/commands/supervise.ts:12; src/cli/fallback-daemon.ts:187 runSupervisor"
+note = "The process behind a fallback daemon. Reads the daemon's argv and working directory from ~/.codehost/daemons.json (no entry: `[codehost:<name>] no registry entry; nothing to supervise.`, exit 1), runs it, records its pid as servePid, and restarts it after a non-zero exit with delays of 2, 4, 8, 16 and then 30 seconds (the attempt counter never resets). A clean exit of the server, or SIGTERM or SIGINT (which kills the server's process tree), ends it with exit 0. Its lines are prefixed `[codehost:<name>]`: `starting: <argv>`, `server exited cleanly; supervisor stopping.`, `server exited with code N; restarting in Ns (attempt N).`."
+
+[[feature]]
+name = "--signal <url> (signaling server, default wss://signal.codehost.dev)"
+status = "missing"
+ts = "src/cli/commands/serve.ts:28 DEFAULT_SIGNAL_URL; src/cli/commands/serve.ts:96"
+note = "On serve, dev, expose and setup. Chooses the signaling WebSocket base URL and is always written into the daemon command line. README gives ws://localhost:8787 (`wrangler dev`) for local development. The default is the live service."
+
+# ───────────── What the commands print ─────────────
+
+[[feature]]
+name = "connect URL announcement and browser opening (#t=<token>)"
+status = "missing"
+ts = "src/cli/open-url.ts:40 announceConnect; src/cli/open-url.ts:13 connectUrl; src/cli/open-url.ts:18 openBrowser"
+note = "Prints `[codehost] connect: https://codehost.dev/#t=<encodeURIComponent(token)>`; the token is in the fragment so that it never reaches a server. Only when stdout is a terminal it also prints `opening your browser…` and opens the URL detached (`cmd /c start \"\" <url>` on Windows, `open` on macOS, `xdg-open` elsewhere), so a daemon restart opens nothing. Used by serve, dev and setup, not by expose. The page reads the fragment, joins that room and connects by itself when the room has one server."
+
+[[feature]]
+name = "deep-link paths printed by dev and open"
+status = "missing"
+ts = "src/shared/repo.ts:213 shareableDeepLink; src/cli/commands/dev.ts:102; src/cli/commands/open.ts:81"
+note = "A git repository is `/<git-host>/<owner>/<repo>[/tree/<branch>]`, with `/<user>@<machine>` in front when pinned to a machine; a plain folder is `/<user>@<machine>/<path>` (dev registering a folder prints `/@<hostname>/<path>`), or the legacy `/dev/<path>` when no machine is known. Only user and machine are percent-encoded (encodeURIComponent). The page parses the same grammar from the same module, so the two must stay in step. Pinned by src/shared/repo.test.ts."
+
+[[feature]]
+name = "git URL to deep-link path (gitUrlToPath)"
+status = "missing"
+ts = "src/shared/repo.ts:254 gitUrlToPath; src/cli/commands/open.ts:62"
+note = "Accepts a scheme, a `user@` prefix, scp-style `host:owner/repo`, a trailing `.git`, a query or hash, a trailing slash and `/tree/<branch with slashes>`; requires a dotted host and exactly owner/repo, otherwise nothing. The host is lower-cased. `open` uses it to turn a pasted repository URL into a link, and to tell a repository URL from any other URL. One of its patterns uses a negative lookahead. Pinned by src/shared/repo.test.ts (the page's `open a repo` box uses the same function)."
+
+[[feature]]
+name = "startup and connection log lines ([codehost] and [rtc] prefixes)"
+status = "missing"
+ts = "src/cli/run-server.ts:83; src/cli/run-server.ts:113; src/cli/run-server.ts:118; src/cli/run-server.ts:187; src/cli/rtc-daemon.ts:154; src/cli/rtc-daemon.ts:161; src/cli/vscode.ts:52"
+note = "On stdout: `[codehost] <label>` (`serving workspace root <dir>`, `serving <dir>`, `exposing localhost:<port>`), `[codehost] room token: <token>` (in clear), `[codehost] signaling:  <url>`, `[codehost] launching: <code> serve-web …`, `[codehost] VS Code ready at <url>`, `[codehost] registered as \"<name>\" (<first 8 characters of the peer id>)`, `[codehost] disconnected from signaling (code N \"reason\", up Nms), reconnecting…` (the quoted reason is left out when empty), `[codehost] <client label> (<id8>) connected; bridging to :<port>`, `[rtc] <id8> state: <state>`, `[rtc] <id8> channel \"<label>\" open`. On stderr: `[rtc] addRemoteCandidate failed for <id8>:` and `[rtc] setRemoteDescription failed for <id8>:` with the library's error. Under a process manager these lines are the daemon's log."
+
+# ═════ Machine state and identity ════════════════════════════════════════════
+
+# ───────────── Files under ~/.codehost ─────────────
+
+[[feature]]
+name = "~/.codehost/config.json"
+status = "missing"
+ts = "src/cli/config.ts:9; src/cli/config.ts:24 readConfig; src/cli/config.ts:32 writeConfig"
+note = "Machine-level configuration, written as 2-space JSON without a final newline: `token` (the saved room token, in clear), `hostId`, `root` (the remembered workspace root). A missing or unparsable file reads as empty, so the next write silently replaces a corrupt one. Every write rewrites the whole object from what was read, which is what keeps unknown fields. The path is fixed from the home directory when the program starts."
+
+[[feature]]
+name = "hostId (stable machine identity)"
+status = "missing"
+ts = "src/cli/config.ts:63 ensureHostId"
+note = "A random UUID minted at first use, saved to config.json without touching the other fields, and advertised by every daemon of the machine so that the page can group servers by host and keep its history across restarts. config.test.ts: minted once, other fields preserved, an existing id kept."
+
+[[feature]]
+name = "user name for the user@host label"
+status = "missing"
+ts = "src/cli/config.ts:54 currentUser"
+note = "The OS login name is advertised as `user`; when the uid has no passwd entry it falls back to $USER, then $USERNAME, then `unknown`. `host` is the OS hostname."
+
+[[feature]]
+name = "~/.codehost/daemon.json (host daemon presence)"
+status = "missing"
+ts = "src/cli/registry.ts:34 writeDaemonPresence; src/cli/registry.ts:48 liveDaemon; src/cli/commands/serve.ts:264"
+note = "A foreground serve writes `{pid, root, token, startedAt}` as 2-space JSON and removes the file when the process exits. A missing or unparsable file, missing fields or a pid that does not answer signal 0 mean no daemon; a live pid of another user also reads as dead. One slot only: a second serve overwrites it, and whichever exits first deletes it. registry.test.ts: round trip, dead pid, garbage file."
+
+[[feature]]
+name = "~/.codehost/workspaces.json (registered workspaces)"
+status = "missing"
+ts = "src/cli/registry.ts:60 registerWorkspace; src/cli/registry.ts:70 readRegisteredWorkspaces"
+note = "A JSON array of `{path, addedAt}` to which `codehost dev` appends when a host daemon is live (once per resolved path). The daemon reads it, leaves out entries whose directory no longer exists and watches the file to advertise at once. Nothing ever removes an entry, and no command unregisters a directory. registry.test.ts: registering twice, a directory that is gone."
+
+[[feature]]
+name = "TEMP/TMP repair at startup (Windows)"
+status = "missing"
+ts = "src/cli/tempenv.ts:9"
+note = "Imported first by the entry point. On Windows a TEMP or TMP that still holds a literal `%VAR%` (for example `%USERPROFILE%\\AppData\\Local\\Temp`) is expanded from the environment before any native module or child process reads it; if a variable stays unresolved or the directory cannot be created, `<home>\\AppData\\Local\\Temp` is used, and the directory is created. Nothing happens on other platforms. The code is @snomiao/daemon-kit's (read in bun's cache, not in the checkout); tempenv.test.ts covers the %VAR% expansion."
+
+[[feature]]
+name = "HOME / USERPROFILE and TMPDIR / TEMP / TMP (where machine state and temp files go)"
+status = "missing"
+ts = "src/cli/config.ts:9; src/cli/registry.ts:12; src/cli/fallback-daemon.ts:19; src/cli/vscode-install.ts:15; src/cli/plugins/agent-yes.ts:15; src/cli/commands/serve.ts:56; src/cli/vscode-install.ts:164; src/cli/oxmgr-heal.ts:80; src/terminal-ws.ts:39"
+note = "Everything under ~/.codehost (config.json, daemon.json, workspaces.json, daemons.json, logs/, tasks/, vscode/) and ~/.agent-yes comes from os.homedir(): $HOME on POSIX (the passwd entry only when HOME is unset), %USERPROFILE% on Windows; daemon-kit's ~/.daemon-kit/launchers too. Those paths are fixed when the modules load; the risky-root check and the library's ~/ws ask at each call. A different HOME, as a daemon started by an init system or Task Scheduler may have, relocates all of it, the saved token and the hostId included, so the machine shows up on the page under a new identity. Temporary files go under os.tmpdir(): $TMPDIR on POSIX (else /tmp), TEMP or TMP on Windows after the repair above: codehost-vscode-<version>.tar.gz or .zip and codehost-vscode-x-<version>, oxmgr-heal-<random>, and the legacy terminal's codehost-term-zshrc. The installers read HOME (install.sh, for BUN_INSTALL's default) and USERPROFILE (install.ps1)."
+
+# ───────────── Identity from git, paths, enumeration ─────────────
+
+[[feature]]
+name = "repo identity from git (origin remote and branch, repo key)"
+status = "missing"
+ts = "src/cli/git.ts:22 repoIdentity; src/cli/git.ts:17 isGitRepo; src/cli/git.ts:70 git; src/cli/git.ts:44 parseGitRemote; src/shared/repo.ts:158 repoKey"
+note = "Every call is `git -C <dir> …`, and a non-zero exit counts as empty output. `rev-parse --is-inside-work-tree` must print `true`. The origin URL comes from `remote get-url origin`, falling back to `config --get remote.origin.url` (only the first applies url.<base>.insteadOf); the branch from `rev-parse --abbrev-ref HEAD`, falling back to `symbolic-ref --short HEAD`, so a repository without commits still reports its branch, while a detached HEAD prints `HEAD` and gives none. Without git on PATH every directory counts as not a repository: setup scaffolds .codehost into a real repository and starts it as a root `serve` instead of `dev`, dev advertises no repo, and open falls back to the home page. The remote becomes the repo key `<lower-cased host>/<owner>/<repo>`: https, scp-like, ssh:// with user and port, git://; `.git` removed; only the first two path segments kept, so a GitLab subgroup collapses. The key is what PeerMeta.repo, WorkspaceInfo.repo, the provisioning allowlist and deep links carry. Used by dev, open, setup and serve's registered workspaces. parseGitRemote is pinned by src/shared/repo.test.ts."
+
+[[feature]]
+name = "?folder= path form (toPosixPath / fromPosixPath)"
+status = "missing"
+ts = "src/shared/repo.ts:173 toPosixPath; src/shared/repo.ts:187 fromPosixPath"
+note = "Paths are advertised in the form VS Code's `?folder=` expects: `C:\\ws` becomes `/C:/ws` (drive-letter case kept, backslashes to slashes, trailing slashes removed, a bare drive becomes `/C:`); other paths only have backslashes turned into slashes. fromPosixPath reverses it for the provisioning script's environment. Pinned by a full table in src/shared/repo.test.ts."
+
+[[feature]]
+name = "workspace enumeration by layout template"
+status = "missing"
+ts = "src/cli/workspaces.ts:17 enumerateWorkspaces; src/cli/commands/serve.ts:202"
+note = "Walks the layout (default `{owner}/{repo}/tree/{branch}`) one segment at a time under the root: a literal segment must exist, a placeholder matches one directory level (symlinks included, dot-directories skipped), and a leaf counts only if it holds `.git` (a directory, or a worktree's file). Reports `{path, repo: <host>/<owner>/<repo>, branch}`, at most 200 results and 1000 intermediate directories. serve passes no host, so every checkout under its root is advertised as `github.com/<owner>/<repo>`, a clone from another host included, and the page takes it for an exact match of the GitHub link. serve caches the walk for 30 seconds. workspaces.test.ts: default layout, literal segments, dot-directories, a custom git host."
+
+# ───────────── The served root's .codehost directory ─────────────
+
+[[feature]]
+name = "<root>/.codehost/config.yaml (workspace, allowlist, folderProvisioning)"
+status = "missing"
+ts = "src/cli/provision-server.ts:47 readCodehostConfig; src/cli/init.ts:8 CONFIG_YAML"
+note = "Scaffolded with `workspace: \"{owner}/{repo}/tree/{branch}\"` and a commented `allowlist:` example. The daemon reads three keys: `workspace` (a string, the layout template), `allowlist` (an array; items that are not strings are left out), `folderProvisioning` (only the literal true enables it). It is read again at every provision request and every metadata poll, so edits apply without a restart, except the layout, which serve reads once at start for its enumeration. A missing or malformed file reads as empty: default layout, every repo allowed, folder provisioning off."
+
+[[feature]]
+name = "<root>/.codehost/setup.sh (scaffolded provisioning hook)"
+status = "missing"
+ts = "src/cli/init.ts:21 SETUP_SH"
+note = "An editable bash script, written with mode 0755. It leaves early when `$CODEHOST_WS/.git` exists; otherwise it clones `https://$CODEHOST_HOST/$CODEHOST_OWNER/$CODEHOST_REPO.git` into the workspace path minus `/tree/<branch>`, detaches the fresh clone, fetches the branch and adds a git worktree at `$CODEHOST_WS` (falling back to `-b <branch> origin/<branch>`). The text is user-visible, is returned by GET /__codehost/provision-config as the default, and init.test.ts checks that its shell variables stay literal."
+
+[[feature]]
+name = "<root>/.codehost/setup.ps1 (scaffolded hook for Windows)"
+status = "missing"
+ts = "src/cli/init.ts:68 SETUP_PS1"
+note = "The PowerShell counterpart: skips when `.git` exists, clones, detaches, then `git worktree add $ws $env:CODEHOST_BRANCH` (no fallback that creates the branch). On Windows the daemon prefers .codehost/setup.bat, which nothing scaffolds, then setup.ps1, then setup.sh."
+
+# ═════ Background daemons ════════════════════════════════════════════════════
+
+# ───────────── Launching one (-d and setup) ─────────────
+
+[[feature]]
+name = "-d / --daemon (background daemon launch; CODEHOST_NO_OXMGR)"
+status = "missing"
+ts = "src/cli/daemonize.ts:44 launchServeDaemon; src/cli/daemonize.ts:55"
+note = "Shared by `serve -d`, `dev -d`, `expose -d` and setup. Runs the self-update, derives the daemon name, then re-launches the same command in its foreground form under oxmgr (`starting daemon \"<name>\" via oxmgr`, `daemon started. View: codehost list · Stop: codehost stop <name>`). On Windows, when CODEHOST_NO_OXMGR=1, or when oxmgr is unusable (`oxmgr unavailable — falling back to a managed daemon.`) it uses the fallback manager instead (`starting daemon \"<name>\"…`, `daemon \"<name>\" started. View: … · Stop: …`). `failed to start a detached daemon.` makes the command exit 1. A daemon of the same name is replaced."
+
+[[feature]]
+name = "environment a background daemon runs with (per backend)"
+status = "missing"
+ts = "src/cli/fallback-daemon.ts:117; src/cli/fallback-daemon.ts:211; src/cli/fallback-daemon.ts:134; src/cli/oxmgr.ts:101; src/cli/daemonize.ts:44"
+note = "No backend passes an environment of its own. The POSIX supervisor, and every server it respawns, inherit the environment of the `setup`, `serve -d`, `dev -d` or `expose -d` that started it, so variables set on that command line (CODEHOST_CODE_BIN, CODEHOST_VSCODE_READY_TIMEOUT_MS, CODEHOST_PROVISION_TIMEOUT_MS, CODEHOST_AY_PORT, the OXMGR_* pair, and the secret-named ones that feed the provision log's redaction list) last until it is launched again. A Scheduled Task runs with Task Scheduler's environment for the user, not the shell's. Under oxmgr and pm2 the managed process gets what those managers give it (not visible in this checkout; oxmgr 0.4.0's README says nothing), and after a login auto-start it is the init system's, HOME included (see HOME / USERPROFILE). So `CODEHOST_CODE_BIN=/x codehost setup` checks /x and prints `using VS Code: /x` while the daemon it starts may not see the variable and use or download another VS Code. Read, not run."
+
+[[feature]]
+name = "daemon name codehost-<slug>"
+status = "missing"
+ts = "src/cli/oxmgr.ts:76 daemonName; src/cli/daemonize.ts:50"
+note = "The label is --name, else the text after the last `/` of the dir. Runs of characters outside A-Z, a-z, 0-9, `_` and `-` become `-`, leading and trailing `-` are removed, the result is lower-cased and prefixed with `codehost-`; an empty slug gives `codehost-server`. The same name is the oxmgr process, the pm2 process, the scheduled task, the registry key and the log file name, and is what list shows and stop takes. Existing daemons are found by this name, so the quirks have to be kept (see the header for the Windows path and expose cases)."
+
+[[feature]]
+name = "foreground command line rebuilt for the daemon"
+status = "missing"
+ts = "src/cli/daemonize.ts:85 buildForegroundArgv; src/cli/daemonize.ts:105 quote"
+note = "`<runtime> <script> <serve|dev|expose> <dir or port> --token=<t> --signal=<url>`, then `--name=`, `--port=`, `--standalone` (always for dev), `--approve=` (only when not auto) and one `--allow=` per pattern; always the `=` form, so that values starting with `-` survive. For oxmgr the parts are single-quoted where they hold anything outside A-Z, a-z, 0-9 and `_/:=.-`, and joined into one shell string; the fallback stores the array. Today the first two elements are bun and the path of src/cli/index.ts, and they are stored on users' machines with the token in clear. daemonize.test.ts: the `=` form, subcommand and positional carried, dev always standalone."
+
+[[feature]]
+name = "self-update before launching a daemon (CODEHOST_NO_SELF_UPDATE)"
+status = "missing"
+ts = "src/cli/self-update.ts:25 selfUpdate; src/cli/self-update.ts:69 isGlobalInstall"
+note = "Every setup, `serve -d`, `dev -d` and `expose -d` first asks https://registry.npmjs.org/codehost/latest (5-second limit). If the version string differs from its own package.json's and the script lies in a recognised global install (a path containing `/.bun/install/global/node_modules/codehost/` or `/lib/node_modules/codehost/`), it runs `<runtime> add -g codehost@<latest>` (120-second limit) and prints `updating codehost <old> → <new>…` and `updated to <new>; the new daemon will run it.`, or `self-update to <new> failed; continuing on <old>.`. Every failure is non-fatal (`self-update skipped: <message>`); a development checkout and a bunx run are left alone. CODEHOST_NO_SELF_UPDATE=1 skips all of it. It relies on the process being bun and on replacing source files in place."
+
+# ───────────── oxmgr ─────────────
+
+[[feature]]
+name = "daemon start under oxmgr"
+status = "missing"
+ts = "src/cli/oxmgr.ts:88 startDaemon; src/cli/oxmgr.ts:121 oxCapture"
+note = "Through bun and oxmgr's JavaScript entry in codehost's own node_modules: `oxmgr delete <name>` (replace), then `oxmgr start '<foreground command>' --name=<name> --cwd=<dir> --restart=on-failure` with inherited output. Two seconds later it reads `oxmgr status <name>` and warns `warning: daemon \"<name>\" is not running 2s after start — check: oxmgr logs <name>` unless a line says `Status: running`; the launch still counts as started."
+
+[[feature]]
+name = "login auto-start through the oxmgr service"
+status = "missing"
+ts = "src/cli/oxmgr.ts:134 enableStartup"
+note = "Before the process is started, `oxmgr service --system auto status` is checked, and only if that fails `oxmgr service --system auto install` registers oxmgr with the platform's init (systemd --user or launchd), so that managed daemons return at login. Prints `login auto-start enabled (oxmgr service installed)` or a note that it could not. Never fatal, and never reinstalled: installing restarts oxmgr and kills everything it manages, other tools' processes included."
+
+[[feature]]
+name = "oxmgr probe and the missing / broken messages"
+status = "missing"
+ts = "src/cli/oxmgr.ts:17 oxmgrEntry; src/cli/oxmgr.ts:37 probeOxmgr; src/cli/oxmgr.ts:55 ensureOxmgr; src/cli/oxmgr.ts:67"
+note = "oxmgr counts as usable when `<bun> node_modules/oxmgr/bin/oxmgr.js --version` exits 0. If the entry cannot be resolved it is missing (stderr: reinstall codehost, then retry with -d). If it resolves but fails it is broken, which starts one self-heal; a still-broken oxmgr prints that its native binary could not be fetched or repaired and that foreground serve still works. The probe that `codehost list` uses does not heal. Under bun the binary is normally absent at first use (oxmgr's postinstall is not trusted), so the heal is the ordinary first-run path."
+
+[[feature]]
+name = "oxmgr table for `codehost list`, filtered to codehost-* rows"
+status = "missing"
+ts = "src/cli/oxmgr.ts:158 listDaemons; src/cli/commands/list.ts:22"
+note = "Captures `oxmgr list`, keeps the border lines, the header and only the data rows whose NAME column starts with `codehost-`, and prints the result; with no such row it prints `No codehost daemons running.`. A failing list forwards oxmgr's stderr and makes `codehost list` exit 1. oxmgr is shared with other tools, which is why the rows are filtered; it has no JSON output."
+
+[[feature]]
+name = "`codehost stop` through oxmgr (stop, then delete)"
+status = "missing"
+ts = "src/cli/oxmgr.ts:189 stopDaemon; src/cli/commands/stop.ts:31"
+note = "Off Windows, for a name that is no fallback daemon: `oxmgr stop <name>` then `oxmgr delete <name>` with inherited output. The exit code is delete's, or 1 when oxmgr is unusable. A bare label is first turned into `codehost-<slug>`."
+
+[[feature]]
+name = "oxmgr self-heal on Linux: static musl binary"
+status = "missing"
+ts = "src/cli/oxmgr-heal.ts:43 healOxmgr; src/cli/oxmgr-heal.ts:70 swapMusl; src/cli/oxmgr-heal.ts:133 download"
+note = "Once per process, when oxmgr is broken on Linux x64 or arm64: downloads `oxmgr-v<version>-<x86_64|aarch64>-unknown-linux-musl.tar.gz` from `https://github.com/<owner>/<repo>/releases/download/v<version>` (following 301, 302, 307, 308), unpacks it with `tar xzf` in a temp directory and replaces node_modules/oxmgr/vendor/oxmgr (unlink, copy, mode 0755). Prints `fetching oxmgr's portable (musl) binary…`, then `oxmgr repaired with its static musl build.` or `automatic oxmgr repair failed: <reason>`. No checksum is verified. The destination is inside an npm package that a Rust install may not have."
+
+[[feature]]
+name = "oxmgr self-heal off Linux: run oxmgr's own installer"
+status = "missing"
+ts = "src/cli/oxmgr-heal.ts:61 runInstaller"
+note = "Prints `fetching oxmgr's native binary…` and runs `<bun> node_modules/oxmgr/scripts/install.js` in the package directory; success is exit 0 with vendor/oxmgr(.exe) present. In practice only macOS reaches it, because Windows never uses oxmgr. The download it performs is defined by oxmgr's script, not by this repository."
+
+[[feature]]
+name = "OXMGR_DIST_BASE and OXMGR_NPM_REPOSITORY"
+status = "missing"
+ts = "src/cli/oxmgr-heal.ts:76; src/cli/oxmgr-heal.ts:125 oxmgrSlug"
+note = "OXMGR_DIST_BASE replaces the base URL of the musl archive. OXMGR_NPM_REPOSITORY replaces the GitHub `owner/repo`, which otherwise comes from the repository URL in oxmgr's package.json, with Vladimir-Urik/OxMgr as the last resort. Both redirect where an executable is downloaded from."
+
+# ───────────── The fallback manager (no oxmgr) ─────────────
+
+[[feature]]
+name = "fallback daemon registry ~/.codehost/daemons.json"
+status = "missing"
+ts = "src/cli/fallback-daemon.ts:20; src/cli/fallback-daemon.ts:42 readRegistry; src/cli/fallback-daemon.ts:25 FallbackDaemon"
+note = "A 2-space JSON array with one entry per fallback daemon: name, cwd, argv (the whole foreground command, with `--token=<room token>` in clear), log, startedAt, then pid (POSIX supervisor) or pm2 or task (the Windows backend), and servePid, the last server the supervisor started. A missing or unreadable file reads as empty. It is rewritten whole at every change, without a lock. Entries written by the TypeScript hold a bun command line, which a port still has to run or replace."
+
+[[feature]]
+name = "fallback daemon log ~/.codehost/logs/<name>.log"
+status = "missing"
+ts = "src/cli/fallback-daemon.ts:21; src/cli/fallback-daemon.ts:94; src/cli/fallback-daemon.ts:114"
+note = "The output of the supervisor and its server is appended here: on POSIX the file is the detached child's stdout and stderr, under a Scheduled Task the launcher redirects with `>> log 2>&1`, under pm2 it is the output and error file. Never rotated or truncated. Its first lines hold the room token. `codehost list` prints the path."
+
+[[feature]]
+name = "POSIX fallback: background supervisor process (unref'd, not detached)"
+status = "missing"
+ts = "src/cli/fallback-daemon.ts:113 startUnixSupervisor; src/cli/fallback-daemon.ts:117; src/cli/fallback-daemon.ts:91 startFallbackDaemon"
+note = "Stops a fallback daemon of the same name, writes the registry entry, then starts `<bun> <cli entry> __supervise --name=<name>` with no stdin and its output appended to the log, and unrefs it so that the launching command can exit; its pid is saved. It is not detached, whatever the comments say: bun's `detached` option, which is what calls setsid() (bun-types 1.4.5), is not set, so the supervisor stays in the launching command's session and process group, with its terminal. A Ctrl-C that reaches that group while it is still the foreground job (setup's closing credential and gh probes can take 20 seconds) would stop the supervisor and its server (read, not run); a port that calls setsid behaves differently. This path has no login auto-start: after a reboot the daemon is gone and the next list removes its entry."
+
+[[feature]]
+name = "Windows fallback: pm2 backend (launchers in ~/.daemon-kit/launchers)"
+status = "missing"
+ts = "src/cli/fallback-daemon.ts:106 startWindowsPm2; src/cli/fallback-daemon.ts:100"
+note = "If a pm2 CLI can be resolved (from node_modules or bun's global install under $BUN_INSTALL, default ~/.bun; pm2 is not a dependency of codehost), @snomiao/daemon-kit deletes a pm2 process of the same name and starts the serve command directly under pm2 (no interpreter, the log as output and error file, exponential restart backoff), then has pm2 save its list; success is pm2 reporting the name online. It does so through two files it writes: ~/.daemon-kit/launchers/<name>.cmd, which holds the whole `<bun> <pm2 entry> start <bun> --name <name> … -- <cli entry> serve <dir> --token=<token> …` line (the room token in clear) and `pm2 save --force`, and <name>.vbs, which wscript runs to start the .cmd hidden. Neither stop nor anything else removes them. No supervisor loop is used. The comments promise a return at logon; no code here asks for one, and after a reboot list removes the entry. The helper was read in bun's cache of daemon-kit 0.2.0, not in the checkout; never run on Windows."
+
+[[feature]]
+name = "Windows fallback: Scheduled Task backend (~/.codehost/tasks/<name>.cmd)"
+status = "missing"
+ts = "src/cli/fallback-daemon.ts:131 startWindowsTask; src/cli/fallback-daemon.ts:77 schtasks"
+note = "Without pm2, or when its start fails, writes ~/.codehost/tasks/<name>.cmd, a launcher that runs `\"<bun>\" \"<cli entry>\" __supervise --name \"<name>\" >> \"<log>\" 2>&1`, registers it with `schtasks /create /tn <name> /tr <cmd> /sc onlogon /f` (falling back to `/sc onstart`) and starts it with `schtasks /run /tn <name>`. The task therefore also starts at logon. The launcher names bun and the TypeScript entry."
+
+[[feature]]
+name = "listing fallback daemons (and pruning dead ones)"
+status = "missing"
+ts = "src/cli/fallback-daemon.ts:148 listFallbackDaemons; src/cli/commands/list.ts:10"
+note = "An entry is live if its pm2 process is online, or its scheduled task is registered (`schtasks /query /tn`), or its supervisor pid answers signal 0. Dead entries are removed from daemons.json as a side effect of listing."
+
+[[feature]]
+name = "stopping a fallback daemon"
+status = "missing"
+ts = "src/cli/fallback-daemon.ts:158 stopFallbackDaemon; src/cli/commands/stop.ts:22"
+note = "By backend: pm2 delete and save; `schtasks /end` and `/delete /f` plus a tree kill of the recorded server pid; or SIGTERM to the POSIX supervisor, which kills its server's tree and exits. The registry entry is removed even if the process was already gone. The pids come from the registry file and are not checked to belong to codehost."
+
+[[feature]]
+name = "process-tree kill (ps / taskkill)"
+status = "missing"
+ts = "src/cli/proc.ts:10 killProcessTree; src/cli/proc.ts:29 descendants"
+note = "`code serve-web` forks twice, so stopping it means the whole tree. POSIX: reads `ps -A -o pid=,ppid=` and sends SIGTERM to every descendant, deepest first, then to the root. A `ps` that is missing or fails gives no output (spawnSync does not throw), so only the root is signalled and VS Code's forked server keeps running, as in a minimal container. Windows: `taskkill /pid <pid> /T /F`. Used at shutdown, by the supervisor and by stop; pids 0 and 1 are refused."
+
+# ═════ VS Code ═══════════════════════════════════════════════════════════════
+
+[[feature]]
+name = "launching `code serve-web`"
+status = "missing"
+ts = "src/cli/vscode.ts:33 launchVscode"
+note = "After `[codehost] launching: <code> <args>`, starts `<code> serve-web --host 127.0.0.1 --port <port> --server-base-path /vs/<peerId> --without-connection-token --accept-server-license-terms` in the served directory with inherited output. No folder is passed: the page opens one with `?folder=`. The server has no connection token; it listens on loopback only. Stopping it kills the whole process tree."
+
+[[feature]]
+name = "waiting for VS Code to answer (CODEHOST_VSCODE_READY_TIMEOUT_MS)"
+status = "missing"
+ts = "src/cli/vscode.ts:76 waitForHttp; src/cli/vscode.ts:10"
+note = "Polls http://127.0.0.1:<port>/vs/<peerId>/ every 300 ms without following redirects; any HTTP status counts as ready and prints `VS Code ready at <url>`. Every 15 seconds it logs `waiting for VS Code server to start… (<n>s; first run downloads the server component)`. It fails at once if the process has exited (`VS Code server exited (code N) before becoming ready at <url>`) and after the timeout, 10 minutes unless the variable gives a number of milliseconds (0 or text falls back to the default). The daemon joins the room only after this, so a first run can be absent from the page for minutes."
+
+[[feature]]
+name = "VS Code server exiting after it became ready (not noticed, not restarted)"
+status = "missing"
+ts = "src/cli/vscode.ts:60; src/cli/vscode.ts:83; src/cli/run-server.ts:190; src/tunnel/host.ts:215"
+note = "The `code serve-web` child is watched only while the daemon waits for it to answer. If it exits later (a crash, the OOM killer, a kill by hand), nothing observes it: the daemon stays in the room and keeps advertising itself, every tunneled HTTP request for VS Code gets the Error frame `proxy error: <fetch error>` and every WebSocket a WsClose 1006, while serve's own /__codehost routes go on answering. Nothing restarts VS Code, and neither oxmgr's on-failure, pm2 nor the supervisor do, because the daemon process itself does not exit. Under exact parity this is reproduced unless the owner decides otherwise. Read, not run."
+
+[[feature]]
+name = "--port: fixed or ephemeral VS Code port"
+status = "missing"
+ts = "src/cli/vscode.ts:34; src/cli/vscode.ts:105 freePort"
+note = "A positive --port is used as it is. Otherwise the daemon binds 127.0.0.1:0, reads the port the OS assigned, releases it and passes it to VS Code. A --port that is not a number counts as unset."
+
+[[feature]]
+name = "CODEHOST_CODE_BIN"
+status = "missing"
+ts = "src/cli/vscode-install.ts:44; src/cli/commands/update.ts:8"
+note = "The path of the VS Code CLI to use instead of any detection or download. If the file does not exist, serve, dev and setup fail with `CODEHOST_CODE_BIN points to a missing file: <path>`; `update` prints that it is set and does nothing. The binary is not probed for serve-web."
+
+[[feature]]
+name = "preferring a system `code` that can serve-web"
+status = "missing"
+ts = "src/cli/vscode-install.ts:58; src/cli/vscode-install.ts:124 runsOk; src/cli/vscode-install.ts:132 supportsServeWeb"
+note = "A `code` on PATH is used only if `code --version` exits 0 and `code serve-web --help` exits 0, mentions serve-web and does not say `Ignoring option` (10 seconds each). A desktop wrapper that fails the second probe prints `system code (<path>) can't serve-web — using a managed VS Code CLI instead`. Both probes run at every daemon start."
+
+[[feature]]
+name = "managed VS Code CLI: download, sha256 check, unpack"
+status = "missing"
+ts = "src/cli/vscode-install.ts:67 ensureManagedBinary; src/cli/vscode-install.ts:146 fetchManifest; src/cli/vscode-install.ts:161 downloadAndExtract; src/cli/vscode-install.ts:203 verifySha256"
+note = "Fetches the manifest https://update.code.visualstudio.com/api/update/<platform key>/stable/latest (url, version, productVersion, sha256hash), downloads the archive to <tmp>/codehost-vscode-<version>.tar.gz or .zip, deletes it and fails on a sha256 mismatch, unpacks it with the system `tar` (-xzf, or -xf for a zip) into <tmp>/codehost-vscode-x-<version> and moves `code` or `code.exe` into ~/.codehost/vscode/<version>/ (mode 0755), after emptying that directory. Prints `installing VS Code <productVersion> (<key>)…` and `VS Code <productVersion> ready at <path>`. The temp names are fixed per version, so two runs at once share them."
+
+[[feature]]
+name = "platform key for the VS Code CLI (including musl)"
+status = "missing"
+ts = "src/cli/vscode-install.ts:108 platformKey; src/cli/vscode-install.ts:139 isMusl"
+note = "cli-darwin-arm64 or -x64, cli-win32-arm64 or -x64, and on Linux cli-linux-x64, -arm64 or -armhf, or cli-alpine-* when /etc/alpine-release exists or `ldd --version` mentions musl. An unknown architecture falls back to x64. A static Rust binary runs on either libc, so the libc still has to be detected at run time."
+
+[[feature]]
+name = "VS Code cache ~/.codehost/vscode/ and state.json"
+status = "missing"
+ts = "src/cli/vscode-install.ts:15; src/cli/vscode-install.ts:228 readState; src/cli/vscode-install.ts:236 writeState"
+note = "state.json (2-space JSON) holds version (a commit id), productVersion, binPath (absolute) and checkedAt (milliseconds); the binaries are ~/.codehost/vscode/<version>/code[.exe]. Older version directories are never removed. Both implementations will read this file while the port is partial."
+
+[[feature]]
+name = "daily VS Code update check and forced refresh"
+status = "missing"
+ts = "src/cli/vscode-install.ts:17; src/cli/vscode-install.ts:71; src/cli/vscode-install.ts:90; src/cli/commands/update.ts:16"
+note = "A cached binary whose state was checked less than 24 hours ago is used with no network call. Otherwise the manifest is fetched and, when the version is unchanged, only checkedAt is refreshed. `codehost update` forces the check."
+
+[[feature]]
+name = "offline fallback to the cached VS Code"
+status = "missing"
+ts = "src/cli/vscode-install.ts:75"
+note = "If the manifest request fails and a cached binary exists, warns `could not check for VS Code updates (<error>); using cached <productVersion>` and goes on. With nothing cached it fails with `Unable to download VS Code and none is cached: … set CODEHOST_CODE_BIN to an existing binary.`. A failed archive download or checksum is not caught and aborts the start."
+
+# ═════ The foreground server ═════════════════════════════════════════════════
+
+# ───────────── The loop shared by serve, dev and expose ─────────────
+
+[[feature]]
+name = "foreground server loop shared by serve, dev and expose"
+status = "missing"
+ts = "src/cli/run-server.ts:79 runServer"
+note = "Prints the label, the room token and the signaling URL, starts the local target first (serve and dev wait until VS Code answers, so the server is not in the room before that), then registers in the signaling room and bridges each client's data channels to the local port. It never returns: it ends by a signal or by a launch error. No test file covers it, nor rtc-daemon, approver, oxmgr, fallback-daemon, vscode or vscode-install."
+
+[[feature]]
+name = "peer id and the /vs/<peerId> base path"
+status = "missing"
+ts = "src/cli/run-server.ts:80; src/shared/signaling.ts:200 newPeerId"
+note = "Each daemon process draws a fresh random UUID (version 4) as its peer id and mounts its target under /vs/<peerId>; the id changes at every restart (the machine's identity is the separate hostId). VS Code is started with it as its base path; for expose it is stripped before proxying. Log lines show its first 8 characters. The page finds a restarted daemon again by repo and host, not by peer id."
+
+[[feature]]
+name = "Ctrl-C / SIGTERM shutdown of a foreground server"
+status = "missing"
+ts = "src/cli/run-server.ts:228; src/cli/run-server.ts:236; src/cli/run-server.ts:87; src/cli/commands/serve.ts:264"
+note = "The handlers are installed at the very end of runServer, after the local target is up (for serve and dev that is after VS Code answered, up to CODEHOST_VSCODE_READY_TIMEOUT_MS, 10 minutes, on a first run that downloads the server component) and signaling was dialed. From then on SIGINT or SIGTERM prints a blank line and `[codehost] shutting down`, closes the approval console, every peer connection and the signaling socket, kills the VS Code process tree and exits 0; serve also removes ~/.codehost/daemon.json at exit. The exit code 0 matters to the managers, which restart on failure only. Before that the runtime's default action applies: no message, death by the signal rather than exit 0 (a restart-on-failure manager counts a failure), and no tree kill, so a SIGTERM sent to the bun process alone leaves `code serve-web` running on loopback without a connection token (a terminal's Ctrl-C reaches VS Code too, through the process group). serve's daemon.json, written before the launch, stays behind; meanwhile `codehost dev` registers with a daemon that is not yet in the room. Under --approve confirm on a terminal the first Ctrl-C probably only closes the approval console (see `host console commands`). Windows has no SIGTERM."
+
+[[feature]]
+name = "meta re-advertise: poll, compare, throttled push"
+status = "missing"
+ts = "src/cli/run-server.ts:64; src/cli/run-server.ts:71; src/cli/run-server.ts:132; src/cli/run-server.ts:203"
+note = "When the command supplies a refresh function (serve only), the metadata is recomputed every 60 seconds by default (serve passes 3 seconds), after every provision and after a provision-config save, and sent only when its JSON text differs from the last one sent. Pushes are at least 15 seconds apart: the first change goes out at once, later ones ride one trailing push that reads the metadata afresh. Each push is a billable request on the room that fans out to every peer, so the throttle has to be kept; the compare needs a stable key order."
+
+[[feature]]
+name = "watched files trigger an immediate meta refresh"
+status = "missing"
+ts = "src/cli/run-server.ts:204; src/cli/commands/serve.ts:276"
+note = "Each watched file (serve passes ~/.codehost/workspaces.json) is watched through its parent directory, so it need not exist yet; events for other file names are ignored and bursts are folded by a 300 ms trailing throttle into one refresh. A missing directory or a platform without watching is ignored silently, because the interval still covers it."
+
+[[feature]]
+name = "in-daemon routes under /__codehost/ (dispatch order)"
+status = "missing"
+ts = "src/cli/run-server.ts:168; src/tunnel/host.ts:179; src/tunnel/host.ts:44 LocalRequest"
+note = "Before a tunneled HTTP request is proxied it is offered to the daemon as method, raw path with query (before any prefix stripping), filtered headers and the whole body. serve tries /__codehost/provision, then /__codehost/provision-config, then the plugins in order (agent-yes, port, meta); anything else goes to VS Code. dev and expose install no handler, so the same paths are proxied to their local server. src/tunnel/tunnel.test.ts has the interception case."
+
+# ───────────── WebRTC ─────────────
+
+[[feature]]
+name = "WebRTC answering peer (one connection per browser client)"
+status = "missing"
+ts = "src/cli/rtc-daemon.ts:99 RtcDaemon; src/cli/rtc-daemon.ts:128 acceptOffer"
+note = "For every client that sends an offer the daemon creates an answering peer connection (node-datachannel, that is libdatachannel) named `client-<id8>`; the browser is always the offerer and creates the channels. A new offer from the same peer id replaces the old connection, a state of disconnected, failed or closed drops it, and candidates for unknown clients are ignored. A Rust daemon needs a WebRTC data-channel stack that behaves the same against Chrome, Firefox and Safari. The page gives a dial 15 seconds, so the answer has to come within that or a `pending` signal first."
+
+[[feature]]
+name = "ICE servers (Google STUN only, no TURN)"
+status = "missing"
+ts = "src/shared/rtc.ts:5 ICE_SERVERS; src/cli/rtc-daemon.ts:132; src/web/rtc-client.ts:22"
+note = "Both peers use stun:stun.l.google.com:19302 and stun:stun1.l.google.com:19302. There is no TURN, so strict or symmetric NATs may fail to connect. The daemon and the page read the same constant."
+
+[[feature]]
+name = "RTC signals: offer, answer, candidate"
+status = "missing"
+ts = "src/shared/rtc.ts:10; src/cli/rtc-daemon.ts:105 handleSignal; src/cli/rtc-daemon.ts:145; src/web/rtc-client.ts:57"
+note = "The payloads carried in the relay's `data` field. In, from the page: `{kind:'offer', type:'offer', sdp}` and `{kind:'candidate', candidate, mid}` (the page sends mid as sdpMid or '0'). Out, from the daemon: `{kind:'answer', type:'answer', sdp}` (kind and type carry the same value) and `{kind:'candidate', candidate, mid}`. Anything that is not an object, and any other kind, is ignored silently. The daemon never offers."
+
+[[feature]]
+name = "admission on the wire: answer withheld, pending and denied signals"
+status = "missing"
+ts = "src/cli/rtc-daemon.ts:138; src/cli/rtc-daemon.ts:173; src/cli/run-server.ts:96; src/shared/rtc.ts:31; src/web/discovery.tsx:1311"
+note = "The offer and the remote candidates are accepted at once, but the answer and the local candidates are held back until the admission decision. On admit they are sent in order; on deny the daemon sends `{kind:'denied'}` and closes. `{kind:'pending'}` is sent when a human has to approve, a kick also sends `denied`, and a decision for a connection that was replaced meanwhile is ignored. Approval itself has no signal: the answer is the approval. Page side (stays TypeScript): `pending` swaps the 15-second dial limit for 120 seconds; `denied` closes the connection and says so; both are handled only for the peer being opened."
+
+[[feature]]
+name = "data channels codehost (interactive) and codehost-bulk: one tunnel per channel"
+status = "missing"
+ts = "src/cli/run-server.ts:177; src/cli/tunnel.ts:12; src/shared/rtc.ts:38; src/shared/rtc.ts:46; src/web/rtc-client.ts:42"
+note = "The page creates two ordered, reliable channels before the offer: `codehost` for WebSocket traffic and, as a fallback, HTTP; `codehost-bulk` for HTTP streams, on its own SCTP stream so that large bodies do not hold up typing. The daemon does not look at labels: every incoming channel gets its own tunnel to the same local port and each stream is answered on the channel it arrived on, which is what lets old daemons serve new pages. The `connected` line is logged, and the client entered in the console's list, for the first channel only."
+
+[[feature]]
+name = "node-datachannel native module self-heal"
+status = "missing"
+ts = "src/cli/rtc-daemon.ts:26 loadNodeDataChannel; src/cli/rtc-daemon.ts:15; src/cli/rtc-daemon.ts:41; src/cli/rtc-daemon.ts:60"
+note = "If loading node-datachannel fails (bunx skips install scripts, and a global add probably does too: see the trustedDependencies entry), prints `[codehost] fetching node-datachannel native binary (prebuild-install)…`, runs `<bun> prebuild-install/bin.js -r napi` in the package directory and tries once more; a second failure throws `Failed to load the native WebRTC module (node-datachannel)…` with install advice and the cause. It runs when the module is loaded, at the top level of rtc-daemon.ts, which index.ts reaches through its static imports before yargs is constructed: so it runs at the start of every command, and the second failure is an uncaught error at module load, which bun prints without any help text, exit 1, for every command, --help and --version included. Candidate to stay JavaScript or to lapse: a Rust binary that links its WebRTC stack has nothing to repair; the owner decides."
+
+# ───────────── Admitting clients ─────────────
+
+[[feature]]
+name = "client admission policy (--approve auto | confirm)"
+status = "missing"
+ts = "src/cli/approver.ts:76 admit; src/cli/commands/serve.ts:111; src/cli/run-server.ts:96"
+note = "On serve, dev and setup, and passed on to daemons. `auto` (the default) admits every client that has the room token. `confirm` holds each new client until the host approves it at the terminal, unless its label is pre-approved; a client that disconnects while waiting counts as denied. Every admitted client gets the host's full VS Code, terminal included. No test file."
+
+[[feature]]
+name = "approval prompt at the terminal (y / N / a=always)"
+status = "missing"
+ts = "src/cli/approver.ts:127 pumpQueue; src/cli/approver.ts:142 answer"
+note = "Prints `[codehost] \"<label>\" (<id8>) wants to connect. Approve? [y/N/a=always] ` for the head of a first-in-first-out queue, one at a time. y or yes admits; a or always admits and also admits that exact label for the rest of the process; anything else, an empty line included, denies. The result is logged as `[codehost] approved|denied \"<label>\" (<id8>)`. See the header for the prompt whose client has left."
+
+[[feature]]
+name = "--allow label patterns"
+status = "missing"
+ts = "src/cli/approver.ts:107 preApproved; src/cli/approver.ts:72; src/cli/commands/serve.ts:117"
+note = "Under confirm, a client whose label contains any --allow value (a case-insensitive substring; repeatable; empty patterns ignored) is admitted without a prompt. It is the only way to admit clients in a daemon, which has no terminal. The startup banner lists them: `[codehost] auto-approving labels matching: a, b`. The label is what the browser says about itself."
+
+[[feature]]
+name = "host console commands: list, kick, help"
+status = "missing"
+ts = "src/cli/approver.ts:155 command; src/cli/approver.ts:179 printList; src/cli/approver.ts:189 doKick; src/cli/approver.ts:116 start"
+note = "With confirm on a terminal, lines typed while no prompt is open are commands. The console is a node:readline interface on stdin with stdout as output, so in terminal mode, and it has no 'SIGINT' listener; Node's readline then answers Ctrl-C by closing the interface instead of letting the signal through. Assuming bun's node:readline matches Node's (not run), the first Ctrl-C quietly ends the console while the daemon keeps serving: an open prompt can no longer be answered (the page gives up after its 120-second limit) and only a second Ctrl-C reaches the shutdown. `l`, `ls` or `list` prints `connected clients:` and the numbered clients, or `no clients connected`. `k` or `kick <n|peer id prefix>` prints `kicking \"<label>\" (<id8>)`, sends `denied` and closes that client, or `no connected client matches \"<arg>\" — see: list`. `h`, `help` or `?` prints `commands: list · kick <n|id> · help`. Anything else prints `unknown command \"<cmd>\" — try: list · kick <n|id>`. There is no console under --approve auto."
+
+[[feature]]
+name = "confirm without a terminal denies every unlisted client"
+status = "missing"
+ts = "src/cli/approver.ts:62 banner; src/cli/approver.ts:80"
+note = "If stdin is not a terminal, the banner warns `approval: confirm, but no terminal is attached — clients can't be approved interactively and will be denied. Use --approve auto or --allow <label> for a daemon.` and each client that matches no --allow is denied with `denied \"<label>\" (<id8>): confirm mode needs a terminal`. On a terminal the banner is `approval: confirm — new clients wait for your OK. Commands: list · kick <n>`."
+
+[[feature]]
+name = "client labels from the room roster"
+status = "missing"
+ts = "src/cli/run-server.ts:93; src/cli/run-server.ts:121; src/web/discovery.tsx:77"
+note = "The daemon rebuilds a peer-id-to-name map from every `peers` message, for members whose role is client or viewer, and uses it in approval prompts, --allow matching and the `connected` line; a client not (yet) in the roster is `unknown client`. Page side (stays TypeScript): each tab joins with the name `<Browser> · <OS>` sniffed from the user agent (`Chrome · macOS`); the page's short-lived probe clients and the embeddable client join with no name. A returning browser cannot be recognised: its peer id is new at every page load."
+
+# ═════ Signaling (WebSocket to the Worker) ═══════════════════════════════════
+# The Worker half of each entry stays TypeScript (worker/, keep_ts); the entry
+# is what the daemon has to send, accept and survive.
+
+[[feature]]
+name = "signaling room endpoint <signal>/room/<token>"
+status = "missing"
+ts = "src/shared/signaling-client.ts:145 roomUrl; worker/index.ts:39; worker/room.ts:58"
+note = "Daemon side: a WebSocket to the base URL with trailing slashes removed, plus `/room/`, plus the token through encodeURIComponent, whose escape set a port has to match. Worker side: the path is `/room/<token>` with an optional trailing slash; one Durable Object per token; a request whose Upgrade header is not exactly `websocket` in lower case gets 426 `expected websocket` (a Rust client has to send the lower-case value; tungstenite does). The token is the only credential, and the Worker does not validate what a peer then claims to be."
+
+[[feature]]
+name = "weak room token rejected by the signaling Worker (HTTP 400)"
+status = "missing"
+ts = "worker/index.ts:44; src/shared/token.ts:42"
+note = "Worker side: before the upgrade the URL-decoded token goes through the shared policy; a failure is answered 400 `weak token: <reason>`, so the socket never opens. Daemon side: the CLI applies the same policy before dialing. The shared client does not tell a 400 from any other failure: it would retry with backoff for ever (read, not run), so a Rust copy of the policy that is more lenient than the Worker's shows as a daemon that never registers."
+
+[[feature]]
+name = "registration: hello on every (re)connect, welcome"
+status = "missing"
+ts = "src/shared/signaling.ts:141; src/shared/signaling-client.ts:177; src/cli/run-server.ts:107; worker/room.ts:78"
+note = "The first message on every socket is `{type:'hello', role:'server', peerId, meta}` with the current metadata (`meta` is left out, not null, when there is none); the daemon then starts the heartbeat and logs `registered as \"<name>\" (<id8>)`. The room stores the peer, answers `{type:'welcome', peerId}`, which the client ignores, and broadcasts the roster. Anything sent before hello is ignored by the room. Role and peer id are not validated by the Worker."
+
+[[feature]]
+name = "peers message (room roster)"
+status = "missing"
+ts = "src/shared/signaling.ts:182; src/shared/signaling.ts:128; src/shared/signaling-client.ts:195; worker/room.ts:232"
+note = "`{type:'peers', peers:[{peerId, role, meta or null, since?}], now?}` goes to every member at each join, leave, metadata change and eviction; `since` and `now` are the Worker's clock in milliseconds and are absent from older Workers. The daemon only reads it, for client names; the page builds its server list from the entries whose role is exactly `server`. The room sends it to every socket of the room, one that never said hello included, so whoever holds the token can read every server's metadata."
+
+[[feature]]
+name = "signal message (relay between peers)"
+status = "missing"
+ts = "src/shared/signaling.ts:149; src/shared/signaling.ts:192; src/shared/signaling-client.ts:273 sendSignal; src/shared/signaling-client.ts:151; src/cli/rtc-daemon.ts:145; src/cli/rtc-daemon.ts:188; worker/room.ts:108"
+note = "The daemon sends `{type:'signal', to:<peerId>, data}` and receives `{type:'signal', from:<peerId>, data}`; `data` is opaque to the room. The room delivers to the first socket with that peer id and drops the message silently when the target is absent or the sender never said hello. The client sends without a queue, without checking the socket's state and without catching. During the backoff wait (the old socket closed) an answer or candidate is silently lost. During the replacement socket's CONNECTING phase (up to 10 seconds; it is assigned before it opens) WebSocket.send throws InvalidStateError, assuming bun's WebSocket keeps WebKit's check (not run), and nothing catches it: the callers are node-datachannel's local-description and local-candidate callbacks and the console's kick, so the error is uncaught and probably ends the daemon; only the admission path catches it, and drops that client. A port that queued, dropped or caught would behave differently."
+
+[[feature]]
+name = "ping heartbeat every 25 s (the room evicts after 65 s of silence)"
+status = "missing"
+ts = "src/shared/signaling.ts:159; src/shared/signaling-client.ts:60; src/shared/signaling-client.ts:220; worker/room.ts:94; worker/room.ts:122"
+note = "Daemon side: `{type:'ping'}` every 25 seconds on an open socket, with no reply expected. Worker side: hello, ping, meta and signal count as life; a socket silent for more than 65 seconds is closed with code 1001 and reason `stale` and the roster is broadcast again, after which the daemon reconnects and says hello again. Each ping is a billable request, so the cadence is part of the contract."
+
+[[feature]]
+name = "meta message (live metadata update)"
+status = "missing"
+ts = "src/shared/signaling.ts:166; src/shared/signaling-client.ts:280 updateMeta; worker/room.ts:99"
+note = "`{type:'meta', meta}` replaces the peer's advertised metadata and makes the room broadcast the roster. The client stores the new metadata for every later hello and sends the message only if the socket is open. Ignored by the room before hello and by older Workers, in which case the metadata arrives with the next hello."
+
+[[feature]]
+name = "role wire values and the client/viewer rule"
+status = "missing"
+ts = "src/shared/signaling.ts:14; src/shared/signaling.ts:18 CLIENT_WIRE_ROLE; src/shared/signaling.ts:22 isClientRole; src/cli/run-server.ts:110; src/cli/run-server.ts:124"
+note = "Daemons join as `server`. The connecting role may arrive as `client` or as the legacy `viewer`, and receivers must accept both; new pages still emit `viewer` during the accept-both, emit-old transition. CLAUDE.md forbids renaming or repurposing the values or flipping the emitted one without keeping that."
+
+[[feature]]
+name = "signaling compatibility: additive only, unknown messages ignored, no version check"
+status = "missing"
+ts = "CLAUDE.md:23; src/shared/signaling.ts:64; src/shared/signaling-client.ts:188; src/shared/rtc.ts:24; src/cli/rtc-daemon.ts:105"
+note = "Deployed daemons run many npm versions, so every change has to be an optional field or a new message type. Receivers ignore unparseable JSON, unknown message types, unknown fields and unknown signal kinds, and treat every metadata field except `name` as possibly absent. Neither the page nor the Worker reads a version: the page detects each newer feature by its absence (no hostId, no kind, no /__codehost/meta, no x-codehost-workspace header, a 403 on folder provisioning, no pending or denied, no since or now). For Rust that means lenient deserialisation and no handshake to add."
+
+[[feature]]
+name = "signaling reconnect: backoff, stability reset, connect timeout"
+status = "missing"
+ts = "src/shared/signaling-client.ts:40; src/shared/signaling-client.ts:46; src/shared/signaling-client.ts:52; src/shared/signaling-client.ts:245 scheduleReconnect"
+note = "After any close the client retries after 1 second, doubling to a cap of 120 seconds, each delay multiplied by a random factor between 0.75 and 1.25. The delay goes back to 1 second only after a socket has stayed open for 60 seconds. A socket still connecting after 10 seconds is closed so that the same path runs. `close()` stops reconnection, heartbeat and timers. The numbers limit the load on a billed service; a test needs a clock it controls. The same module runs in the page, where a hidden tab does not reconnect at all (see the page entry on rooms)."
+
+[[feature]]
+name = "advertised server metadata (PeerMeta) of serve, dev and expose"
+status = "missing"
+ts = "src/shared/signaling.ts:64 PeerMeta; src/cli/commands/serve.ts:198 buildFullMeta; src/cli/commands/dev.ts:133; src/cli/commands/expose.ts:78"
+note = "Fields: name (required), cwd (in ?folder= form), host, user, hostId, kind (`repo` or `root`; absent means repo), githubAuth `{ok}`, repo (`<host>/<owner>/<repo>`), branch, layout, workspaces, folderProvisioning, agents. serve sends kind root with layout, githubAuth (the credential probe, remembered for 5 minutes) and folderProvisioning only when true; dev sends kind repo with repo and branch, both left out outside a git repository; expose sends name, cwd `localhost:<port>`, host, user and hostId. Absent fields are omitted, never null. The page reads every one of them (card title, tags, machine pinning, grouping, deep-link matching, the auth banner), so names and the path form are a contract with deployed pages."
+
+[[feature]]
+name = "workspace list (WorkspaceInfo): layout checkouts, the .codehost config dir, registered directories"
+status = "missing"
+ts = "src/shared/signaling.ts:45 WorkspaceInfo; src/cli/commands/serve.ts:199; src/cli/commands/serve.ts:212"
+note = "Entries `{path, repo?, branch?, config?}`: the checkouts found by the layout walk, then the root's .codehost directory flagged `config: true` when it exists, then the directories registered in workspaces.json that are not already listed, each with the repo and branch that git reports. Paths are in ?folder= form. serve serves the list over the tunnel only (the meta route), not through the room. Only the layout walk is cached (30 seconds) and capped (200). The registered directories are checked for existence and passed through repoIdentity, three or more synchronous git processes each, at every build of the metadata, that is every 3 seconds and at every /__codehost/meta request, and their number is not capped: the room never sees them, but /__codehost/meta returns them all."
+
+[[feature]]
+name = "room copy of the metadata is identity-only (the room keeps about 2 KB per peer)"
+status = "missing"
+ts = "src/cli/commands/serve.ts:251 buildRoomMeta; worker/room.ts:188"
+note = "Daemon side: serve removes `workspaces` and `agents` from what it sends to the room, in hello and in meta messages; the page fetches the full metadata from /__codehost/meta. Worker side: each peer's hello is kept in a socket attachment of about 2 KB; on overflow the Worker halves `meta.workspaces` until it fits, then drops the list, and if it still does not fit the peer silently never appears in the roster. A Rust daemon must keep its room metadata as small as the TypeScript one does."
+
+# ═════ The tunnel (HTTP and WebSocket over a data channel) ═══════════════════
+# The daemon is the host half (src/tunnel/host.ts). The client half
+# (src/tunnel/client.ts) runs in the page and stays TypeScript; it is also what
+# src/tunnel/tunnel.test.ts drives the host with, over an in-memory transport.
+
+# ───────────── Frames ─────────────
+
+[[feature]]
+name = "tunnel frame format and the 64 KiB frame limit"
+status = "missing"
+ts = "src/tunnel/protocol.ts:61 encodeFrame; src/tunnel/protocol.ts:84 decodeFrame; src/tunnel/protocol.ts:41; src/tunnel/protocol.ts:34; src/cli/rtc-daemon.ts:132"
+note = "One binary data-channel message is one frame: byte 0 the opcode, bytes 1 to 4 the stream id as a big-endian unsigned 32-bit number, the rest the payload (raw bytes, or UTF-8 JSON for control frames). There is no length field and an empty payload is legal. Senders cap a frame at 65,536 bytes (5 of header, at most 65,531 of payload) and split anything larger; receivers accept any size, which is what lets older 16 KiB peers and current ones work together. That rests on the WebRTC stacks: 64 KiB messages are safe only because Chrome, Firefox and libdatachannel all negotiate an SCTP max-message-size of 256 KiB (the comment at protocol.ts:34-40), and the daemon gives node-datachannel nothing but its ICE servers, so the value is libdatachannel's default. A daemon on another WebRTC stack has to advertise a=max-message-size of at least 65,536 in its answer, accept 64 KiB messages from current pages and 16 KiB ones from old pages, and never send more than the browser advertises. tunnel.test.ts has the codec round trips."
+
+[[feature]]
+name = "tunnel: unknown opcodes, unknown streams and text messages are ignored"
+status = "missing"
+ts = "src/tunnel/host.ts:111; src/tunnel/client.ts:98; src/tunnel/node-datachannel.ts:22"
+note = "Both ends switch on the opcode with no default branch, so an unknown opcode is dropped silently; frames for a stream id nobody holds are dropped; the transports drop text messages. This absence of an error path is what makes new opcodes compatible, and Rust has to keep it on purpose. A frame shorter than 5 bytes or with bad JSON is another matter: see the header."
+
+[[feature]]
+name = "tunnel stream ids"
+status = "missing"
+ts = "src/tunnel/client.ts:90 allocId"
+note = "The page allocates them: from 1, plus one per HTTP request or WebSocket, wrapping at 2^32 and skipping 0; HTTP and WebSocket streams share one counter across both channels. The daemon never allocates an id: it answers on the id and the channel the request arrived on."
+
+[[feature]]
+name = "tunnel frames HttpReq (1), HttpReqBody (2), HttpReqEnd (3): a request from the page"
+status = "missing"
+ts = "src/tunnel/protocol.ts:13; src/tunnel/host.ts:112; src/tunnel/host.ts:167; src/tunnel/client.ts:214"
+note = "HttpReq is JSON `{method, path, headers}`: the raw tunneled path with its query (for VS Code it includes /vs/<peerId>) and a flat map of header strings. HttpReqBody carries raw body bytes, at most 65,531 per frame, appended in order and dropped if no HttpReq was seen for that id; it is not sent for an empty body. HttpReqEnd has no payload and starts the upstream request with the whole buffered body: uploads are not streamed, and the body is discarded when the method is exactly GET or HEAD."
+
+[[feature]]
+name = "tunnel frames HttpResHead (4), HttpResBody (5), HttpResEnd (6): the response"
+status = "missing"
+ts = "src/tunnel/protocol.ts:17; src/tunnel/host.ts:191; src/tunnel/host.ts:204; src/tunnel/host.ts:214; src/tunnel/client.ts:99"
+note = "HttpResHead is JSON `{status, statusText, headers}`: header names in lower case, hop-by-hop headers removed, one string per name, so repeated headers such as Set-Cookie do not survive as separate entries. HttpResBody carries the bytes as the upstream produces them, each read split into frames of at most 65,531 bytes that each wait for flow control; the boundaries mean nothing to the receiver. HttpResEnd has no payload and ends the stream. The exact header map and statusText are what bun's fetch produces."
+
+[[feature]]
+name = "tunnel frame Error (12)"
+status = "missing"
+ts = "src/tunnel/protocol.ts:28; src/tunnel/host.ts:215; src/tunnel/client.ts:110"
+note = "Daemon to page, JSON `{message}`: `proxy error: <error text>` when the upstream request or a local route throws, before the head or in the middle of a body. The page rejects the fetch or errors the body stream; it honours the frame for HTTP streams only. tunnel.test.ts asserts the `proxy error` prefix; the rest of the text is bun's."
+
+[[feature]]
+name = "tunnel frames WsOpen (7) and WsOpenAck (8)"
+status = "missing"
+ts = "src/tunnel/protocol.ts:21; src/tunnel/protocol.ts:26; src/tunnel/host.ts:121; src/tunnel/host.ts:235; src/tunnel/host.ts:242; src/tunnel/client.ts:226"
+note = "WsOpen, page to daemon, is JSON `{path, protocols?}` (protocols left out when the page gave none), always on the interactive channel. The daemon opens a WebSocket to the local server and answers WsOpenAck: `{ok:true, protocol:<negotiated subprotocol, empty if none>}` when it opens, or `{ok:false, error:<text>}` when creating it throws. A connection that fails later shows as a WsClose with 1006 instead; the test accepts either."
+
+[[feature]]
+name = "tunnel frames WsText (9), WsBin (10) and WsCont (13): messages and their fragmentation"
+status = "missing"
+ts = "src/tunnel/protocol.ts:22; src/tunnel/protocol.ts:31; src/tunnel/protocol.ts:125 wsMessageFrames; src/tunnel/protocol.ts:143 WsReassembler; src/tunnel/host.ts:124; src/tunnel/host.ts:244"
+note = "In both directions. A message of up to 65,531 bytes is one WsText or WsBin frame. A longer one is WsCont frames of exactly 65,531 bytes followed by a WsText or WsBin frame with the remaining 1 to 65,531 bytes; the receiver concatenates per stream id and forgets fragments at WsClose. Text is decoded as UTF-8 with JavaScript's non-fatal decoder (bad bytes become U+FFFD, a leading BOM is removed). Messages that fit use no WsCont, which keeps peers from before fragmentation working. WsCont frames for a stream with no socket are kept until a final frame or a WsClose arrives. Frames for a socket that is gone are dropped."
+
+[[feature]]
+name = "tunnel frame WsClose (11)"
+status = "missing"
+ts = "src/tunnel/protocol.ts:24; src/tunnel/host.ts:135; src/tunnel/host.ts:251; src/tunnel/client.ts:133; src/tunnel/client.ts:234"
+note = "Page to daemon: JSON `{code?, reason?}`; the daemon closes the upstream socket without forwarding code or reason and drops partial fragments. Daemon to page: `{code, reason}` from the upstream close event, or `{code:1006, reason:'error'}` on an upstream error; both can be sent for one socket. The page takes missing fields as 1000 and an empty reason."
+
+# ───────────── Proxying ─────────────
+
+[[feature]]
+name = "tunneled HTTP proxy to the local server"
+status = "missing"
+ts = "src/tunnel/host.ts:145 doHttp; src/cli/tunnel.ts:12; src/tunnel/protocol.ts:11 Op; src/tunnel/client.ts:149"
+note = "At HttpReqEnd the daemon replays the request against http://127.0.0.1:<port><path> without following redirects (a 3xx passes through), then streams head, body and end back. Upstream statuses such as 404 pass through, requests on different stream ids run concurrently, and an unreachable upstream gives an Error frame. The local server is reached at 127.0.0.1 only. There is no way to cancel one stream: no opcode for it, the page's response stream has no cancel handler and WsClose applies to WebSockets only. When the consumer goes away (an iframe navigates, a fetch is aborted, an EventSource on an `ay serve` tail closes) the daemon keeps reading the upstream body and sending it, through the channel's queue and its 4 MiB window, until the body ends or the channel closes. A cancel opcode would be a compatible addition, but not exact parity. Needs a streaming HTTP client that neither follows redirects nor decompresses, and that treats headers as bun's fetch does. tunnel.test.ts: GET, a POST body and a response larger than a frame, 404, concurrency, an unreachable upstream."
+
+[[feature]]
+name = "hop-by-hop header stripping"
+status = "missing"
+ts = "src/tunnel/host.ts:25; src/tunnel/host.ts:159; src/tunnel/host.ts:193"
+note = "Removed from requests going upstream and from responses going back, whatever their case: connection, keep-alive, proxy-authenticate, proxy-authorization, te, trailer, transfer-encoding, upgrade, content-length, host. So the page never receives a content-length, and local routes do not see the page's own."
+
+[[feature]]
+name = "x-forwarded-host becomes the Host header"
+status = "missing"
+ts = "src/tunnel/host.ts:152; src/tunnel/host.ts:165; src/web/sw.ts:107"
+note = "The page's Service Worker adds x-forwarded-host with its own host to every /vs/<peerId>/ request. The daemon removes it and uses its value as Host for the upstream request, falling back to 127.0.0.1:<port>; that makes VS Code build resource URLs that come back through the tunnel. Requests the page sends itself (/__codehost/...) do not carry it. Local routes see the Host so derived. Tested in tunnel.test.ts."
+
+[[feature]]
+name = "gzip passthrough (x-codehost-accept-gzip)"
+status = "missing"
+ts = "src/tunnel/host.ts:170; src/tunnel/host.ts:188; src/tunnel/client.ts:158; src/tunnel/client.ts:168; src/tunnel/host.ts:179; src/cli/plugins/preview.ts:26; src/cli/plugins/agent-yes.ts:137"
+note = "When a request carries `x-codehost-accept-gzip: 1` the daemon removes that header, forces `accept-encoding: gzip` upstream (never brotli) and relays the upstream's compressed bytes untouched with their content-encoding. The page, which adds the marker to every request it can inflate, its own /__codehost/* requests included, inflates and drops content-encoding and content-length. Without the marker bun's fetch decompresses as usual. The untouched relay uses a bun-only fetch option; the Rust client must never decompress in the marked case and must match bun's headers in the unmarked one. In-daemon routes see the forced `accept-encoding: gzip` as well, because the header is set before the request is offered to them. The agent-yes and preview proxies copy those headers into a fetch of their own without `decompress: false`, so bun inflates a gzip answer while the response probably keeps its `content-encoding: gzip` (as standard fetch does); the host relays that header and the page sends the plain body through its gzip decoder. The likely result is a broken body from every dev server or `ay serve` route that compresses (webpack-dev-server does by default). Read, not run; preview.test.ts calls the plugin directly and cannot see it. Tested in tunnel.test.ts."
+
+[[feature]]
+name = "base-path stripping for exposed servers (stripPrefix)"
+status = "missing"
+ts = "src/tunnel/host.ts:101 localPath; src/cli/commands/expose.ts:93"
+note = "With a prefix set (`codehost expose` passes /vs/<peerId>) it is removed from HTTP and WebSocket paths before proxying and a leading slash is guaranteed. serve and dev leave it unset, because VS Code is started with that base path. Tested in tunnel.test.ts."
+
+[[feature]]
+name = "tunneled WebSocket proxy to the local server"
+status = "missing"
+ts = "src/tunnel/host.ts:224 openWs; src/tunnel/host.ts:233; src/tunnel/client.ts:226"
+note = "WsOpen opens ws://127.0.0.1:<port><path> with the requested subprotocols; upstream text and binary messages go back as WsText and WsBin (fragmented when large), the page's frames are forwarded upstream as text or binary, and an upstream close or error produces WsClose. VS Code's remote protocol and terminals run over this. No request header is forwarded: WsOpen carries only the path and the subprotocols, so the upstream (VS Code, or a dev server through /__codehost/port/<PORT>) sees Host 127.0.0.1:<port> and whatever else bun's WebSocket client sends by itself (Origin, User-Agent; not inspected), none of the page's headers or cookies and no x-forwarded-host rewrite as for HTTP. A Rust client has to send an equivalent set. tunnel.test.ts: open, a text echo, a large binary echo, a dead upstream."
+
+[[feature]]
+name = "preview WebSocket route /__codehost/port/<PORT>/..."
+status = "missing"
+ts = "src/tunnel/host.ts:226"
+note = "A WsOpen whose raw path is /__codehost/port/<1 to 5 digits>, optionally followed by /<rest>, connects to ws://127.0.0.1:<PORT><rest or /> instead of the served port (Vite's hot reload for the preview plugin). It is part of the tunnel host itself, so it is active under serve, dev and expose alike, and the port is not range-checked as in the HTTP route: any admitted client can open a WebSocket to any loopback port. Tested in tunnel.test.ts."
+
+[[feature]]
+name = "tunnel flow control (ordered send queue with backpressure)"
+status = "missing"
+ts = "src/tunnel/host.ts:17; src/tunnel/host.ts:266; src/tunnel/host.ts:282 waitForDrain"
+note = "All daemon-to-page frames of a channel go through one first-in-first-out queue. A send waits while the channel's buffered amount is at or above 4 MiB and resumes on the buffered-amount-low event (threshold 1 MiB) or a 100 ms safety poll. Frames are dropped silently once the channel is closed. Order has to hold across the waits; the Rust WebRTC library must report the buffered amount and a low-threshold callback. Tested in tunnel.test.ts with a faked buffered amount."
+
+[[feature]]
+name = "tunnel teardown when a channel closes"
+status = "missing"
+ts = "src/tunnel/host.ts:97; src/tunnel/host.ts:301 closeAll"
+note = "When the data channel closes the daemon closes every upstream WebSocket of that channel and forgets half-received HTTP requests. Upstream requests in flight are not aborted; their frames are just no longer sent."
+
+[[feature]]
+name = "transport contract and the node-datachannel adapter"
+status = "missing"
+ts = "src/tunnel/transport.ts:5 TunnelTransport; src/tunnel/node-datachannel.ts:5 nodeDataChannelTransport; src/cli/tunnel.ts:12"
+note = "What the tunnel asks of a transport: send a frame, say whether it is open, report the bytes buffered (0 if unknowable), optionally call back when that drops below a threshold, deliver binary frames only, report closing; whole frames, in order, both ways. The daemon's adapter sends with sendMessageBinary, sets the low threshold (skipped silently on an addon too old to have it), delivers only binary messages and forwards the closed event. The Rust daemon needs the same adapter over whichever WebRTC library it adopts. src/tunnel/node-datachannel.test.ts runs it over a real loopback WebRTC pair and needs the native addon."
+
+# ═════ Provisioning (serve only) ═════════════════════════════════════════════
+
+[[feature]]
+name = "GET /__codehost/provision?owner=&repo=&branch=&host= (repo provisioning)"
+status = "missing"
+ts = "src/cli/provision-server.ts:196 handleProvision; src/cli/provision-server.ts:43 isProvisionPath; src/web/discovery.tsx:897"
+note = "Validates owner, repo and branch (branch defaults to main), checks the allowlist, computes the workspace path and returns it in the `x-codehost-workspace` header. Without a setup script: 200 application/json `{workspace}`. With one: 200 `text/plain; charset=utf-8`, the script's log as a stream. Both with `cache-control: no-store`. The HTTP method is not checked, and `host` (default github.com, lower-cased) is not validated, yet it reaches the script's environment and the allowlist key. The workspace path goes into x-codehost-workspace as it is, unencoded: under a served root with characters above U+00FF (C:\\Users\\张三\\ws) repo provisioning breaks, either because bun refuses the header value and the request ends in an Error frame, or because the value is relayed and the page's `new Headers()` throws inside its head handler, which leaves the provisioning fetch hanging with no log (read, not run); a port has to choose an encoding here too. Page side (stays TypeScript): sent for repo links after the channel opens; a missing header means an old daemon. provision-server.test.ts covers the no-script answer, a run with its environment, a non-zero exit, a rejected identity, the allowlist and a custom layout."
+
+[[feature]]
+name = "provision target validation (400)"
+status = "missing"
+ts = "src/shared/provision.ts:33 validateProvisionTarget; src/cli/provision-server.ts:200"
+note = "owner and repo must start with a letter or digit and continue with letters, digits, `.`, `_` or `-`. The branch (empty means main; trimmed) may hold only letters, digits, `.`, `_`, `/` and `-`, with no empty, `.` or `..` segment and none that starts with `-`. A failure is answered 400 `{error:'invalid owner|repo|branch: <value>'}` and nothing is started. It is the injection gate for a link that makes a host run a script, so it must match exactly; src/shared/provision.test.ts lists what must not pass."
+
+[[feature]]
+name = "repo allowlist (403)"
+status = "missing"
+ts = "src/shared/provision.ts:60 repoAllowed; src/cli/provision-server.ts:209"
+note = "If config.yaml has a non-empty allowlist, the key `<host>/<owner>/<repo>` must equal a trimmed entry, or start with an entry that ends in `/*` minus the star; otherwise 403 `{error:'repo not allowlisted: <key>'}`. Case-sensitive. An absent, empty or unparsable config allows every repo, and that has to stay as it is. Tested in src/shared/provision.test.ts and provision-server.test.ts."
+
+[[feature]]
+name = "workspace layout template and the daemon-computed workspace path"
+status = "missing"
+ts = "src/shared/provision.ts:48 resolveWorkspacePath; src/shared/repo.ts:23 DEFAULT_LAYOUT; src/cli/provision-server.ts:212"
+note = "The opened path is `<served root in ?folder= form, trailing slashes removed>/<layout with every {owner}, {repo} and {branch} filled, leading slashes removed>`. The layout is `workspace` from config.yaml, by default `{owner}/{repo}/tree/{branch}`; the default branch is main. The path is never taken from the script's output. The template has no {host} placeholder and the `host` parameter does not reach the path, so /gitlab.com/o/r and /github.com/o/r provision into the same directory, where the scaffolded setup.sh finds `.git`, prints `[setup] <ws> already provisioned` and opens whichever clone came first. serve also advertises the layout, as it was when the daemon started. Tested in src/shared/provision.test.ts."
+
+[[feature]]
+name = "folder-mount provisioning: GET /__codehost/provision?kind=folder&path="
+status = "missing"
+ts = "src/cli/provision-server.ts:249 handleFolderProvision; src/web/discovery.tsx:927"
+note = "Only when config.yaml has `folderProvisioning: true`; otherwise 403 `{error:'folder provisioning is disabled (set folderProvisioning: true in config.yaml)'}`. A missing path gives 400 `{error:'missing path'}`. The path, to which a leading `/` is added and which is not checked otherwise, is returned in `x-codehost-workspace`, and the setup script runs with CODEHOST_TARGET_KIND=folder; without a script the answer is 200 `{workspace}`. Page side: sent only for a folder open on a host that advertises folderProvisioning; a 403 or a missing header means the folder is opened directly. No test."
+
+[[feature]]
+name = "setup script discovery and run (.codehost/setup.sh, setup.bat, setup.ps1)"
+status = "missing"
+ts = "src/cli/provision-server.ts:65 findSetupScript; src/cli/provision-server.ts:340"
+note = "On Windows setup.bat (`cmd /c`) wins, then setup.ps1 (`powershell -NoProfile -ExecutionPolicy Bypass -File`), then setup.sh; elsewhere only setup.sh, run as `bash <path>`, so it needs no executable bit. The script runs with the served root as its working directory and the daemon's whole environment plus the provisioning variables. With no script, provisioning only returns the path."
+
+[[feature]]
+name = "provision script environment (CODEHOST_* variables, no git prompts)"
+status = "missing"
+ts = "src/cli/provision-server.ts:225; src/cli/provision-server.ts:269; src/cli/provision-server.ts:345; packages/ws-provision/src/git-auth.ts:12 GIT_NO_PROMPT_ENV; src/cli/init.ts:26"
+note = "Repo mode sets CODEHOST_OWNER, CODEHOST_REPO, CODEHOST_BRANCH, CODEHOST_HOST, CODEHOST_HOME (the served root, as an OS path), CODEHOST_WS (the workspace, as an OS path), CODEHOST_TARGET_KIND=repo and CODEHOST_REPO_KEY=<host>/<owner>/<repo>. Folder mode sets CODEHOST_HOME, CODEHOST_WS, CODEHOST_TARGET_KIND=folder and CODEHOST_TARGET_PATH. Both add GIT_TERMINAL_PROMPT=0 and GCM_INTERACTIVE=Never, so that a private clone fails fast instead of waiting at a prompt nobody sees. The room token is never passed. Users' scripts depend on the exact names, which the scaffolded setup.sh documents."
+
+[[feature]]
+name = "provision log stream: announce line, script output, ::codehost:ready and ::codehost:exit sentinels"
+status = "missing"
+ts = "src/cli/provision-server.ts:322 runScriptBody; src/cli/provision-server.ts:391; src/web/discovery.tsx:876"
+note = "The body starts with `[codehost] provisioning <host>/<owner>/<repo>@<branch>` (or `[codehost] provisioning <path>`), then the script's stdout and stderr, each buffered by line on its own and interleaved, then a blank line and `::codehost:exit=<code>` (code 1 after `[codehost] provision error: <err>` when the script could not be started). A line `::codehost:ready={\"path\":…}` printed by the script passes through untouched. After the stream closes the daemon re-advertises its metadata. Page side: opens the editor early at the first ready line, reads the exit code (absent counts as success), hides both sentinels from the log shown. The sentinels are byte-exact."
+
+[[feature]]
+name = "secret redaction in the provision log"
+status = "missing"
+ts = "src/cli/provision-server.ts:286; src/cli/provision-server.ts:295 collectSecrets; src/cli/provision-server.ts:309 redact"
+note = "Before a line is sent, every occurrence of the room token and of the value of any daemon environment variable whose name matches TOKEN, SECRET, PASSWORD, KEY, CREDENTIAL or AUTH in any case (values of 6 or more characters, longest first) becomes `[redacted]`, and URL credentials `http(s)://user[:pass]@` become `http(s)://[redacted]@`. Best effort: exact matches on complete lines only. No test."
+
+[[feature]]
+name = "auth-shaped failure pattern and the git credential hint"
+status = "missing"
+ts = "packages/ws-provision/src/git-auth.ts:41 GIT_AUTH_ERROR_RE; packages/ws-provision/src/git-auth.ts:49 gitAuthHint; src/cli/provision-server.ts:371; src/cli/provision-server.ts:386"
+note = "If the script exits non-zero and a complete line of its output matched `could not read Username`, `terminal prompts disabled`, `Authentication failed`, `Repository not found` or `repository '<url>' not found`, `Permission denied (publickey)`, or `Invalid username or password` or `token`, advice is appended before the exit sentinel, each line prefixed `[codehost] `. With credentials present, two lines beginning `⚠ this repo wasn't accessible — it may not exist, or the <host> account this`. Without: `⚠ this repo may be private, and no <host> credentials are available on this host.`, `To fix, run on the host:`, `   gh auth login && gh auth setup-git`, `   (install it first: https://cli.github.com)` when gh is missing, `then retry this link.`. The probes are always for github.com. git-auth.test.ts lists what the pattern matches and what it does not."
+
+[[feature]]
+name = "GitHub credential probe (`git credential fill`) and gh probe"
+status = "missing"
+ts = "packages/ws-provision/src/git-auth.ts:23 hasGitCredentials; packages/ws-provision/src/git-auth.ts:34 hasGhCli; src/cli/commands/serve.ts:192"
+note = "Runs `git credential fill` with `protocol=https`, `host=<host>` and a blank line on stdin, prompts disabled, LC_ALL=C, a 10-second limit; true when it exits 0 and prints a non-empty `password=` line, which means the process has read the user's real credential and must never print it. The gh probe is true when `gh --version` exits 0 within 10 seconds, whatever its login state. They feed serve's `githubAuth.ok` (remembered for 5 minutes), setup's closing report, the provisioning hint and the library's failure reasons. The default host is github.com."
+
+[[feature]]
+name = "concurrent provisions of one workspace are coalesced"
+status = "missing"
+ts = "src/cli/provision-server.ts:194; src/cli/provision-server.ts:218; src/cli/provision-server.ts:404 coalescedBody"
+note = "While a script runs for a workspace path, further requests for the same path do not start another: they receive `[codehost] provision already running for this workspace; waiting…` and then the same `::codehost:exit=<code>` when the first finishes, without the script's log."
+
+[[feature]]
+name = "provision script timeout (CODEHOST_PROVISION_TIMEOUT_MS)"
+status = "missing"
+ts = "src/cli/provision-server.ts:17; src/cli/provision-server.ts:349"
+note = "Milliseconds before a running setup script is killed; 15 minutes by default, read once when the daemon starts (0 or text falls back to the default). Only the script's own process is signalled, not its children, and the response stays open until both of its pipes close."
+
+[[feature]]
+name = "GET /__codehost/provision-config"
+status = "missing"
+ts = "src/cli/provision-server.ts:143 handleProvisionConfig; src/cli/provision-server.ts:101 setupScriptInfo; src/web/discovery.tsx:951"
+note = "200 JSON `{configYaml, configYamlExists, configYamlDefault, setupScript, setupScriptName, setupScriptExists, setupScriptDefault}`: the root's .codehost/config.yaml and the platform's setup script, or the built-in templates when they are missing, which therefore have to be embedded byte for byte. setupScriptName is setup.sh off Windows; on Windows setup.bat if it exists, else setup.ps1. A method other than GET and PUT gets 405 `{error:'method not allowed'}`. Page side: the host settings view. No test."
+
+[[feature]]
+name = "PUT /__codehost/provision-config"
+status = "missing"
+ts = "src/cli/provision-server.ts:161; src/web/discovery.tsx:979"
+note = "A JSON body `{configYaml?, setupScript?}` creates <root>/.codehost, writes config.yaml and the platform's setup script as given (setup.sh gets mode 0755), re-advertises the metadata and answers 200 `{ok:true}`. A body that is not JSON gives 400 `{error:'invalid JSON body'}`. Nothing is validated: any client in the room can replace the script that the next repo link runs, which the code states is the same trust the editor's terminal already gives. No test."
+
+# ═════ Plugins (serve only) ══════════════════════════════════════════════════
+
+[[feature]]
+name = "plugin mounts: /__codehost/<name>/*"
+status = "missing"
+ts = "src/cli/plugins/types.ts:21 routePlugins"
+note = "A tunneled request whose path is exactly /__codehost/<name>, or continues with `/` or `?`, goes to that plugin's route with the remainder as its path (always starting with `/`, query kept). The first matching plugin in order wins; unmatched paths fall through to the local server. serve's plugins: agent-yes (only if ~/.agent-yes exists when the daemon starts), port, meta. Tested in plugins/agent-yes.test.ts."
+
+[[feature]]
+name = "plugin meta contributions merged into the advertised metadata"
+status = "missing"
+ts = "src/cli/plugins/types.ts:37 withPluginMeta; src/cli/commands/serve.ts:226"
+note = "Each plugin's contribution is merged over the base metadata at every build, key by key, later plugins overriding earlier ones. In serve the large fields are then removed from the room's copy. Tested in plugins/agent-yes.test.ts."
+
+[[feature]]
+name = "meta plugin: GET /__codehost/meta (full metadata over the tunnel)"
+status = "missing"
+ts = "src/cli/commands/serve.ts:255; src/web/discovery.tsx:643"
+note = "Answers with the daemon's full metadata as JSON (`content-type: application/json`), the workspace and agent lists included; any method and any sub-path under the mount get the same answer. Page side (stays TypeScript): for every root-kind server of a joined room the page opens a connection in the background, once per peer id and page load with a 15-second limit, and requests it; any failure is ignored. So a serve daemon gets a WebRTC connection from every open page, not only at Connect; under --approve confirm that dial goes through admission like any other (a prompt at the host's terminal, or a denial without one) and the page gives it up after 15 seconds (read, not run)."
+
+[[feature]]
+name = "agent-yes plugin: /__codehost/agent-yes/* proxy to `ay serve` (CODEHOST_AY_PORT)"
+status = "missing"
+ts = "src/cli/plugins/agent-yes.ts:121 agentYesPlugin; src/cli/plugins/agent-yes.ts:129; src/cli/plugins/agent-yes.ts:16"
+note = "Forwards method, headers and body to http://127.0.0.1:<port><path> with `Authorization: Bearer <content of ~/.agent-yes/.serve-token>` and Host 127.0.0.1:<port>, without following redirects, and returns the upstream response. 503 `{error:'ay serve has no token (is agent-yes installed?)'}` when the token file is missing or empty; 502 `{error:'ay serve is not running (start it with `ay serve install`)'}` when the connection fails. The port is 7432 unless CODEHOST_AY_PORT gives a number, read once at start. The incoming headers include the tunnel's forced `accept-encoding: gzip`, which probably breaks compressed answers (see the gzip entry). It gives every client in the room control of the machine's agents."
+
+[[feature]]
+name = "live agent list from ~/.agent-yes/pids.jsonl (AgentInfo)"
+status = "missing"
+ts = "src/cli/plugins/agent-yes.ts:67 readAgents; src/shared/signaling.ts:29 AgentInfo"
+note = "Reads the JSON-lines registry, merges the records of each pid (later lines override), leaves out status `exited` and pids that do not answer signal 0, sorts by started_at, newest first, and stops at 50. Each becomes `{pid, tool (the cli, default 'agent'), title (at most 120 characters, omitted if none), cwd in ?folder= form, state 'active'|'idle', startedAt}`; the plugin contributes `agents` only when the list is not empty. Malformed lines and a missing file are ignored. serve reads it every 3 seconds. Tested in plugins/agent-yes.test.ts."
+
+[[feature]]
+name = "agent live title from OSC 0/2 in the log tail"
+status = "missing"
+ts = "src/cli/plugins/agent-yes.ts:38 liveTitle"
+note = "The title is the last non-empty `ESC ] 0 ;` or `ESC ] 2 ;` text (ended by BEL or by ESC and a backslash) in the final 64 KiB of the record's log_file, else the launch prompt. Results are remembered per file by size and modification time, so an unchanged log is not read again; an unreadable file gives no title. Tested in plugins/agent-yes.test.ts."
+
+[[feature]]
+name = "~/.agent-yes/ files read by the daemon"
+status = "missing"
+ts = "src/cli/plugins/agent-yes.ts:15; src/cli/plugins/agent-yes.ts:70; src/cli/plugins/agent-yes.ts:113"
+note = "Read only, never written: the existence of ~/.agent-yes when the daemon starts enables the plugin; pids.jsonl is the agent registry; .serve-token is the bearer token (trimmed) for `ay serve`; each record's log_file is read for the title. The formats are another project's, which it may change."
+
+[[feature]]
+name = "preview plugin: /__codehost/port/<PORT>/* HTTP proxy to a loopback port"
+status = "missing"
+ts = "src/cli/plugins/preview.ts:15 previewPlugin"
+note = "Forwards method, headers and body to http://127.0.0.1:<PORT><rest> (a bare /<PORT> maps to /), setting Host to 127.0.0.1:<PORT>, x-forwarded-host to the incoming Host and `x-forwarded-proto: https`, without following redirects. Through the tunnel the incoming Host is never the browser's (Host is hop-by-hop): it is the caller's own x-forwarded-host when it sent one, else 127.0.0.1:<VS Code port>, while preview.test.ts sets the Host directly. The forwarded headers include the tunnel's `accept-encoding: gzip`, which probably breaks compressed answers (see the gzip entry). A path that is not /<1 to 5 digits>… gets 404 `expected /__codehost/port/<PORT>/…`, a port outside 1 to 65535 gets 400 `invalid port`, a refused connection gets 502 `nothing is listening on 127.0.0.1:<PORT>`. Any client in the room reaches any loopback port of the host through it. plugins/preview.test.ts covers each case."
+
+# ═════ The npm package ═══════════════════════════════════════════════════════
+
+# ───────────── What is published and how it is installed ─────────────
+
+[[feature]]
+name = "npm package contents (TypeScript source, the whole repository)"
+status = "missing"
+ts = "package.json:1; .releaserc.json:1; .github/workflows/release.yaml:1"
+note = "package.json has no `files` list and there is no .npmignore, so the tarball is the repository minus what .gitignore names: src/ (the CLI, the page's sources, shared, tunnel, the provision shims, the tests), worker/, packages/ws-provision/, public/ (the installers), docs/, README, CHANGELOG, the configuration files. No dist/, no compiled output, no lockfile (bun.lock is ignored, so dependency versions float within their ranges). `type: module`; no `main`, no `engines`, no `license` field (a LICENSE file exists), no install script of its own. Every push to main publishes through semantic-release with npm trusted publishing; the workflow has no build, typecheck or test step. Read from the repository; the published tarball was not inspected. A native release has to add per-platform binaries while still shipping the TypeScript that the exports, the page and the Worker consist of."
+
+[[feature]]
+name = "native dependencies and trustedDependencies: node-datachannel"
+status = "missing"
+ts = "package.json:71; package.json:35"
+note = "Runtime dependencies with native code: node-datachannel (WebRTC; install script `prebuild-install -r napi || (npm install --ignore-scripts --production=false && npm run _prebuild)`, so where no prebuilt binary exists it falls back to an npm source build), oxmgr (a native binary fetched by its postinstall `node scripts/install.js`, hence the self-heal), @parcel/watcher (the watch export only; install script `node scripts/build-from-source.js`) and bun-pty (the legacy terminal only; no install script). package.json trusts node-datachannel alone, but bun reads trustedDependencies from the project's own package.json only (bun-types 1.4.5 docs/pm/lifecycle.mdx), so the field applies to `bun install` in a codehost checkout, where it also blocks the scripts of oxmgr and @parcel/watcher. For `bun add -g codehost` the project is ~/.bun/install/global: what runs there follows that manifest's own field or, without one, bun's default list, in which a string search of the bun 1.4.0 binary on the reading machine finds no node-datachannel (it does find node-sass). So on a fresh machine node-datachannel's script probably does not run at the global add, and the binary comes from the self-heal at the first command; the reading machine's global manifest happens to trust node-datachannel itself. Read, not run. pm2 is used when present and is no dependency. Also shipped as dependencies though only the page or the legacy server use them: react, react-dom, hono and the xterm packages; @xterm/headless is imported nowhere. If WebRTC is linked into a Rust binary the trusted install script lapses, and the binary itself then needs per-platform packages or a fetch at install time."
+
+[[feature]]
+name = "documented install paths: bun add -g codehost, bunx codehost"
+status = "missing"
+ts = "README.md:40; README.md:44"
+note = "README tells users to run the one-line installer, or `bun add -g codehost && codehost setup`, or `bunx codehost setup ~/my-project -t <token>`, and then to enter the token on https://codehost.dev. Under bunx the self-update is skipped, the native addon is fetched at first load, and the stored daemon command line points into bunx's cache. The same commands have to keep working when the package resolves to a native binary per platform."
+
+[[feature]]
+name = "install.sh (curl -fsSL https://codehost.dev/install.sh | sh; CODEHOST_NO_SETUP, BUN_INSTALL)"
+status = "missing"
+ts = "public/install.sh:1; public/install.sh:27; public/install.sh:74; public/install.sh:80"
+note = "A POSIX sh installer and updater, served by the page's hosting and not from npm. Finds bun on PATH or under $BUN_INSTALL (default ~/.bun, exported and put first on PATH), installs bun from bun.sh with curl or wget if it is missing, runs `bun add -g codehost@latest` by absolute path, finds the codehost shim, then `exec codehost setup`. CODEHOST_NO_SETUP=1 stops after the install with `installed/updated. Run `codehost setup` in the directory you want to serve.`, exit 0. Exit 1 with a red `[codehost]` message when curl and wget, bun or the shim cannot be found; a failing `bun add -g` ends it with bun's status (set -eu). Otherwise its exit status is setup's (exec). setup gets no dir and runs in the caller's current directory: on a machine whose config.json has no `root`, outside a git work tree (the usual run from ~), it prints `no workspace root configured.` and exits 1, so the documented one-liner fails right after installing, although README.md:23 says it starts a server; inside a git work tree it serves that tree as a `dev` daemon. Under `curl | sh` stdin is the pipe, so the risky-root question is not asked: a home directory that is itself a git repository (dotfiles) is served after one warning line. Read, not run. Already shell, not TypeScript: it changes with the install method, and such a change needs a page deploy as well as an npm release."
+
+[[feature]]
+name = "install.ps1 (irm codehost.dev/install.ps1 | iex; CODEHOST_NO_SETUP)"
+status = "missing"
+ts = "public/install.ps1:1; public/install.ps1:53; public/install.ps1:59"
+note = "The PowerShell equivalent: uses %USERPROFILE%\\.bun\\bin\\bun.exe, installing bun from bun.sh/install.ps1 if it is absent, with a PATH lookup as a fallback; runs `bun add -g codehost@latest`, finds the codehost shim and runs `codehost setup` with no dir in the current directory, unless CODEHOST_NO_SETUP is 1, with the same first-run failure as install.sh. Exit 1 with a red message when bun.exe or the shim cannot be found. There is no `exit $LASTEXITCODE`, so the script's status is whatever PowerShell makes of the last native command, and `$ErrorActionPreference = \"Stop\"` does not stop on a failing native `bun add` in Windows PowerShell 5.1, so the script goes on to look for the shim. Read, not run."
+
+[[feature]]
+name = "codehost.dev static rules: /setup.sh and /setup.ps1 aliases, single-page fallback"
+status = "missing"
+ts = "public/_redirects:3; public/_redirects:10"
+note = "Cloudflare Pages rewrites (status 200): /setup.sh and /setup.ps1 serve the installers, and any path without a static file serves index.html, so that deep links reach the app (/vs/* is the Service Worker's). Hosting configuration of the page, not daemon code; the page's `Set up a machine` card prints the /setup.* commands. Candidate to stay as it is."
+
+# ───────────── What the package exports to other programs ─────────────
+
+[[feature]]
+name = "codehost/provision (package export)"
+status = "missing"
+ts = "package.json:16; src/provision/index.ts:7"
+note = "A subpath export that points at TypeScript source: a one-line re-export of packages/ws-provision/src/index.ts by relative path, which works only because packages/ is in the tarball. It exports parseSpec, parseSource, folderFor, resolveWsRoot, WS_ROOT, readStatus, statusOf, provision, createBranch, forkWorktree, the git credential probes and hints, and the types RepoSpec, GitStatus, ProvisionResult and FailReason. Importers need bun or another runtime that takes TypeScript. Candidate to stay TypeScript: a binary cannot satisfy an import."
+
+[[feature]]
+name = "codehost/provision/watch (package export): live git status watch"
+status = "missing"
+ts = "package.json:17; src/provision/watch.ts:48 watchStatus; src/provision/watch.ts:20 StatusEvent"
+note = "`watchStatus(spec, onChange, wsRoot)`: one shared recursive watcher per worktree, fanned out to subscribers. It ignores node_modules, .git/objects and .git/lfs, waits 300 ms after a burst, reads the status again and calls back `{activity, status?}`: activity only for changes outside .git, status only when it changed; a new subscriber gets the last status at once. Throws `watch unavailable` if the watcher cannot start; returns an async unsubscribe that stops the watcher with the last subscriber. Split from codehost/provision because it loads the native @parcel/watcher. No codehost command calls it and it has no test. Candidate to stay TypeScript."
+
+[[feature]]
+name = "codehost/tunnel (package export)"
+status = "missing"
+ts = "package.json:18; src/tunnel/index.ts:7"
+note = "The tunnel protocol as an importable module: the frame codec (Op, FRAME_HEADER, MAX_FRAME, MAX_CHUNK, encodeFrame, encodeJson, encodeText, decodeFrame, payloadJson, payloadText, chunk, concatBytes, wsMessageFrames, WsReassembler), the TunnelTransport type, TunnelHost, TunnelClient and the browser data-channel adapter. The page uses it and embedders may. The daemon's half can be written again in Rust; the export itself is a candidate to stay TypeScript."
+
+[[feature]]
+name = "codehost/tunnel/node-datachannel (package export)"
+status = "missing"
+ts = "package.json:19; src/tunnel/node-datachannel.ts:5"
+note = "`nodeDataChannelTransport(channel)`, which wraps a node-datachannel DataChannel as a tunnel transport. An adapter over an object of a JavaScript-only native binding, exported for JavaScript programs. Candidate to stay TypeScript."
+
+[[feature]]
+name = "codehost/tunnel/testing (package export)"
+status = "missing"
+ts = "package.json:20; src/tunnel/testing.ts:10 MemoryTransport; src/tunnel/testing.ts:66 memoryTransportPair"
+note = "MemoryTransport and memoryTransportPair(): a connected in-memory pair that delivers frames in order on a microtask, with close() for both ends and a settable fake buffered amount for backpressure tests. A test helper for JavaScript users of the tunnel. Candidate to stay TypeScript."
+
+[[feature]]
+name = "@snomiao/ws-provision (second npm package in the repository)"
+status = "missing"
+ts = "packages/ws-provision/package.json:6; packages/ws-provision/src/index.ts:46; packages/ws-provision/README.md:1"
+note = "Version 0.1.0, MIT, public; exports `.` as ./src/index.ts and ships src (setup-repo.sh and the test files included) and its README; no runtime dependencies. The same code as codehost/provision. The root package.json declares no workspaces and the release workflow publishes the root package only; nothing in the repository publishes this one. Candidate to stay TypeScript."
+
+# ═════ The provisioning library (codehost/provision) ═════════════════════════
+# Reachable only as an import: no codehost command calls these, except the
+# credential probes listed under Provisioning. It is a second provisioning
+# path with its own layout (an independent clone per branch under ~/ws),
+# unlike the daemon's hook (one clone and git worktrees under the served root).
+# All of it is a candidate to stay TypeScript.
+
+[[feature]]
+name = "workspace root resolution (wsRoot argument, CODEHOST_WS_ROOT, ~/ws)"
+status = "missing"
+ts = "packages/ws-provision/src/index.ts:61 resolveWsRoot; packages/ws-provision/src/index.ts:51 WS_ROOT"
+note = "An explicit wsRoot argument wins, then the CODEHOST_WS_ROOT variable, then ~/ws; decided at each call. No codehost command reads the variable: it affects programs that import the library. Tested in packages/ws-provision/src/index.test.ts."
+
+[[feature]]
+name = "repo spec parsing (parseSpec)"
+status = "missing"
+ts = "packages/ws-provision/src/index.ts:119 parseSpec; packages/ws-provision/src/index.ts:186 isSafeSegment; packages/ws-provision/src/index.ts:197 folderFor; docs/provisioning.md:114"
+note = "Parses `<owner>/<repo>/tree/<branch>` after URL-decoding and trimming slashes; the branch may contain slashes. Every segment must be non-empty, not `.` or `..`, must not start with `-` and must hold no slash, backslash or control character; bad percent-encoding or an unsafe segment gives null. Only parseSpec and parseSource (and forkWorktree, for its branch) apply this check: folderFor, statusOf, provision and createBranch path.join and clone whatever RepoSpec they are given, so a caller's `{owner:'..'}` leaves the root. docs/provisioning.md's claim that a hostile input cannot escape ~/ws holds only for specs from the parsers."
+
+[[feature]]
+name = "repo reference normalisation (parseSource)"
+status = "missing"
+ts = "packages/ws-provision/src/index.ts:149 parseSource"
+note = "Accepts `https://github.com/o/r[/tree/b]`, `[www.]github.com/o/r…`, `o/r/tree/b`, `o/r@branch` and `o/r` (branch main); removes the scheme, a trailing `.git` and `#` or `?` tails. Only github.com is recognised as a host. One pattern uses a lookahead. Tested in index.test.ts."
+
+[[feature]]
+name = "worktree layout <wsRoot>/<owner>/<repo>/tree/<branch> (folderFor)"
+status = "missing"
+ts = "packages/ws-provision/src/index.ts:197 folderFor"
+note = "Joins the root, owner, repo, `tree` and the branch; a branch with slashes adds directory levels. Each branch is an independent clone there, except forks, which are linked worktrees. Tested in index.test.ts."
+
+[[feature]]
+name = "git status summary (readStatus, statusOf, GitStatus)"
+status = "missing"
+ts = "packages/ws-provision/src/index.ts:232 readStatus; packages/ws-provision/src/index.ts:259 statusOf; packages/ws-provision/src/index.ts:74"
+note = "Runs `git status --porcelain=v2 --branch` and returns `{branch, head (the first 12 characters of the commit id), ahead, behind, dirty (any entry, untracked ones included), hasUpstream}`. statusOf gives the status of a spec's worktree, or null when <folder>/.git does not exist or git fails."
+
+[[feature]]
+name = "provision(): clone a missing worktree"
+status = "missing"
+ts = "packages/ws-provision/src/index.ts:349 provision"
+note = "Creates the parent directory and runs `git clone --branch <b> --single-branch --recurse-submodules -- https://github.com/<owner>/<repo> <folder>`, seeds .env.local, runs the setup script and returns action `cloned` with the status. GitHub over HTTPS only. Never throws."
+
+[[feature]]
+name = "provision(): existing worktree returns at once, refreshes in the background"
+status = "missing"
+ts = "packages/ws-provision/src/index.ts:300 refreshInBackground; packages/ws-provision/src/index.ts:386"
+note = "Returns immediately with action `fetched` and the current local status, before anything was fetched; then runs `git fetch --prune origin` and, only when there is an upstream and the tree is clean, behind and not ahead, `git pull --ff-only`, and runs setup again if HEAD moved. Background errors are swallowed and local work is never overwritten. The actions `pulled` and `none` of the result type are never returned."
+
+[[feature]]
+name = "ProvisionResult and failure reasons"
+status = "missing"
+ts = "packages/ws-provision/src/index.ts:90 FailReason; packages/ws-provision/src/index.ts:92 ProvisionResult; packages/ws-provision/src/index.ts:104 classifyError"
+note = "The functions never throw: `{ok, spec, folder, existed, action: cloned|pulled|fetched|created|forked|none|error, git?, error? (git's stderr, trimmed, at most 600 characters), reason?}`. The reason is branch-not-found (`remote branch … not found`), auth-missing (`could not read Username` or `terminal prompts disabled`, or a not-found on a machine without git credentials, which runs the credential probe on the error path), repo-not-found, or other. The classification matches git's English messages."
+
+[[feature]]
+name = "createBranch()"
+status = "missing"
+ts = "packages/ws-provision/src/index.ts:414 createBranch"
+note = "For a branch that the remote does not have: refuses with `worktree already exists` if the folder is a checkout; otherwise clones the default branch with submodules, runs `git switch -c <branch>` (no push), seeds .env.local, runs setup and returns action `created`."
+
+[[feature]]
+name = "forkWorktree()"
+status = "missing"
+ts = "packages/ws-provision/src/index.ts:476 forkWorktree"
+note = "Runs `git worktree add -b <branch> <folder> HEAD` from an existing checkout whose origin is a github.com remote, so the fork lands beside its siblings with the committed state only; action `forked`. Errors: `invalid branch name: X`, `'<dir>' is not a git worktree with a github origin remote`, `worktree already exists`. index.test.ts: a clean fork, an unsafe branch name, a directory that is no worktree."
+
+[[feature]]
+name = "forkWorktree({ wip: true })"
+status = "missing"
+ts = "packages/ws-provision/src/index.ts:532"
+note = "Also carries uncommitted work: `git stash create` in the source and `git stash apply <id>` in the fork, then copies untracked files that are not ignored (`git ls-files --others --exclude-standard -z`) one by one, best effort. The source worktree and its stash list are not touched. Tested in index.test.ts."
+
+[[feature]]
+name = ".env.local seeding"
+status = "missing"
+ts = "packages/ws-provision/src/index.ts:322 seedEnvLocal"
+note = "For any branch other than main, copies <wsRoot>/<owner>/<repo>/tree/main/.env.local into the worktree when the source exists and the destination does not. It never overwrites, and copy errors are ignored."
+
+[[feature]]
+name = "default repo setup script (setup-repo.sh)"
+status = "missing"
+ts = "packages/ws-provision/src/setup-repo.sh:14"
+note = "Prints `[setup] preparing repo`, runs `git submodule update --init --recursive`, then installs by what is present: bun.lock or bun.lockb → bun install, pnpm-lock.yaml → pnpm install, yarn.lock → yarn install, package-lock.json → npm install, a bare package.json → bun install; Cargo.toml → cargo fetch; go.mod → go mod download; uv.lock, poetry.lock, Pipfile.lock or requirements.txt → uv sync, poetry install, pipenv install or pip install -r; Gemfile.lock → bundle install. Every step ends in `|| true`; the last line is `[setup] done`. It is found next to the module, so a native build would have to embed or ship it."
+
+[[feature]]
+name = "setup script run through Bun Shell"
+status = "missing"
+ts = "packages/ws-provision/src/index.ts:281 runRepoSetup; packages/ws-provision/src/index.ts:68"
+note = "After a clone, a created branch, a fork, or a background pull that moved HEAD, runs `bun <module dir>/setup-repo.sh` in the worktree with a 10-minute limit; its output is discarded and a failure never fails provisioning. It relies on bun interpreting a .sh file with its built-in shell, which is what makes it work on Windows without bash."
+
+[[feature]]
+name = "git subprocess environment and limits"
+status = "missing"
+ts = "packages/ws-provision/src/index.ts:207 git; packages/ws-provision/src/index.ts:65"
+note = "Every git call of the library is an argument array (no shell) with LC_ALL=C, LANG=C, LANGUAGE=C, GIT_TERMINAL_PROMPT=0 and GCM_INTERACTIVE=Never on top of the inherited environment, a 120-second limit and a 64 MiB output cap."
+
+# ═════ The legacy web terminal ═══════════════════════════════════════════════
+# src/server.ts and src/terminal-ws.ts: started only by the package scripts
+# `start` and `dev:server`, imported by no command, and without a page that
+# talks to it in the built site. They ship in the npm package as source.
+# Whether this is part of the product, and so of the port, is the owner's call.
+
+[[feature]]
+name = "legacy web terminal server (`bun src/server.ts`, PORT)"
+status = "missing"
+ts = "src/server.ts:16; src/server.ts:31; src/server.ts:69"
+note = "A bun HTTP and WebSocket server (hono, bun-pty). It listens on PORT (default 3001) on every interface, allows any origin, has no authentication, and prints `Codehost server listening on http://localhost:<PORT>`. Loading it writes the three zsh files of the directory-tracking entry into the temp directory. README calls it the legacy web terminal scaffold."
+
+[[feature]]
+name = "legacy server HTTP routes: GET /api/health, GET /api/sessions, static files with single-page fallback"
+status = "missing"
+ts = "src/server.ts:22; src/server.ts:25; src/server.ts:28; src/terminal-ws.ts:243 listSessions"
+note = "/api/health answers 200 `{ok:true}`. /api/sessions answers a JSON array with one object per terminal session of the process: key, cwd, cols, rows, clients, bufferBytes, startedAt, lastActivity, exited. Every other request is served from ./dist/public relative to the working directory, falling back to its index.html."
+
+[[feature]]
+name = "legacy server WebSocket /ws?cwd=&cols=&rows= (terminal attach, cwd validation)"
+status = "missing"
+ts = "src/server.ts:38; src/terminal-ws.ts:193 validateCwd"
+note = "Validates cwd, creates or reuses the session for it (cols default 80, rows default 24) and upgrades the connection. Backslashes become `/`; the path must start with `/` or `<drive>:/` and must not contain `/../`; a directory that does not exist is created with its parents before the shell starts. A bad cwd gets 400 with the message as text (`cwd is required`, `invalid cwd: <raw>`); a request that cannot be upgraded gets 426 `WebSocket upgrade failed`. The `session` parameter that the bundled component sends is ignored."
+
+[[feature]]
+name = "legacy terminal sessions: one shared pty per cwd, 1 MiB replay, shell environment"
+status = "missing"
+ts = "src/terminal-ws.ts:133 getOrCreateSession; src/terminal-ws.ts:189 sessionKeyForCwd; src/terminal-ws.ts:113 bufferPush; src/terminal-ws.ts:59 spawnPty"
+note = "The session key is `s_` plus the first 12 hex characters of sha256(cwd). All sockets for one cwd share one shell ($SHELL, else bash, no arguments; at least 10 columns by 2 rows) and all receive its output. A session survives every client leaving and is never reaped; only an exited one is replaced at the next connect. Output is kept up to 1 MiB (whole chunks dropped from the front, at least one kept) and replayed in order to every newly attached socket. The shell inherits the server's environment with TERM=xterm-256color, COLORTERM=truecolor, LANG and LC_ALL=C.UTF-8, ZDOTDIR and PROMPT_COMMAND set."
+
+[[feature]]
+name = "legacy terminal WebSocket messages (resize, ping/pong, cwd, input, session ended)"
+status = "missing"
+ts = "src/terminal-ws.ts:211 handleWsMessage; src/terminal-ws.ts:157; src/terminal-ws.ts:178"
+note = "Client to server: text JSON `{type:'resize', cols, rows}` (applied 50 ms later) and `{type:'ping', t}`, answered `{type:'pong', t}`; any other text and every binary frame is written to the shell as input. Server to client: binary frames of the shell's output, text JSON `{type:'cwd', path}` when the shell's directory changes, and at exit the yellow line `[session ended]` as bytes. Input for an exited session is dropped."
+
+[[feature]]
+name = "legacy terminal: OSC 7 directory tracking and automatic replies to terminal queries"
+status = "missing"
+ts = "src/terminal-ws.ts:20; src/terminal-ws.ts:39; src/terminal-ws.ts:72; src/terminal-ws.ts:160; src/terminal-ws.ts:167"
+note = "bash gets a PROMPT_COMMAND that prints OSC 7, put in front of an existing one; zsh gets ZDOTDIR=<tmp>/codehost-term-zshrc, whose .zshenv, .zprofile and .zshrc source the user's files and add a precmd hook. An OSC 7 path in the output (URL-decoded) that differs from the session's cwd updates it and is sent as a cwd message. When the output holds the device-attributes query (ESC [ c or ESC [ 0 c) the server writes ESC [ ? 1 ; 2 c back to the shell, and for the cursor-position query (ESC [ 6 n) it writes ESC [ 1 ; 1 R, so that programs do not block while no client is attached."
+
+# ═════ The page and the Worker ═══════════════════════════════════════════════
+# One summarising entry per area. All of it runs in a browser or on Cloudflare
+# and is a candidate to stay TypeScript; what the daemon owes each area has
+# its own entry above. Read by one reader (see the header); the bugs named
+# here were read, not run.
+
+[[feature]]
+name = "page: Service Worker (/vs/<peerId>/* interception, bootstrap injection, asset caches, CDN rewrite)"
+status = "missing"
+ts = "src/web/sw.ts:11; src/web/sw.ts:36; src/web/sw.ts:56 cachedStatic; src/web/sw.ts:82 proxyCdn; src/web/sw.ts:96 proxyOverTunnel; src/web/sw.ts:165 injectBootstrap; src/web/tunnel-host.ts:18; vite.sw.config.ts:7"
+note = "Registered as /sw.js with scope `/`. Every same-origin request under /vs/<peerId>/ goes to a page tab as a `tunnel-fetch` message (method, the full path with prefix and query, all request headers plus x-forwarded-host, a fully buffered body) and the answer comes back as head, body, end or error messages; with no page open it answers 502 `no codehost page open`, on a tunnel failure before the head 502 `tunnel error: <message>`, and it has no timeout. For HTML navigations it removes the content-security-policy headers and inserts `<script src=\"/__codehost/bootstrap.js\" data-peer data-base>`, a script it serves itself and which replaces window.WebSocket in the iframe; /__codehost/bootstrap.js therefore never reaches the daemon. VS Code's static assets (/stable-<40 hex>/static/) are cached first in `codehost-vs-static-v1` under a key without the peer id, which assumes that daemons do not alter them. Cross-origin GETs to *.vscode-cdn.net are rewritten to the Worker's /cdn route and cached in `codehost-cdn-v1`. Candidate to stay TypeScript."
+
+[[feature]]
+name = "page: tunnel client and the WebSocket shim for the VS Code iframe"
+status = "missing"
+ts = "src/tunnel/client.ts:144 fetch; src/tunnel/client.ts:223 openWs; src/tunnel/client.ts:74 failLane; src/tunnel/rtc-datachannel.ts:4; src/web/tunnel-websocket.ts:12; src/web/tunnel-host.ts:28"
+note = "TunnelClient.fetch resolves to a web Response whose body streams as frames arrive, adds the gzip marker when the browser can inflate, pins each request to one channel (the bulk one when it is open) and rejects with the Error frame's message or `stream ended before head`. openWs returns sendText, sendBin and close, always on the interactive channel. When a channel closes, the requests pinned to it fail with `tunnel closed` and, for the interactive one, every WebSocket closes with 1006. The iframe's WebSocket class maps `new WebSocket(url, protocols)` to a WsOpen with the path /vs/<peerId>/<rest>; a refused open gives error, then close 1006 `tunnel open failed`. The browser data-channel adapter drops text messages. A Response is built with a stream body for every status, which browsers refuse for 204, 205 and 304. Candidate to stay TypeScript; the same client is what tunnel.test.ts drives the host with."
+
+[[feature]]
+name = "page: WebRTC dialing, connection states and the LAN/p2p badge"
+status = "missing"
+ts = "src/web/rtc-client.ts:41 start; src/web/rtc-client.ts:91 selectedPath; src/web/discovery.tsx:130; src/web/discovery.tsx:712"
+note = "The page creates both data channels and the offer and trickles its candidates. A dial that has not opened the interactive channel within 15 seconds fails (`connection failed`); the states are idle, connecting (`negotiating WebRTC…`), pending, provisioning, connected, failed and denied; one session is shown at a time. From the connection's statistics it shows `LAN` when both chosen candidates are host candidates, else `p2p`. When Connect reuses a background connection that the same tab already holds, neither the badge nor the handler that marks a session failed is attached. Candidate to stay TypeScript."
+
+[[feature]]
+name = "page: cross-tab connection sharing (broker and the SharedWorker codehost-conn)"
+status = "missing"
+ts = "src/web/conn-broker.ts:28; src/web/conn-shared-worker.ts:25"
+note = "All tabs of the origin share one WebRTC connection per server: the owner tab holds the channels and the others send their fetch and WebSocket calls to it through a SharedWorker (messages hello, welcome, ping, bye, acquire, role, ready, release, rpc, rpc-reply, promoted, owner-gone). When the owner leaves, or is silent for 15 seconds, another tab is promoted and dials anew. Without a SharedWorker, or after 2.5 seconds without coordination, each tab connects directly. The daemon just sees fewer connections, and a fresh offer from another peer id after a failover. Candidate to stay TypeScript."
+
+[[feature]]
+name = "page: rooms and tokens (#t= fragment, join and leave, browser storage, signaling URL, hidden tabs)"
+status = "missing"
+ts = "src/web/discovery.tsx:110 tokenFromHash; src/web/discovery.tsx:333; src/web/history.ts:5; src/web/config.ts:24 getSignalUrl; src/shared/signaling-client.ts:97"
+note = "A valid token after `#t=` is added to the joined rooms and removed from the address bar; with no deep link the page then connects by itself once that room has exactly one server. Several rooms can be joined at once, each with its own signaling socket; the token form applies the shared policy. localStorage keeps `codehost.rooms` (the joined tokens, in clear), `codehost.history` (repo key to token, hostId, kind, folder, name, host, lastConnected), the legacy `codehost.token` (read, never written) and `codehost.signal`, which overrides the signaling URL (default ws(s)://signal.<page host>, ws://localhost:8787 on localhost). A hidden tab does not reconnect to signaling and wakes on visibility, focus or coming back online. Candidate to stay TypeScript; the CLI's part is to keep printing the `#t=` form."
+
+[[feature]]
+name = "page: deep links (grammar, legacy forms, which server answers, room search, URL-driven reconnect)"
+status = "missing"
+ts = "src/shared/repo.ts:95 parseDeepLink; src/shared/repo.ts:306 resolveRepoTarget; src/shared/repo.ts:352 resolveDevTarget; src/shared/repo.ts:369 resolveHostTarget; src/shared/repo.ts:389 pickRoomMatch; src/web/discovery.tsx:433; src/web/discovery.tsx:180"
+note = "The path selects a workspace: `/<git-host>/<owner>/<repo>[/tree/<branch>]` on any machine, the same under `/<user>@<machine>` pinned to it (and provisioned there), `/<user>@<machine>/<path>` for a folder, `/<user>@<machine>` alone for that machine's settings. The legacy forms /gh/, /git/<host>/, /host/<hostname>[/<path>], /dev/<path> and `?machine=` are still parsed, because daemons of many versions print them. A repo link resolves to a repo daemon with the same key, then to a root daemon that listed the checkout, then to the preferred or deepest root with a path made from its layout; a machine pin never falls back; a folder link matches a served cwd or a listed workspace; a settings link matches a root daemon by hostname. Without a token the page uses its history, or searches every saved room for 6 seconds, preferring an exact match. The address bar is the source of truth: while it names a workspace that is not connected the page dials again when the roster changes and every 5 seconds, which is how a restarted daemon is found. src/shared/repo.test.ts pins the parsing and the resolution. Candidate to stay TypeScript; the CLI has to print paths this grammar accepts."
+
+[[feature]]
+name = "page: room labels, server tags and the filter query"
+status = "missing"
+ts = "src/shared/tags.ts:18 shortRoomLabel; src/shared/tags.ts:34 roomDisplayLabel; src/shared/tags.ts:47 roomLabels; src/shared/tags.ts:72 deriveTags; src/shared/tags.ts:124 matchQuery"
+note = "The token is never shown: a room is labelled by its servers' names (`<first>+<n>` for several), made distinct by `<user>@` and then by a 4-character hash of the token (FNV-1a over UTF-16 units, base 36). Each server gets the tags room:, host:, kind: (default repo), repo:, wt: (the branch) and cwd: from its metadata. The filter box takes whitespace-separated tokens that must all match, ignoring case: `key:value` against a tag, digits against a pid exactly, other text as a substring of the name or a tag. Nothing under src/cli imports this module. Pinned by src/shared/tags.test.ts. Candidate to stay TypeScript."
+
+[[feature]]
+name = "page: discovery list (host groups, cards, open-a-repo box, set-up card, connected clients, look)"
+status = "missing"
+ts = "src/web/discovery.tsx:1193; src/web/discovery.tsx:1672; src/web/discovery.tsx:568; src/web/discovery.tsx:315; src/web/discovery.tsx:1831; src/style.css:12; index.html:9; src/main.tsx:8"
+note = "The servers of all rooms are merged and grouped by hostId (else host name, else peer id), with workspace and agent counts, and shown as cards with name, tags, `peer <8 hex>`, a Connect button and, for root hosts, the checkout links and a Settings button. The `open a repo…` box turns a pasted git URL into a deep link. `Set up a machine` shows the one-line installers with the host codehost.dev written in. A roster lists this tab and the other clients with how long ago they joined, and suggests `codehost setup --new-token` to rotate the token. Light and dark colours, a stacked layout below 560 px. Candidate to stay TypeScript."
+
+[[feature]]
+name = "page: connected, provisioning and host settings views (iframe /vs/<peerId>/?folder=)"
+status = "missing"
+ts = "src/web/discovery.tsx:1477; src/web/discovery.tsx:132; src/web/discovery.tsx:1344; src/web/discovery.tsx:1368"
+note = "The workspace is chosen by the page, not by the daemon: the iframe loads /vs/<peerId>/?folder=<url-encoded path>, where the path is the provisioned workspace, the deep link's resolution or the server's cwd, which is why the daemon has to advertise paths in VS Code's form. The connected view shows user@host, the workspace label, the path badge, Share (copies `<origin><path>#t=<token>`) and Disconnect. The provisioning view shows the setup script's log as it streams, with Cancel, and stays on a non-zero exit. The settings view edits config.yaml and the setup script through /__codehost/provision-config and shows a GitHub-auth banner. A settings link that carries a token leaves the view empty (the tab is read from the fragment before the token is removed from it). Candidate to stay TypeScript."
+
+[[feature]]
+name = "embeddable room client for other sites (joinRoom / CodehostRoom, dist/room-client.js)"
+status = "missing"
+ts = "src/web/room-client.ts:34 CodehostRoom; src/web/room-client.ts:139 joinRoom; package.json:28 build:lib"
+note = "For other sites (agent-yes.com is named): joins a room with the role `viewer` and no name, lists the server peers, and offers `fetch(peerId, method, path, {headers, body})` and `openWs(...)` over a tunnel that is dialed at first use (a 15-second limit, a 10-second pause after a failed dial); default signaling wss://signal.codehost.dev. It reaches /__codehost/agent-yes/* and /__codehost/port/<PORT>/ on a serve daemon. `bun run build:lib` bundles it as dist/room-client.js, which is ignored by git, is not in the npm tarball and is not in package.json's exports; how consumers obtain it is not visible in this repository. It asks of a daemon what the page asks. Candidate to stay TypeScript."
+
+[[feature]]
+name = "legacy web terminal page (App and Terminal components)"
+status = "missing"
+ts = "src/App.tsx:4; src/components/Terminal.tsx:91"
+note = "An xterm.js terminal with a cwd bar that connects to the legacy server's /ws, sends resize and ping, handles pong and cwd, and reconnects after 2 seconds unless closed with 1000 or 1008. src/main.tsx does not mount it, so the deployed page never shows it. Candidate to stay TypeScript, or to go with the legacy server."
+
+[[feature]]
+name = "signaling Worker: what the daemon never calls (/, /health, OPTIONS, 404, the /cdn proxy, the sweep alarm, deployment)"
+status = "missing"
+ts = "worker/index.ts:27; worker/index.ts:33; worker/index.ts:53; worker/index.ts:67 handleCdnProxy; worker/room.ts:37; worker/room.ts:122 alarm; worker/wrangler.jsonc:3"
+note = "GET / and /health answer `{\"ok\":true,\"service\":\"codehost-signal\"}`; any OPTIONS answers 200 with open CORS headers; unknown paths 404 `not found`. GET or HEAD /cdn/<host>/<path> re-serves hosts ending in .vscode-cdn.net with `Access-Control-Allow-Origin: *` and `cache-control: public, max-age=3600`, cached at the edge (other hosts 403 `host not allowed`, other methods 405). The room's sweep alarm starts 20 seconds after a join, doubles after every sweep that evicts nobody and stops past a day until someone joins, so a peer that was killed hard can linger in a long-stable room. Deployed as `codehost-signal` with one Durable Object class. Already set aside as keep_ts in projects.toml; listed so that nothing found is lost."
