@@ -633,6 +633,55 @@ test("tty: stdin is typed into the terminal, at once or when the question has be
   }
 });
 
+test("tty: a password echoed on one side only differs when it is typed at the question, not ahead", { skip: noTerminal }, () => {
+  // Stands for a port that forgot to turn echo off.
+  const dir = setup(`
+    if (cmd === "password") password(false);
+  `);
+  fs.appendFileSync(path.join(dir, "ts.cjs"), `if (cmd === "password") password(true);\n`);
+  try {
+    const r = run(dir, {
+      cases: [
+        { name: "typed at the question", args: ["password"], tty: true, stdin: [["Password: ", "secret\n"]] },
+        // Echoed before either program has started, so both show it.
+        { name: "typed ahead", args: ["password"], tty: true, stdin: "secret\n" },
+      ],
+    }, ["--show"]);
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /DIFFER {2}typed at the question {2}\(terminal\)\n\s+terminal\n\s+TypeScript:\n\s+Password: \\r\n\s+got 6 characters\\r\n[^]*Rust:\n\s+Password: secret\\r\n\s+\\r\n\s+got 6 characters\\r\n/);
+    assert.match(shown(r.stdout, "typed ahead"), /terminal:\n\s+secret\\r\n\s+Password: \\r\n\s+got 6 characters\\r\n/);
+    assert.match(r.stdout, /1 of 2 case\(s\) differ/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("tty: a program that reads stdin to the end needs Ctrl-D on a terminal, or stdin left a pipe", { skip: noTerminal }, () => {
+  const dir = setup();
+  try {
+    const cases = {
+      cases: [
+        { name: "piped stdin", args: ["stdin"], stdin: "abc\n", timeout: 2 },
+        { name: "ended with Ctrl-D", args: ["stdin"], tty: true, stdin: "abc\n\u0004", timeout: 10 },
+      ],
+    };
+    const all = run(dir, cases, ["--tty"]);
+    assert.equal(all.status, 1, all.stdout + all.stderr);
+    // What the terminal last showed is the echo, not the empty text after its line end.
+    assert.match(
+      all.stdout,
+      /BROKEN {2}piped stdin\n\s+\S+ had not ended after 2 s on a terminal, which last showed: abc\\r; stdin was the terminal, whose input does not end: a program that reads it to the end needs "\\u0004" typed, or stdin a pipe \("tty": "stdout,stderr"\)\n/,
+    );
+    assert.match(all.stdout, /same {4}ended with Ctrl-D\n/);
+    const r = run(dir, cases, ["--tty", "stdout,stderr", "--show"]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(shown(r.stdout, "piped stdin"), /terminal:\n\s+ABC\\r\n/);
+    assert.match(shown(r.stdout, "ended with Ctrl-D"), /ABC\\r\n/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("tty: the terminal's bytes are compared as bytes, and a signal as a signal", { skip: noTerminal }, () => {
   const dir = setup(`
     if (cmd === "invalid") process.stdout.write(Buffer.from([0x61, 0xfe, 0x0a]));
@@ -738,7 +787,7 @@ test("tty: a program that cannot be started, or does not end, is broken and says
       ],
     });
     assert.equal(hangs.status, 1, hangs.stdout + hangs.stderr);
-    assert.match(hangs.stdout, /BROKEN {2}waits for ever\n\s+\S+ had not ended after 2 s on a terminal, which last showed: still here \n/);
+    assert.match(hangs.stdout, /BROKEN {2}waits for ever\n\s+\S+ had not ended after 2 s on a terminal, which last showed: still here ; stdin was the terminal, whose input does not end/);
     assert.match(hangs.stdout, /BROKEN {2}waits for a question it never asks\n\s+\S+ had not ended after 2 s on a terminal, which last showed: commit\? \[y\/N\] ; it never showed "\[Y\/n\] ", so "y\\n" was not typed\n/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

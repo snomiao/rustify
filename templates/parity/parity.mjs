@@ -104,8 +104,11 @@
 //   - Line ends are as the terminal got them: a line feed the program wrote
 //     arrives as CR LF. They are left alone, so a program that switches the
 //     terminal to raw mode and then forgets the carriage return shows up.
-//   - What is typed is echoed by the terminal unless the program has turned
-//     that off, and the echo is part of the text.
+//   - What is typed is echoed by the terminal unless the program had turned
+//     that off when it was typed, and the echo is part of the text. Text
+//     typed ahead is echoed before the program starts, so whether a program
+//     hides an answer (a password) is only compared when the answer waits
+//     for its question (below).
 //   - The window is 80 columns by 24 rows, and TERM is xterm-256color unless
 //     an `env` says otherwise (null for none).
 //   - A stream that is a pipe while another is the terminal is compared as it
@@ -119,16 +122,29 @@
 //
 //   Typing, when stdin is the terminal:
 //     "stdin": "y\n"                 typed before the program starts; the
-//                                    echo is the first thing on the terminal
-//     "stdin": [["[y/N] ", "y\n"],   typed once the terminal has shown the
-//               ["Sure? ", "y\n"]]   text on the left (the text itself, not a
-//                                    pattern; looked for after the one before)
+//                                    echo is the first thing on the terminal,
+//                                    whatever the program does afterwards
+//     "stdin": [["[y/N] ", "y\n"],   typed 50 ms after the terminal has shown
+//               ["Sure? ", "y\n"]]   the text on the left (the text itself, not
+//                                    a pattern; looked for after the one before)
+//   Use the list for every question whose echo matters: a password, a key
+//   read on its own. A program that turns echo off or reads single keys in
+//   its own process, right after asking, has done so within those 50 ms
+//   (node's setRawMode: 40 of 40 runs on a machine loaded 26 on 8 cores); one
+//   that starts another program for it, such as stty, may not have, and then
+//   its answer is echoed as though it never turned echo off.
 //   Wait for the last thing the program prints before it reads; text typed
 //   while the program is still printing is echoed somewhere in between. A
 //   terminal's input does not end: a program that reads to the end needs
 //   "\u0004" (Ctrl-D) typed at the start of a line. "\u0003" is Ctrl-C.
-//   With --tty every case's `stdin` is typed; a case that has to keep its
-//   stdin a pipe says "tty": "stdout,stderr".
+//
+//   --tty alone makes stdin the terminal in every case as well: each case's
+//   `stdin` is typed ahead, and a program that reads stdin to the end waits
+//   out its timeout. To run a whole cases file again on a terminal, use
+//   --tty stdout,stderr, the streams colours depend on, and give each question
+//   a case of its own with "tty" and `stdin` as a list. A command that the
+//   binary hands back only on a terminal needs such a case too, with
+//   "handback": a case's "handback" holds in every run of the file.
 //
 //   Linux and macOS. On Windows, and where python3 is missing, a case that
 //   asks for a terminal is BROKEN, with the reason in one line.
@@ -500,9 +516,17 @@ function runIn(root, testCase, impl, plan, extraEnv) {
   // program: any trouble with that is the run's, whatever exit code came back.
   if (result.error && (result.status === null || terminals.length)) {
     if (terminals.length && result.error.code === "ETIMEDOUT") {
-      const last = spelledOut((onTerminal ?? "").slice(-200)).split("\n").pop();
+      // The last line that shows something: an echo ends with a line end.
+      const last = spelledOut((onTerminal ?? "").slice(-200))
+        .split("\n")
+        .filter((line) => line.replace(/\\r/g, "").trim())
+        .pop();
       const waiting = neverTyped(onTerminal ?? "", plan.typed.map((step) => step.map(here)));
-      const why = waiting ? `; it never showed ${JSON.stringify(waiting[0])}, so ${JSON.stringify(waiting[1])} was not typed` : "";
+      let why = "";
+      if (waiting) why = `; it never showed ${JSON.stringify(waiting[0])}, so ${JSON.stringify(waiting[1])} was not typed`;
+      else if (terminals.includes("stdin")) {
+        why = '; stdin was the terminal, whose input does not end: a program that reads it to the end needs "\\u0004" typed, or stdin a pipe ("tty": "stdout,stderr")';
+      }
       return { broken: `${program} had not ended after ${seconds} s on a terminal, which last showed: ${last || "(nothing)"}${why}` };
     }
     return { broken: `could not run ${program}: ${result.error.message}` };
