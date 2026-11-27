@@ -9,6 +9,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const RUNNER = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../templates/parity/parity.mjs");
+const isWindows = process.platform === "win32";
 
 function setup(rsBody) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rustify-parity-test-"));
@@ -23,18 +24,30 @@ function setup(rsBody) {
     if (cmd === "fail") { console.error("nope"); process.exit(3); }
     if (cmd === "stamp") console.log("at " + new Date().toISOString());
     if (cmd === "tmp") console.log("tmp=" + process.env.TMPDIR + " entries=" + fs.readdirSync(process.env.TMPDIR).length);
+    if (cmd === "vars") console.log(rest.map((name) => name + "=" + process.env[name]).join(" "));
+    if (cmd === "log") { fs.writeFileSync(process.env.LOG, rest.join(" ") + "\\n"); console.log(fs.readFileSync(process.env.LOG, "utf8") + require("path").relative(process.env.TMPDIR, process.env.LOG)); }
   `;
   fs.writeFileSync(path.join(dir, "ts.cjs"), base);
   fs.writeFileSync(path.join(dir, "rs.cjs"), rsBody ? base + rsBody : base);
   return dir;
 }
 
-function run(dir, cases, extra = []) {
+function run(dir, cases, extra = [], env = process.env) {
   fs.writeFileSync(path.join(dir, "parity.json"), JSON.stringify(cases));
   return spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--ts", `${process.execPath} ts.cjs`, "--rs", `${process.execPath} rs.cjs`, ...extra], {
     cwd: dir,
     encoding: "utf8",
+    env,
   });
+}
+
+// What --show printed under one case: the text from its name to the next case.
+function shown(output, name) {
+  const from = output.indexOf(`  same    ${name}\n`);
+  assert.notEqual(from, -1, `no "same" line for ${name} in:\n${output}`);
+  const rest = output.slice(from + 1);
+  const next = rest.search(/\n {2}\S|\n\S/);
+  return next === -1 ? rest : rest.slice(0, next);
 }
 
 const CASES = {
@@ -159,6 +172,61 @@ test("--handback tells the cases the binary answers from the ones it hands back"
     assert.match(wrong.stdout, /WRONG {3}believed native\n\s+reached the JavaScript/);
     assert.match(wrong.stdout, /WRONG {3}believed handed back\n\s+was answered by the binary/);
     assert.match(wrong.stdout, /2 of 2 case\(s\) went the wrong way/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("null in an env removes the variable: the cases file's, or one the runner sets", () => {
+  const dir = setup();
+  try {
+    const r = run(dir, {
+      env: { GREETING: "hi", XDG_DATA_HOME: null },
+      cases: [
+        { name: "as the cases file says", args: ["vars", "GREETING", "XDG_DATA_HOME", "HOME"] },
+        { name: "a case removes the cases file's", args: ["vars", "GREETING"], env: { GREETING: null } },
+        { name: "a case removes the runner's", args: ["vars", "XDG_CONFIG_HOME", "TMPDIR"], env: { XDG_CONFIG_HOME: null, TMPDIR: null } },
+        { name: "a case sets what the cases file removed", args: ["vars", "XDG_DATA_HOME"], env: { XDG_DATA_HOME: "<HOME>/data" } },
+        { name: "a name in other letters", args: ["vars", "TMPDIR"], env: { tmpdir: null } },
+      ],
+    }, ["--show"]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(shown(r.stdout, "as the cases file says"), /GREETING=hi XDG_DATA_HOME=undefined HOME=<HOME>\n/);
+    assert.match(shown(r.stdout, "a case removes the cases file's"), /GREETING=undefined\n/);
+    assert.match(shown(r.stdout, "a case removes the runner's"), /XDG_CONFIG_HOME=undefined TMPDIR=undefined\n/);
+    assert.match(shown(r.stdout, "a case sets what the cases file removed"), /XDG_DATA_HOME=<HOME>\/data\n/);
+    // One variable on Windows, two different ones elsewhere.
+    assert.match(shown(r.stdout, "a name in other letters"), isWindows ? /TMPDIR=undefined\n/ : /TMPDIR=<ROOT>[\\/]tmp\n/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("<ROOT> is the run's own directory, beside the ones the program is given", () => {
+  const dir = setup();
+  try {
+    const r = run(dir, { cases: [{ name: "a log of its own", args: ["log", "asked", "<ROOT>"], env: { LOG: "<ROOT>/requests.log" } }] }, ["--show"]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    // Written and read back there; one level up from the temp directory.
+    assert.match(shown(r.stdout, "a log of its own"), /asked <ROOT>\n\s+\.\.[\\/]requests\.log\n/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a cases file that is not JSON, or has no list of cases, is said so in one line, with exit code 2", () => {
+  const dir = setup();
+  try {
+    const raw = (text) => {
+      fs.writeFileSync(path.join(dir, "raw.json"), text);
+      return spawnSync(process.execPath, [RUNNER, "--cases", "raw.json", "--ts", "x", "--rs", "x"], { cwd: dir, encoding: "utf8" });
+    };
+    const notJson = raw("{ cases: [] }");
+    assert.equal(notJson.status, 2, notJson.stdout + notJson.stderr);
+    assert.match(notJson.stderr, /^parity: raw\.json: .*JSON.*\n$/);
+    const noList = raw("{}");
+    assert.equal(noList.status, 2, noList.stdout + noList.stderr);
+    assert.equal(noList.stderr, 'parity: raw.json has no "cases" list\n');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

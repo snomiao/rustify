@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// rustify parity runner v3 — zero dependencies, runs on node or bun.
+// rustify parity runner v4 — zero dependencies, runs on node or bun.
 //
 // Runs the same command lines against two implementations of a CLI and fails
 // unless they behave the same: stdout, stderr, exit code, and whatever they
@@ -31,11 +31,13 @@
 //         "name": "init creates the config",
 //         "args": ["init", "--yes"],
 //         "stdin": "",                           // optional
-//         "env": { "MYCLI_TOKEN": "x" },         // optional
+//         "env": { "MYCLI_TOKEN": "x",           // optional
+//                  "XDG_CONFIG_HOME": null },    // null: the variable is not set
 //         "files": { "a.txt": "hello\n" },       // created in the directory first
 //         "setup": ["git init -q"],              // shell commands run first
 //         "after": ["cat .myclirc", "ls -a"],    // their output is compared too
 //         "normalize": [["pid \\d+", "pid <N>"]], // optional, on top of the global list
+//         "timeout": 30,                         // optional, in seconds (120)
 //         "handback": "usage errors belong to yargs"  // optional: this case is
 //                                  // MEANT to reach the JavaScript, and why
 //       }
@@ -45,12 +47,27 @@
 // <CWD> and <HOME> in `args`, `env`, `stdin`, `files`, `setup` and `after`
 // stand for the directories of the run, and <REPO> for the directory the
 // runner was started in, so a committed cases file needs no machine's path.
-// Each run also gets its own empty temp directory.
+// Each run also gets its own empty temp directory. <ROOT> stands for the
+// directory that holds all of them: the place for what the test itself keeps
+// per run (a log of requests, a copy of the package), outside everything the
+// program looks at. The runner's own names there are cwd, home, tmp, cache
+// and runner; any other is free.
 //
-// The paths of the temp directories are replaced by <CWD> and <HOME> before
-// comparing. Anything else that legitimately varies between two runs
+// The paths of these directories are replaced by <CWD>, <HOME> and <ROOT>
+// before comparing. Anything else that legitimately varies between two runs
 // (timestamps, random ids) needs a `normalize` rule; keep those rare, each one
 // is a hole in the proof.
+//
+// Variables. A program sees PATH, an empty HOME (and USERPROFILE), the three
+// XDG directories, TMPDIR, then the `env` of the cases file, then the case's.
+// A value of null removes the variable instead: in the case's `env` to take
+// out what the cases file's `env` or the runner sets, in the cases file's
+// `env` to take out what the runner sets. Nothing else comes in from the
+// machine: no TERM, NO_COLOR or FORCE_COLOR.
+//
+// Exit code: 0 all the same; 1 some case differs, is broken or went the wrong
+// way; 2 nothing could be run (usage, a mistake in the cases file, no case
+// selected).
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -73,9 +90,20 @@ if (!opts.cases || !opts.rs || (!opts.ts && !opts.handback)) {
   );
   process.exit(2);
 }
+// A mistake in the command line or the cases file: nothing is run.
+function mistake(text) {
+  console.error(`parity: ${text}`);
+  process.exit(2);
+}
 const isWindows = process.platform === "win32";
 const launchDir = process.cwd();
-const spec = JSON.parse(fs.readFileSync(opts.cases, "utf8"));
+let spec;
+try {
+  spec = JSON.parse(fs.readFileSync(opts.cases, "utf8"));
+} catch (error) {
+  mistake(`${opts.cases}: ${error.message}`);
+}
+if (!Array.isArray(spec?.cases)) mistake(`${opts.cases} has no "cases" list`);
 // A command is run from another directory, so anything in it that names a
 // file here has to become absolute.
 const command = (text) =>
@@ -97,11 +125,10 @@ function runCase(testCase, impl, index, extraEnv = {}) {
   const home = path.join(root, "home");
   fs.mkdirSync(cwd, { recursive: true });
   fs.mkdirSync(home, { recursive: true });
-  // <CWD> and <HOME> in what a case says stand for this run's directories.
   const tmp = path.join(root, "tmp");
   fs.mkdirSync(tmp, { recursive: true });
-  const here = (text) => String(text).split("<CWD>").join(cwd).split("<HOME>").join(home).split("<REPO>").join(launchDir);
-  const hereAll = (object) => Object.fromEntries(Object.entries(object || {}).map(([k, v]) => [k, here(v)]));
+  // <CWD>, <HOME> and <ROOT> in what a case says stand for this run's directories.
+  const here = (text) => String(text).split("<CWD>").join(cwd).split("<HOME>").join(home).split("<ROOT>").join(root).split("<REPO>").join(launchDir);
   for (const [file, content] of Object.entries(testCase.files || {})) {
     const target = path.join(cwd, file);
     fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -119,10 +146,16 @@ function runCase(testCase, impl, index, extraEnv = {}) {
     // Its own: programs keep state in the temp directory too.
     TMPDIR: tmp,
     ...(isWindows ? { SystemRoot: process.env.SystemRoot, TEMP: tmp, TMP: tmp, PATHEXT: process.env.PATHEXT } : {}),
-    ...hereAll(spec.env),
-    ...hereAll(testCase.env),
-    ...extraEnv,
   };
+  // The cases file's variables, then the case's. null takes a variable out
+  // (on Windows in any spelling: Path and PATH are one variable there).
+  for (const variables of [spec.env, testCase.env]) {
+    for (const [name, value] of Object.entries(variables || {})) {
+      if (value !== null) env[name] = here(value);
+      else for (const key of Object.keys(env)) if (key === name || (isWindows && key.toUpperCase() === name.toUpperCase())) delete env[key];
+    }
+  }
+  Object.assign(env, extraEnv);
   const shell = (line) => spawnSync(here(line), { cwd, env, shell: true, encoding: "utf8", timeout: 120_000 });
   for (const line of testCase.setup || []) {
     const result = shell(line);
