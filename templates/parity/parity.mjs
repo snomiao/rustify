@@ -1,12 +1,15 @@
 #!/usr/bin/env node
-// rustify parity runner v4 — zero dependencies, runs on node or bun.
+// rustify parity runner v4 — no npm dependencies, runs on node or bun.
+// (A case that asks for a terminal also takes python3 and terminal.py, the
+// file beside this one.)
 //
 // Runs the same command lines against two implementations of a CLI and fails
 // unless they behave the same: stdout, stderr, exit code, and whatever they
 // leave behind. It is the proof behind a `verified` entry in a parity ledger.
 //
 //   parity.mjs --cases parity.json --ts "bun ts/cli.ts" --rs "rs/target/release/mycli"
-//              [--filter <text>] [--show] [--keep] [--capture files]
+//              [--filter <text>] [--show] [--keep]
+//              [--tty [stdin,stdout,stderr]] [--capture files]
 //
 // A binary that hands some invocations back to the JavaScript passes those
 // cases by construction. To prove which cases the binary answers itself:
@@ -16,7 +19,7 @@
 //
 // runs only the binary, with a stand-in package whose JavaScript entry does
 // nothing but say it was reached, and fails unless exactly the cases marked
-// "handback" got there. --capture applies here as well.
+// "handback" got there. --tty and --capture apply here as well.
 //
 // Every case runs once per implementation, each time in its own fresh
 // directory with its own empty HOME, so nothing leaks between runs or in from
@@ -38,6 +41,7 @@
 //         "after": ["cat .myclirc", "ls -a"],    // their output is compared too
 //         "normalize": [["pid \\d+", "pid <N>"]], // optional, on top of the global list
 //         "timeout": 30,                         // optional, in seconds (120)
+//         "tty": true,                           // optional, see "A terminal"
 //         "capture": "files",                    // optional, see "Regular files"
 //         "handback": "usage errors belong to yargs"  // optional: this case is
 //                                  // MEANT to reach the JavaScript, and why
@@ -64,7 +68,60 @@
 // A value of null removes the variable instead: in the case's `env` to take
 // out what the cases file's `env` or the runner sets, in the cases file's
 // `env` to take out what the runner sets. Nothing else comes in from the
-// machine: no TERM, NO_COLOR or FORCE_COLOR.
+// machine: no TERM (except on a terminal, below), NO_COLOR or FORCE_COLOR.
+//
+// A terminal. Without "tty" a program gets pipes, and nothing that depends on
+// a terminal is compared: colours, clickable links, a question that is only
+// asked there, a last newline that is only printed there.
+//
+//     "tty": true               stdin, stdout and stderr are one terminal
+//     "tty": "stdout"           only stdout is; also "stdin,stderr",
+//                               ["stdout", "stderr"], …
+//     "tty": false              pipes, whatever --tty says
+//     --tty, --tty stdout       the same for every case that has no "tty"
+//
+//   The program is started as under a terminal emulator: in a session of
+//   its own, with this terminal as its controlling terminal (/dev/tty).
+//
+//   What is compared is every byte the terminal was sent, in the order it
+//   arrived, under the name "terminal". A stream that is not the terminal is
+//   still compared on its own. In what the runner prints about such a case,
+//   control characters are spelled out (\r, \e for the escape character,
+//   \x07), so that a difference in them can be seen.
+//   - stdout and stderr on the terminal are one stream there. Their order is
+//     compared; which of the two a byte came from cannot be. To compare them
+//     apart, make one of them the terminal.
+//   - Line ends are as the terminal got them: a line feed the program wrote
+//     arrives as CR LF. They are left alone, so a program that switches the
+//     terminal to raw mode and then forgets the carriage return shows up.
+//   - What is typed is echoed by the terminal unless the program has turned
+//     that off, and the echo is part of the text.
+//   - The window is 80 columns by 24 rows, and TERM is xterm-256color unless
+//     an `env` says otherwise (null for none).
+//   - A stream that is a pipe while another is the terminal is compared as it
+//     is: bun, for one, colours console.error when either stdout or stderr is
+//     a terminal, so that colour shows up in a piped stderr too.
+//   Not compared: when the bytes arrived; the settings the program leaves the
+//   terminal with; what a process it left behind writes after it has ended;
+//   and nothing answers a question put to the terminal itself (where is the
+//   cursor, which colours do you have), so a program that asks one waits out
+//   its own timeout.
+//
+//   Typing, when stdin is the terminal:
+//     "stdin": "y\n"                 typed before the program starts; the
+//                                    echo is the first thing on the terminal
+//     "stdin": [["[y/N] ", "y\n"],   typed once the terminal has shown the
+//               ["Sure? ", "y\n"]]   text on the left (the text itself, not a
+//                                    pattern; looked for after the one before)
+//   Wait for the last thing the program prints before it reads; text typed
+//   while the program is still printing is echoed somewhere in between. A
+//   terminal's input does not end: a program that reads to the end needs
+//   "\u0004" (Ctrl-D) typed at the start of a line. "\u0003" is Ctrl-C.
+//   With --tty every case's `stdin` is typed; a case that has to keep its
+//   stdin a pipe says "tty": "stdout,stderr".
+//
+//   Linux and macOS. On Windows, and where python3 is missing, a case that
+//   asks for a terminal is BROKEN, with the reason in one line.
 //
 // Regular files. "capture": "files" (--capture files for every case that does
 // not say; "capture": "pipes" in a case keeps the pipes) gives the program
@@ -94,6 +151,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 function parseArgs(argv) {
   const out = {};
@@ -107,9 +165,10 @@ const opts = parseArgs(process.argv.slice(2));
 if (!opts.cases || !opts.rs || (!opts.ts && !opts.handback)) {
   console.error(
     'usage: parity.mjs --cases <file.json> --ts "<command>" --rs "<command>" [--filter <text>] [--show] [--keep]\n' +
-      "                  [--capture files]\n" +
+      "                  [--tty [stdin,stdout,stderr]] [--capture files]\n" +
       '       parity.mjs --cases <file.json> --rs "<command>" --handback <ROOT_ENV>=<js entry> [--filter <text>]\n' +
-      "                  [--capture files]\n" +
+      "                  [--tty [stdin,stdout,stderr]] [--capture files]\n" +
+      "  --tty      a terminal instead of pipes, for every case that has no \"tty\" of its own (all three streams, or those named)\n" +
       "  --capture  files: stdout and stderr go to regular files instead of pipes, for every case that has no \"capture\"\n" +
       "The cases file is described at the top of parity.mjs.",
   );
@@ -139,16 +198,43 @@ const command = (text) =>
 const impls = { ts: opts.ts ? command(opts.ts) : null, rs: command(opts.rs) };
 const MARKER = "__RUSTIFY_HANDED_BACK__";
 
-const everyCase = { capture: opts.capture ?? "pipes" };
+const STREAMS = ["stdin", "stdout", "stderr"];
+const TERMINAL_PY = path.join(path.dirname(fileURLToPath(import.meta.url)), "terminal.py");
+const WINDOW = { columns: 80, rows: 24 };
+
+// The streams a "tty" value names: true is all three, false none, otherwise
+// a list of names or one string with commas.
+function streamsOf(value, where) {
+  if (value === true) return [...STREAMS];
+  if (value === false) return [];
+  const names = (Array.isArray(value) ? value : String(value).split(",")).map((name) => String(name).trim()).filter(Boolean);
+  const unknown = names.filter((name) => !STREAMS.includes(name));
+  if (unknown.length) mistake(`${where} takes true, false, or some of stdin, stdout and stderr; it has ${unknown.join(", ")}`);
+  return STREAMS.filter((name) => names.includes(name));
+}
+
+const everyCase = { terminals: streamsOf(opts.tty ?? false, "--tty"), capture: opts.capture ?? "pipes" };
 if (!["files", "pipes"].includes(everyCase.capture)) mistake(`--capture takes files or pipes; it has ${opts.capture === true ? "nothing" : opts.capture}`);
 
-// How one case is run: where its output goes. The case's own word comes
-// before the command line's.
+// How one case is run: which streams are a terminal, where the others go, and
+// what is typed. The case's own word comes before the command line's.
 function planOf(testCase) {
   const where = `case ${JSON.stringify(testCase.name)}`;
+  const terminals = testCase.tty == null ? everyCase.terminals : streamsOf(testCase.tty, `${where}: "tty"`);
   const capture = testCase.capture ?? everyCase.capture;
   if (!["files", "pipes"].includes(capture)) mistake(`${where}: "capture" takes "files" or "pipes"; it has ${JSON.stringify(capture)}`);
-  return { files: capture === "files" };
+  const stdin = testCase.stdin ?? "";
+  let typed = [];
+  if (Array.isArray(stdin)) {
+    if (!stdin.every((step) => Array.isArray(step) && step.length === 2 && step.every((part) => typeof part === "string"))) {
+      mistake(`${where}: "stdin" as a list takes pairs of text, [what to wait for, what to type]`);
+    }
+    if (!terminals.includes("stdin")) mistake(`${where}: "stdin" as a list is typed at a terminal, and stdin is not one here; say "tty" in the case`);
+    typed = stdin;
+  } else if (terminals.includes("stdin") && String(stdin) !== "") {
+    typed = [["", String(stdin)]];
+  }
+  return { terminals, files: capture === "files", typed, piped: terminals.includes("stdin") || Array.isArray(stdin) ? "" : stdin };
 }
 
 const selected = spec.cases
@@ -156,8 +242,60 @@ const selected = spec.cases
   .filter(({ testCase }) => typeof opts.filter !== "string" || testCase.name.includes(opts.filter));
 for (const entry of selected) entry.plan = planOf(entry.testCase);
 
+// The terminal helper, looked for once: the interpreter to start it with, or
+// why a case that asks for a terminal cannot have one here.
+let terminalHelper = null;
+function terminal() {
+  if (terminalHelper) return terminalHelper;
+  const asks = 'this case is to run on a terminal ("tty")';
+  let problem = null;
+  let python = null;
+  if (isWindows) problem = `${asks}, and the runner has none to give on Windows; run it on Linux or macOS`;
+  else if (!fs.existsSync(TERMINAL_PY)) problem = `${asks}; that takes ${TERMINAL_PY}, the file that belongs beside parity.mjs, and it is not there`;
+  else {
+    const check = spawnSync("python3", ["-I", TERMINAL_PY, "--check"], { encoding: "utf8" });
+    if (check.error) problem = `${asks}; that takes python3, and ${check.error.code === "ENOENT" ? "no python3 was found on PATH" : `python3 could not be started (${check.error.message})`}`;
+    else if (check.status !== 0) problem = `${asks}, and none could be opened here: ${lastLine(check.stderr) || `python3 exited ${check.status}`}`;
+    // By its full path from here on: a case may run with a PATH that lacks it.
+    else python = check.stdout.trim() || "python3";
+  }
+  terminalHelper = { problem, python };
+  return terminalHelper;
+}
+
+// The first [wait, text] that terminal.py did not type, because the terminal
+// never showed its wait: the same search terminal.py makes, on the whole
+// transcript.
+function neverTyped(transcript, typed) {
+  let from = 0;
+  for (const [wait, text] of typed) {
+    if (!wait) continue;
+    const at = transcript.indexOf(wait, from);
+    if (at < 0) return [wait, text];
+    from = at + wait.length;
+  }
+  return null;
+}
+
+function lastLine(text) {
+  return String(text ?? "").trim().split("\n").pop().trim();
+}
+
 function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// A terminal's text is full of what a log does not show: carriage returns,
+// the escape character of a colour. Spelled out (\r, \e, \x07), a difference
+// in them can be seen. Line feeds stay line ends. Done for what is printed
+// about a case that has a terminal; the comparison is on the text as it was.
+function spelledOut(text) {
+  return text.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, (char) => {
+    if (char === "\r") return "\\r";
+    if (char === "\t") return "\\t";
+    if (char === "\u001b") return "\\e";
+    return `\\x${char.charCodeAt(0).toString(16).padStart(2, "0")}`;
+  });
 }
 
 const work = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "rustify-parity-"));
@@ -180,6 +318,7 @@ function stillThere(...more) {
 }
 
 function runCase(testCase, impl, index, plan, extraEnv = {}) {
+  if (plan.terminals.length && terminal().problem) return { broken: terminal().problem };
   const root = path.join(work, `${index}-${impl}`);
   stillThere();
   let run;
@@ -196,6 +335,7 @@ function runCase(testCase, impl, index, plan, extraEnv = {}) {
 }
 
 function runIn(root, testCase, impl, plan, extraEnv) {
+  const { terminals } = plan;
   const cwd = path.join(root, "cwd");
   const home = path.join(root, "home");
   const tmp = path.join(root, "tmp");
@@ -221,6 +361,8 @@ function runIn(root, testCase, impl, plan, extraEnv) {
     // Its own: programs keep state in the temp directory too.
     TMPDIR: tmp,
     ...(isWindows ? { SystemRoot: process.env.SystemRoot, TEMP: tmp, TMP: tmp, PATHEXT: process.env.PATHEXT } : {}),
+    // On a terminal there is always a TERM, and programs choose their colours by it.
+    ...(terminals.length ? { TERM: "xterm-256color" } : {}),
   };
   // The cases file's variables, then the case's. null takes a variable out
   // (on Windows in any spelling: Path and PATH are one variable there).
@@ -241,20 +383,46 @@ function runIn(root, testCase, impl, plan, extraEnv) {
   const [program, ...baseArgs] = impls[impl];
   const args = [...baseArgs, ...(testCase.args || []).map(here)];
   const seconds = testCase.timeout || 120;
-  const options = { cwd, env, input: here(testCase.stdin ?? ""), encoding: "utf8", timeout: seconds * 1000 };
+  const options = { cwd, env, input: here(plan.piped), encoding: "utf8", timeout: seconds * 1000 };
   // The runner's own files of this run: what the program wrote, when that
-  // goes to files.
+  // goes to files, and what the terminal was sent.
   const own = path.join(root, "runner");
-  if (plan.files) fs.mkdirSync(own);
+  if (plan.files || terminals.length) fs.mkdirSync(own);
   const sinks = {};
   if (plan.files) {
     for (const name of ["stdout", "stderr"]) sinks[name] = fs.openSync(path.join(own, name), "w");
     options.stdio = ["pipe", sinks.stdout, sinks.stderr];
   }
-  const result = spawnSync(program, args, options);
+  const transcript = path.join(own, "terminal");
+  let result;
+  if (terminals.length) {
+    // terminal.py stands between the runner and the program: it gives the
+    // program the terminal, passes the other streams on as they are, and
+    // writes what the terminal was sent to `transcript`.
+    const request = path.join(own, "terminal.json");
+    fs.writeFileSync(request, JSON.stringify({ terminals, type: plan.typed.map((step) => step.map(here)), transcript, ...WINDOW }));
+    result = spawnSync(terminal().python, ["-I", TERMINAL_PY, request, program, ...args], options);
+  } else {
+    result = spawnSync(program, args, options);
+  }
   for (const fd of Object.values(sinks)) fs.closeSync(fd);
   const written = (name) => (plan.files ? fs.readFileSync(path.join(own, name), "utf8") : result[name]);
-  if (result.error && result.status === null) return { broken: `could not run ${program}: ${result.error.message}` };
+  const onTerminal = terminals.length && fs.existsSync(transcript) ? fs.readFileSync(transcript, "utf8") : null;
+  // On a terminal the runner started terminal.py, which had started the
+  // program: any trouble with that is the run's, whatever exit code came back.
+  if (result.error && (result.status === null || terminals.length)) {
+    if (terminals.length && result.error.code === "ETIMEDOUT") {
+      const last = spelledOut((onTerminal ?? "").slice(-200)).split("\n").pop();
+      const waiting = neverTyped(onTerminal ?? "", plan.typed.map((step) => step.map(here)));
+      const why = waiting ? `; it never showed ${JSON.stringify(waiting[0])}, so ${JSON.stringify(waiting[1])} was not typed` : "";
+      return { broken: `${program} had not ended after ${seconds} s on a terminal, which last showed: ${last || "(nothing)"}${why}` };
+    }
+    return { broken: `could not run ${program}: ${result.error.message}` };
+  }
+  // terminal.py always leaves a transcript, except when it could not start the program.
+  if (terminals.length && onTerminal === null) {
+    return { broken: lastLine(written("stderr")) || `the terminal helper ended with ${result.status} and without a transcript` };
+  }
   const rules = [...(spec.normalize || []), ...(testCase.normalize || [])].map(([pattern, to]) => [new RegExp(pattern, "g"), to]);
   const clean = (text) => {
     let out = String(text ?? "");
@@ -265,7 +433,11 @@ function runIn(root, testCase, impl, plan, extraEnv) {
     for (const [pattern, to] of rules) out = out.replace(pattern, to);
     return out;
   };
-  const observed = { "exit code": String(result.status), stdout: clean(written("stdout")), stderr: clean(written("stderr")) };
+  // A stream that is the terminal has nothing of its own: it is in "terminal".
+  const observed = { "exit code": String(result.status) };
+  if (!terminals.includes("stdout")) observed.stdout = clean(written("stdout"));
+  if (!terminals.includes("stderr")) observed.stderr = clean(written("stderr"));
+  if (terminals.length) observed.terminal = clean(onTerminal);
   for (const line of testCase.after || []) {
     const probe = shell(line);
     observed[`after: ${line}`] = clean(`${probe.stdout}${probe.stderr}[exit ${probe.status}]`);
@@ -273,9 +445,8 @@ function runIn(root, testCase, impl, plan, extraEnv) {
   return { observed };
 }
 
-
-function show(label, text) {
-  const lines = text.split("\n");
+function show(label, text, spell) {
+  const lines = (spell ? spelledOut(text) : text).split("\n");
   const shown = lines.slice(0, 30).map((l) => `        ${l}`);
   if (lines.length > 30) shown.push(`        … ${lines.length - 30} more line(s)`);
   return `      ${label}:\n${shown.join("\n")}`;
@@ -308,7 +479,8 @@ function handbackCheck() {
       console.log(`  BROKEN  ${testCase.name}\n      ${run.broken}`);
       continue;
     }
-    const reached = run.observed.stdout.includes(MARKER);
+    // The stand-in says so on stdout, which is the terminal when the case makes it one.
+    const reached = `${run.observed.stdout ?? ""}${run.observed.terminal ?? ""}`.includes(MARKER);
     if (reached) back++;
     else native++;
     if (reached === Boolean(testCase.handback)) continue;
@@ -334,18 +506,19 @@ function compareAll() {
       continue;
     }
     const differing = Object.keys(ts.observed).filter((k) => ts.observed[k] !== rs.observed[k]);
+    const spell = plan.terminals.length > 0;
     if (!differing.length) {
       console.log(`  same    ${testCase.name}`);
       // --show: what was compared, so a case that proves nothing is visible.
-      if (opts.show) for (const [k, v] of Object.entries(ts.observed)) console.log(show(k, v));
+      if (opts.show) for (const [k, v] of Object.entries(ts.observed)) console.log(show(k, v, spell));
       continue;
     }
     failed++;
     console.log(`  DIFFER  ${testCase.name}  (${differing.join(", ")})`);
     for (const k of differing) {
       console.log(`    ${k}`);
-      console.log(show("TypeScript", ts.observed[k]));
-      console.log(show("Rust", rs.observed[k]));
+      console.log(show("TypeScript", ts.observed[k], spell));
+      console.log(show("Rust", rs.observed[k], spell));
     }
   }
 }

@@ -9,7 +9,18 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const RUNNER = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../templates/parity/parity.mjs");
+const TERMINAL_PY = path.join(path.dirname(RUNNER), "terminal.py");
 const isWindows = process.platform === "win32";
+
+// The tests that run a program on a terminal need python3 and a
+// pseudo-terminal. Where there is none they are skipped, and say so.
+const noTerminal = (() => {
+  if (isWindows) return "the runner has no terminal to give on Windows";
+  const check = spawnSync("python3", ["-I", TERMINAL_PY, "--check"], { encoding: "utf8" });
+  if (check.error) return `python3 could not be started here (${check.error.code})`;
+  if (check.status !== 0) return `no pseudo-terminal could be opened here (${check.stderr.trim()})`;
+  return false;
+})();
 const noBun = spawnSync("bun", ["--version"], { encoding: "utf8" }).status === 0 ? false : "bun is not installed here";
 
 function setup(rsBody) {
@@ -29,6 +40,15 @@ function setup(rsBody) {
     if (cmd === "log") { fs.writeFileSync(process.env.LOG, rest.join(" ") + "\\n"); console.log(fs.readFileSync(process.env.LOG, "utf8") + require("path").relative(process.env.TMPDIR, process.env.LOG)); }
     if (cmd === "kind") console.log("stdout is a " + (fs.fstatSync(1).isFile() ? "file" : "pipe") + ", stderr is a " + (fs.fstatSync(2).isFile() ? "file" : "pipe"));
     if (cmd === "both") { console.log("to stdout"); console.error("to stderr"); }
+    if (cmd === "tty") console.log("in=" + Boolean(process.stdin.isTTY) + " out=" + Boolean(process.stdout.isTTY) + " err=" + Boolean(process.stderr.isTTY));
+    if (cmd === "ask") {
+      process.stderr.write("commit? [y/N] ");
+      const answer = Buffer.alloc(64);
+      const length = fs.readSync(0, answer, 0, 64, null);
+      console.log(/^ *y/i.test(answer.toString("utf8", 0, length)) ? "committed" : "left alone");
+    }
+    if (cmd === "window") console.log(process.stdout.columns + "x" + process.stdout.rows + " TERM=" + process.env.TERM);
+    if (cmd === "wait") { process.stdout.write("still here "); setTimeout(() => {}, 60000); }
     // Stands for something else on the machine cleaning up the temp directory.
     if (cmd === "remove") fs.rmSync(require("path").resolve(process.env.TMPDIR, rest[0]), { recursive: true, force: true });
     // A program that removes a directory of its own on purpose.
@@ -387,6 +407,243 @@ test("capture: files, a bun program that prints 2000 lines after reading isTTY a
     assert.match(r.stdout, /all 10 case\(s\) behave the same/);
     // And whole: 2000 lines and the empty one after the last line end.
     for (let i = 1; i <= 10; i++) assert.match(shown(r.stdout, `run ${i}`), /line 0 x+ false\n[^]*… 1971 more line\(s\)/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+const TTY_CASES = {
+  cases: [
+    { name: "all three", args: ["tty"], tty: true },
+    { name: "only stdout", args: ["tty"], tty: "stdout" },
+    { name: "stdin and stderr", args: ["tty"], tty: ["stdin", "stderr"] },
+    { name: "pipes although the command line says otherwise", args: ["tty"], tty: false },
+    { name: "what the command line says", args: ["tty"] },
+  ],
+};
+
+test("tty: a case says which of stdin, stdout and stderr are a terminal; --tty says it for the rest", { skip: noTerminal }, () => {
+  const dir = setup();
+  try {
+    const plain = run(dir, TTY_CASES, ["--show"]);
+    assert.equal(plain.status, 0, plain.stdout + plain.stderr);
+    // Everything the terminal was sent is compared as "terminal", with the line end a terminal gets.
+    assert.match(shown(plain.stdout, "all three"), /exit code:\n\s+0\n\s+terminal:\n\s+in=true out=true err=true\\r\n/);
+    assert.doesNotMatch(shown(plain.stdout, "all three"), /stdout:|stderr:/);
+    // A stream that is not the terminal is still compared on its own.
+    assert.match(shown(plain.stdout, "only stdout"), /stderr:\n\s+\n\s+terminal:\n\s+in=false out=true err=false\\r\n/);
+    assert.match(shown(plain.stdout, "stdin and stderr"), /stdout:\n\s+in=true out=false err=true\n/);
+    assert.match(shown(plain.stdout, "pipes although the command line says otherwise"), /stdout:\n\s+in=false out=false err=false\n/);
+    assert.match(shown(plain.stdout, "what the command line says"), /stdout:\n\s+in=false out=false err=false\n/);
+
+    const flagged = run(dir, TTY_CASES, ["--show", "--tty", "stdout,stderr"]);
+    assert.equal(flagged.status, 0, flagged.stdout + flagged.stderr);
+    assert.match(shown(flagged.stdout, "what the command line says"), /terminal:\n\s+in=false out=true err=true\\r\n/);
+    assert.match(shown(flagged.stdout, "pipes although the command line says otherwise"), /stdout:\n\s+in=false out=false err=false\n/);
+    assert.match(shown(flagged.stdout, "only stdout"), /in=false out=true err=false/);
+
+    const all = run(dir, TTY_CASES, ["--tty", "--show", "--filter", "what the command line says"]);
+    assert.match(shown(all.stdout, "what the command line says"), /terminal:\n\s+in=true out=true err=true\\r\n/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("tty: a difference that only a terminal shows is reported, with its control characters spelled out", { skip: noTerminal }, () => {
+  // Stands for a port that forgot the colour its TypeScript prints on a terminal.
+  const dir = setup(`
+    if (cmd === "status") console.log("clean");
+  `);
+  fs.appendFileSync(path.join(dir, "ts.cjs"), `if (cmd === "status") console.log(process.stdout.isTTY ? "\\x1b[32mclean\\x1b[0m" : "clean");\n`);
+  try {
+    const cases = { cases: [{ name: "status", args: ["status"] }] };
+    assert.match(run(dir, cases).stdout, /all 1 case\(s\) behave the same/);
+    const r = run(dir, cases, ["--tty", "stdout"]);
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /DIFFER {2}status {2}\(terminal\)/);
+    assert.match(r.stdout, /TypeScript:\n\s+\\e\[32mclean\\e\[0m\\r\n/);
+    assert.match(r.stdout, /Rust:\n\s+clean\\r\n/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("tty: stdout and stderr on the terminal are one stream; apart when only one of them is", { skip: noTerminal }, () => {
+  const dir = setup();
+  try {
+    const r = run(dir, {
+      cases: [
+        { name: "together", args: ["both"], tty: true },
+        { name: "apart", args: ["both"], tty: "stdout" },
+        { name: "the exit code comes through", args: ["fail"], tty: true },
+      ],
+    }, ["--show"]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(shown(r.stdout, "together"), /terminal:\n\s+to stdout\\r\n\s+to stderr\\r\n/);
+    assert.match(shown(r.stdout, "apart"), /stderr:\n\s+to stderr\n\s+\n\s+terminal:\n\s+to stdout\\r\n/);
+    assert.match(shown(r.stdout, "the exit code comes through"), /exit code:\n\s+3\n\s+terminal:\n\s+nope\\r\n/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("tty: stdin is typed into the terminal, at once or when the question has been asked", { skip: noTerminal }, () => {
+  const dir = setup();
+  try {
+    const cases = {
+      cases: [
+        { name: "answered when asked", args: ["ask"], tty: true, stdin: [["[y/N] ", "y\n"]] },
+        { name: "typed ahead", args: ["ask"], tty: true, stdin: "n\n" },
+        { name: "the question goes to a pipe", args: ["ask"], tty: "stdin,stdout", stdin: "y\n" },
+      ],
+    };
+    const r = run(dir, cases, ["--show"]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    // The terminal echoes what is typed: after the question, or before the program has started.
+    assert.match(shown(r.stdout, "answered when asked"), /terminal:\n\s+commit\? \[y\/N\] y\\r\n\s+committed\\r\n/);
+    assert.match(shown(r.stdout, "typed ahead"), /terminal:\n\s+n\\r\n\s+commit\? \[y\/N\] left alone\\r\n/);
+    assert.match(shown(r.stdout, "the question goes to a pipe"), /stderr:\n\s+commit\? \[y\/N\] \n\s+terminal:\n\s+y\\r\n\s+committed\\r\n/);
+
+    // An answer that one side reads differently is a difference.
+    fs.appendFileSync(path.join(dir, "rs.cjs"), `if (cmd === "ask") console.log("and one more line");\n`);
+    const differs = run(dir, cases, ["--filter", "answered when asked"]);
+    assert.equal(differs.status, 1);
+    assert.match(differs.stdout, /DIFFER {2}answered when asked {2}\(terminal\)/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("tty: the window is 80 by 24 and TERM is set, unless the case says otherwise", { skip: noTerminal }, () => {
+  const dir = setup();
+  try {
+    const r = run(dir, {
+      cases: [
+        { name: "as given", args: ["window"], tty: true },
+        { name: "another TERM", args: ["window"], tty: true, env: { TERM: "dumb" } },
+        { name: "no TERM", args: ["window"], tty: true, env: { TERM: null } },
+        { name: "no terminal, no TERM", args: ["vars", "TERM"] },
+      ],
+    }, ["--show"]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(shown(r.stdout, "as given"), /80x24 TERM=xterm-256color\\r\n/);
+    assert.match(shown(r.stdout, "another TERM"), /80x24 TERM=dumb\\r\n/);
+    assert.match(shown(r.stdout, "no TERM"), /80x24 TERM=undefined\\r\n/);
+    assert.match(shown(r.stdout, "no terminal, no TERM"), /TERM=undefined\n/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("tty: --handback finds the stand-in's word on the terminal", { skip: noTerminal }, () => {
+  const dir = setup(`
+    if (cmd === "back") {
+      const { spawnSync } = require("child_process");
+      const r = spawnSync(process.execPath, [require("path").join(process.env.DEMO_ROOT, "dist/cli.js"), ...rest], { stdio: "inherit" });
+      process.exit(r.status);
+    }
+  `);
+  const handback = (cases, extra = []) => {
+    fs.writeFileSync(path.join(dir, "parity.json"), JSON.stringify({ cases }));
+    return spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--rs", `${process.execPath} rs.cjs`, "--handback", "DEMO_ROOT=dist/cli.js", ...extra], { cwd: dir, encoding: "utf8" });
+  };
+  try {
+    const cases = [
+      { name: "native", args: ["tty"] },
+      { name: "goes back", args: ["back", "y"], handback: "not ported" },
+    ];
+    for (const extra of [["--tty"], ["--tty", "stdout"], ["--tty", "stdin,stderr"]]) {
+      const good = handback(cases, extra);
+      assert.equal(good.status, 0, good.stdout + good.stderr);
+      assert.match(good.stdout, /1 case\(s\) answered by the binary, 1 handed back to the JavaScript, as the cases say/);
+    }
+    const wrong = handback([{ name: "believed native", args: ["back", "x"], tty: true }]);
+    assert.equal(wrong.status, 1);
+    assert.match(wrong.stdout, /WRONG {3}believed native\n\s+reached the JavaScript/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("tty: a program that cannot be started, or does not end, is broken and says why", { skip: noTerminal }, () => {
+  const dir = setup();
+  try {
+    fs.writeFileSync(path.join(dir, "parity.json"), JSON.stringify({ cases: [{ name: "nothing to run", args: [], tty: true }] }));
+    const missing = spawnSync(process.execPath, [RUNNER, "--cases", "parity.json", "--ts", "no-such-program-anywhere", "--rs", `${process.execPath} rs.cjs`], { cwd: dir, encoding: "utf8" });
+    assert.equal(missing.status, 1, missing.stdout + missing.stderr);
+    assert.match(missing.stdout, /BROKEN {2}nothing to run\n\s+could not run no-such-program-anywhere: /);
+
+    const hangs = run(dir, {
+      cases: [
+        { name: "waits for ever", args: ["wait"], tty: true, timeout: 2 },
+        // The question is "commit? [y/N] ", so the answer is never typed and the program waits for it.
+        { name: "waits for a question it never asks", args: ["ask"], tty: true, stdin: [["[Y/n] ", "y\n"]], timeout: 2 },
+      ],
+    });
+    assert.equal(hangs.status, 1, hangs.stdout + hangs.stderr);
+    assert.match(hangs.stdout, /BROKEN {2}waits for ever\n\s+\S+ had not ended after 2 s on a terminal, which last showed: still here \n/);
+    assert.match(hangs.stdout, /BROKEN {2}waits for a question it never asks\n\s+\S+ had not ended after 2 s on a terminal, which last showed: commit\? \[y\/N\] ; it never showed "\[Y\/n\] ", so "y\\n" was not typed\n/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("tty: without python3 a case that asks for a terminal is broken, in one line", { skip: isWindows && "Windows has its own line, see the next test" }, () => {
+  const dir = setup();
+  try {
+    // A PATH with nothing on it: the programs of the case are started by their full path.
+    const empty = path.join(dir, "empty");
+    fs.mkdirSync(empty);
+    const r = run(dir, { cases: [{ name: "wants a terminal", args: ["tty"], tty: "stdout" }, { name: "wants none", args: ["tty"] }] }, [], { ...process.env, PATH: empty });
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /BROKEN {2}wants a terminal\n {6}this case is to run on a terminal \("tty"\); that takes python3, and no python3 was found on PATH\n {2}same {4}wants none\n1 of 2 case\(s\) differ/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("tty: on Windows a case that asks for a terminal is broken, in one line", { skip: !isWindows && "this is about Windows" }, () => {
+  const dir = setup();
+  try {
+    const r = run(dir, { cases: [{ name: "wants a terminal", args: ["tty"], tty: true }, { name: "wants none", args: ["tty"] }] });
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /BROKEN {2}wants a terminal\n {6}this case is to run on a terminal \("tty"\), and the runner has none to give on Windows; run it on Linux or macOS\n {2}same {4}wants none\n1 of 2 case\(s\) differ/);
+    const flagged = run(dir, { cases: [{ name: "wants none", args: ["tty"] }] }, ["--tty"]);
+    assert.equal(flagged.status, 1, flagged.stdout + flagged.stderr);
+    assert.match(flagged.stdout, /BROKEN {2}wants none\n/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a mistake in tty or a typed stdin stops the run before any case, with exit code 2", () => {
+  const dir = setup();
+  try {
+    const bad = (cases, extra = []) => {
+      const r = run(dir, { cases }, extra);
+      assert.equal(r.status, 2, r.stdout + r.stderr);
+      assert.equal(r.stdout, "");
+      return r.stderr;
+    };
+    assert.match(bad([{ name: "a", args: ["echo"], tty: "stdout,sterr" }]), /^parity: case "a": "tty" takes true, false, or some of stdin, stdout and stderr; it has sterr\n$/);
+    assert.match(bad([{ name: "a", args: ["echo"] }], ["--tty", "out"]), /^parity: --tty takes .* it has out\n$/);
+    assert.match(bad([{ name: "a", args: ["ask"], stdin: [["[y/N] ", "y\n"]] }]), /^parity: case "a": "stdin" as a list is typed at a terminal, and stdin is not one here; say "tty" in the case\n$/);
+    assert.match(bad([{ name: "a", args: ["ask"], tty: true, stdin: ["y\n"] }]), /^parity: case "a": "stdin" as a list takes pairs of text, \[what to wait for, what to type\]\n$/);
+    // A case that --filter leaves out is not looked at.
+    const r = run(dir, { cases: [{ name: "good", args: ["echo", "x"] }, { name: "bad", args: ["echo"], tty: "nowhere" }] }, ["--filter", "good"]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("capture: files with a terminal: the streams that are not the terminal go to the files", { skip: noTerminal }, () => {
+  const dir = setup();
+  try {
+    const r = run(dir, { cases: [{ name: "stdin is the terminal", args: ["kind"], tty: "stdin", capture: "files" }, { name: "stdout is", args: ["both"], tty: "stdout", capture: "files" }] }, ["--show"]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(shown(r.stdout, "stdin is the terminal"), /stdout:\n\s+stdout is a file, stderr is a file\n/);
+    assert.match(shown(r.stdout, "stdout is"), /stderr:\n\s+to stderr\n\s+\n\s+terminal:\n\s+to stdout\\r\n/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
