@@ -473,6 +473,31 @@ test("--keep leaves the run's directory, names it, and says to remove that one o
   }
 });
 
+test("a case that leaves a directory nobody may write or enter still ends as its cases say, and the run's directory goes", () => {
+  const dir = setup();
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "rustify-parity-test-parent-"));
+  try {
+    const cases = {
+      cases: [
+        {
+          name: "a locked tree",
+          args: ["write", "x"],
+          setup: ["mkdir -p locked/inner && touch locked/inner/f && chmod 000 locked/inner && chmod 500 locked"],
+        },
+      ],
+    };
+    const r = run(dir, cases, [], { ...process.env, TMPDIR: parent, TEMP: parent, TMP: parent });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /all 1 case\(s\) behave the same/);
+    assert.deepEqual(fs.readdirSync(parent).filter((name) => name.startsWith("rustify-parity-")), [], r.stdout);
+  } finally {
+    // What a failed run could leave: open it up again, then remove the parent by its exact path.
+    spawnSync(isWindows ? "cmd" : "chmod", isWindows ? ["/c", "exit"] : ["-R", "u+rwx", parent]);
+    fs.rmSync(parent, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a mistake in capture stops the run before any case, with exit code 2", () => {
   const dir = setup();
   try {
