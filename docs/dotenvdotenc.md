@@ -1,6 +1,6 @@
 # dotenvdotenc
 
-snomiao/dotenvdotenc PR #6, read at `00e176d`. The owner's replacement for
+snomiao/dotenvdotenc PR #6, read at `6a3f40c`. The owner's replacement for
 genvx.
 
 dotenvdotenc (`dede`) keeps each gitignored plaintext `.env*` file in sync
@@ -16,10 +16,12 @@ with a committed dotenvx-encrypted `.env*.enc` twin: one file of TypeScript
 - Proof, on Linux x64, macOS arm64 and Windows 11 x64, each with its own
   bun, with 1.4.2 (the pinned one) and with 1.4.5: 1,180 parity cases, all
   the same as the TypeScript. On Linux 999 are answered by the binary and 181
-  handed back on purpose; on macOS 997 and 183; on Windows all 1,100 that run
-  there are handed back, and 80 that cannot mean the same there (most need a
-  symbolic link) are skipped. `rs/parity/proof.sh` runs it all, and the
-  parity job runs that on the three systems.
+  handed back on purpose; on macOS 997 and 182, with one skipped (a 70 KB
+  value into a socket, where bun's own output varies from run to run); on
+  Windows all 1,100 that run there are handed back, and 80 that cannot mean
+  the same there (most need a symbolic link) are skipped.
+  `rs/parity/proof.sh` runs it all, and the parity job runs that on the
+  three systems: green in CI on all three at `6a3f40c`.
 - Encryption interoperates both ways with `@dotenvx/primitives` and dotenvx,
   checked by a script that lets the two implementations take turns on the
   same files; further scripts cover a terminal, slow pipes and file

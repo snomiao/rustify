@@ -277,6 +277,19 @@ Colours, links, CR LF and the echo of what was typed are all part of it.
 This needs Linux or macOS with python3. On Windows, or without python3, such
 cases are BROKEN, never passed.
 
+A project's own script that gives a command a pseudo-terminal must keep the
+terminal open itself until it has read everything, as the runner's
+`terminal.py` does. On macOS, a terminal that is not the command's
+controlling terminal and that nothing else holds open drops whatever is
+still unread when the command exits. In a test on macOS 27, a line printed
+just before the exit and read 0.3 s later was gone in 20 of 20 tries.
+When the reader holds the terminal, or the terminal is the command's
+controlling terminal, the command's exit waits until its output has been
+read. Linux keeps the output either way, so the loss shows only on macOS,
+and only when the reader is late, as on a busy CI runner. dotenvdotenc's
+`rs/tty-compat.py` lost six scenes' output this way on GitHub's macOS
+runner.
+
 For a command whose output changes on a terminal, run the whole cases file a
 second time with `--tty stdout,stderr`. Colours depend on those two streams:
 bun colours `console.error` whenever stdout or stderr is a terminal. stdin
