@@ -994,6 +994,10 @@ test("setup and after lines reach the shell as written, and the run's directorie
         // Git Bash reads its command line by rules of its own, which make one backslash of two.
         { name: "backslashes", args: ["echo", "x"], setup: [String.raw`printf '%s\n' 'a\\b' "c\\d" > lines.txt`], after: ["cat lines.txt"] },
         { name: "where the lines run", args: ["json"], after: ["pwd", "cd .. && pwd", 'echo "$HOME"', "echo '<CWD>' '<ROOT>' '<HOME>'"] },
+        // Unquoted, a placeholder reaches the program only in a spelling the
+        // shell leaves alone: on Windows a backslash would be an escape.
+        // (echo puts the words of a path with spaces back together.)
+        { name: "placeholders without quotes", args: ["echo", "x"], setup: ["echo <ROOT> > where.txt"], after: ["cat where.txt", "echo <CWD> <HOME> <REPO>"] },
         { name: "the line is not in the environment", args: ["echo", "x"], after: ["env | grep -c RUSTIFY_PARITY_LINE"] },
       ],
     }, ["--show"]);
@@ -1008,6 +1012,9 @@ test("setup and after lines reach the shell as written, and the run's directorie
     assert.match(where, new RegExp(`after: cd \\.\\. && pwd:\\n\\s+<ROOT${MSYS}>\\n\\s+\\[exit 0\\]\\n`));
     assert.match(where, new RegExp(`after: echo "\\$HOME":\\n\\s+<HOME${MSYS}>\\n\\s+\\[exit 0\\]\\n`));
     assert.match(where, /after: echo '<CWD>' '<ROOT>' '<HOME>':\n\s+<CWD> <ROOT> <HOME>\n\s+\[exit 0\]$/);
+    const bare = shown(r.stdout, "placeholders without quotes");
+    assert.match(bare, /after: cat where\.txt:\n\s+<ROOT>\n\s+\[exit 0\]\n/);
+    assert.match(bare, /after: echo <CWD> <HOME> <REPO>:\n\s+<CWD> <HOME> <REPO>\n\s+\[exit 0\]$/);
     assert.match(shown(r.stdout, "the line is not in the environment"), /after: env \| grep -c RUSTIFY_PARITY_LINE:\n\s+0\n\s+\[exit 1\]$/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
