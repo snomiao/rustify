@@ -240,7 +240,9 @@ store that does not exist; `<ROOT>/store.git` is the same store on every
 system. A probe that a system's tools answer differently proves nothing
 there: GNU `stat -c '%a'` fails the same way on both sides on macOS, and Git
 Bash reports 644 for every file, whatever its mode (71 of genvx's cases);
-GNU `touch -d` fails on macOS. Where a case cannot mean the same thing on a
+GNU `touch -d` fails on macOS. A file of the case whose name the system does
+not keep (on Windows a tab, or a trailing dot) makes that case BROKEN, and
+the run goes on with the rest. Where a case cannot mean the same thing on a
 system, give it `"skip": { "win32": "<why>" }`, keyed by operating system as
 node's `process.platform` names it (`linux`, `darwin`, `win32`). A misspelt
 system (`windows`) or one with an architecture (`darwin-arm64`) stops the

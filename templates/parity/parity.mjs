@@ -898,8 +898,16 @@ function runIn(root, testCase, impl, plan, extraEnv) {
     String(text).split("<CWD>").join(spelt(cwd)).split("<HOME>").join(spelt(home)).split("<ROOT>").join(spelt(root)).split("<REPO>").join(spelt(launchDir));
   for (const [file, content] of Object.entries(testCase.files || {})) {
     const target = path.join(cwd, file);
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, here(content));
+    try {
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, here(content));
+    } catch (error) {
+      // A name this system gives no file (on Windows one with a tab, or
+      // longer than a name may be anywhere) makes this case BROKEN, and the
+      // others still run. A run directory that went away still stops the run.
+      stillThere(root, cwd);
+      return { broken: `the case's file ${JSON.stringify(file)} could not be made here: ${error.code || error.message}` };
+    }
   }
   const env = {
     PATH: process.env.PATH,
