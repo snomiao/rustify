@@ -32,7 +32,7 @@ on:
         default: ""
         type: string
       smoke:
-        description: "Command that must exit 0 and print the released version, e.g. `mycli --version`"
+        description: "Command that must exit 0 and print the released version (or `smoke-expect`), e.g. `mycli --version`. A leading `[N] ` says it is meant to exit N instead, for a program that never exits 0 on its own."
         required: true
         type: string
       package:

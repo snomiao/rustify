@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 
-import { TRACE_ENV, TRACE_LINE, homeVariables, parseLine, withEnv, withPath } from "../../templates/npm/smoke-command.mjs";
+import { TRACE_ENV, TRACE_LINE, dependencyScriptFailure, homeVariables, parseLine, parseRun, withEnv, withPath } from "../../templates/npm/smoke-command.mjs";
 
 const KEYS = ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64"];
 const parse = (text, host = "linux-x64") => parseLine(text, host, KEYS);
@@ -128,4 +128,42 @@ test("a runtime's directory goes first in PATH, under the name PATH already has"
   assert.deepEqual(withPath({ Path: "C:\\Windows" }, ["C:\\node"], "win32"), { Path: "C:\\node;C:\\Windows" });
   // Elsewhere case matters: `Path` is not PATH there.
   assert.deepEqual(withPath({ Path: "x" }, ["/a"], "linux"), { Path: "x", PATH: "/a" });
+});
+
+test("the --run command can say which exit code it is meant to end with", () => {
+  assert.deepEqual([parseRun("mycli --version", "linux-x64", KEYS).code, parseRun("mycli --version", "linux-x64", KEYS).args], [0, ["--version"]]);
+  const failing = parseRun("[1] wtx --version", "linux-x64", KEYS);
+  assert.equal(failing.code, 1);
+  assert.equal(failing.name, "wtx");
+  assert.deepEqual(failing.args, ["--version"]);
+  assert.equal(parseRun("[real-home] mycli", "linux-x64", KEYS).realHome, true);
+  assert.throws(() => parseRun("[handback] mycli --help", "linux-x64", KEYS), /no \[native\] or \[handback\]/);
+  assert.throws(() => parseRun("[native:linux] mycli", "darwin-arm64", KEYS), /no \[native\] or \[handback\]/);
+});
+
+test("a dependency's failing install script is told apart from the package's own", () => {
+  // npm 10 on Windows, as GitHub's windows-11-arm runner printed it for codehost.
+  const windows = [
+    "npm error code 1",
+    "npm error path C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\rustify-smoke-roLIAp\\npm\\node_modules\\codehost\\node_modules\\oxmgr",
+    "npm error command failed",
+    "npm error command C:\\Windows\\system32\\cmd.exe /d /s /c node scripts/install.js",
+    "npm error Unsupported platform: win32/arm64",
+    "npm error A complete log of this run can be found in: C:\\x.log",
+  ].join("\n");
+  assert.deepEqual(dependencyScriptFailure(windows, "codehost"), { dependency: "oxmgr", top: "oxmgr", reason: "Unsupported platform: win32/arm64" });
+  // npm 9 spelling, a scoped package, and a dependency of a dependency.
+  const nested = [
+    "npm ERR! code 1",
+    "npm ERR! path /tmp/p/lib/node_modules/@me/tool/node_modules/a/node_modules/@x/b",
+    "npm ERR! command failed",
+    "npm ERR! command sh -c node install.js",
+    "npm ERR! gyp: no toolchain",
+  ].join("\n");
+  assert.deepEqual(dependencyScriptFailure(nested, "@me/tool"), { dependency: "@x/b", top: "a", reason: "gyp: no toolchain" });
+  // The package's own script, one of its platform packages, or no script at all: not a dependency's.
+  assert.equal(dependencyScriptFailure("npm error path /p/lib/node_modules/codehost\nnpm error command failed\nnpm error x", "codehost"), null);
+  assert.equal(dependencyScriptFailure("npm error path /p/lib/node_modules/codehost/node_modules/codehost-win32-arm64\nnpm error command failed", "codehost"), null);
+  assert.equal(dependencyScriptFailure("npm error code E404\nnpm error 404 Not Found - GET http://x/codehost", "codehost"), null);
+  assert.equal(dependencyScriptFailure("npm error path /p/lib/node_modules/other/node_modules/oxmgr\nnpm error command failed", "codehost"), null);
 });

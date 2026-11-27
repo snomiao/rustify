@@ -286,6 +286,18 @@ XDG_CONFIG_HOME="$WORK/real-config" node "$SMOKE" --dist "$WORK/npm-dist-1.2.4" 
   --also "[real-home] toy where rustify-smoke- HOME XDG_CONFIG_HOME => HOME:outside XDG_CONFIG_HOME:outside" \
   | sed 's/^/  /' || die "smoke.mjs failed"
 
+echo "== smoke.mjs: a first command that is meant to fail"
+# A program that never exits 0 on its own (a server that runs until stopped)
+# can still be the command the launcher starts first: [N] says which exit code.
+node "$SMOKE" --dist "$WORK/npm-dist-1.2.4" --run "[3] toy exit 3" --expect "version=1.2.4" --installer bun \
+  | sed 's/^/  /' || die "smoke.mjs failed for --run with an exit code"
+set +e
+out="$(node "$SMOKE" --dist "$WORK/npm-dist-1.2.4" --run "[3] toy exit 4" --expect "version=1.2.4" --installer bun 2>&1)"
+code=$?
+set -e
+[ "$code" = 1 ] && [[ "$out" == *"exited 4"* ]] && pass "--run [3] fails when the command exits 4" \
+  || die "smoke.mjs should have failed for exit code 4 against [3]. It exited $code and printed: $out"
+
 echo "== smoke.mjs: who answered, in a package that still ships JavaScript"
 # --env wins over the home directory the test hands out. The trace is on where
 # the test is started: only the marked lines may see it.
