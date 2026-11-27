@@ -14,10 +14,9 @@
 # directory name no file system accepts, where src/server.ts throws at its
 # first mkdir (line 78), before Bun.serve and before it writes a file: once
 # directly with bun, and through the install smoke test of the branch
-# build/rustify-pipeline (bun and npm, Linux x64), which also ran the
-# binary's `--rustify-version`. No port was bound by wtx, no PTY started,
-# no test of the project run. Every note below comes from the source; none
-# was seen to happen, and no test is cited as a proof.
+# build/rustify-pipeline (bun and npm, Linux x64). No port was bound by
+# wtx, no PTY started and no test of the project run. Every note below comes
+# from the source; none was seen to happen, and no test is cited as a proof.
 #
 # How it fits together. `wtx` is one foreground bun process: Bun.serve on
 # 127.0.0.1:3004 by default, answering a small HTTP API and WebSockets.
@@ -30,11 +29,9 @@
 #
 # Status. The crate (rs/ on build/rustify-pipeline) hands every command
 # line to wtx.mjs, so every feature below is `missing`. Nothing is
-# `dropped`: that is the owner's decision. The binary answers exactly one
-# line itself, `wtx --rustify-version` (prints its version, exit 0), which
-# has no TypeScript counterpart: it exists because the install smoke test
-# needs a command that exits, and no command of wtx does. It is in the note
-# of `wtx (the command)` and has to be removed or blessed.
+# `dropped`: that is the owner's decision. The install smoke test starts
+# with `[1] wtx`, a command meant to fail before the server listens, since
+# no command of wtx exits on its own.
 #
 # Candidates to stay TypeScript (the owner decides; nothing is `dropped`):
 #   - the library API: a binary cannot satisfy an import, and the functions
@@ -82,7 +79,7 @@ reconciled = "2c1b22f"
 name = "wtx (the command): starts the server, reads no arguments"
 status = "missing"
 ts = "wtx.mjs:3; src/cli.ts:3; package.json:19 bin"
-note = "The bin is wtx.mjs, `#!/usr/bin/env bun`, which imports src/server.ts and calls startTerminalWS(); src/cli.ts is the same two lines (README: `bun ./node_modules/wtx/src/cli.ts`, and the `./cli` export). No argument is read, so any command line, `--help` and `--version` included, starts the server and runs until it is killed. Needs bun: Bun.serve, Bun.spawn, bun-pty, and an import of ./src/server without extension that node cannot resolve. Rust-only today: `wtx --rustify-version` alone is answered by the binary with `wtx <version>: the native binary answered; ...` and exit 0, for the install smoke test (rs/src/main.rs); with anything after it, or under WTX_NO_NATIVE=1, it goes to wtx.mjs and starts the server."
+note = "The bin is wtx.mjs, `#!/usr/bin/env bun`, which imports src/server.ts and calls startTerminalWS(); src/cli.ts is the same two lines (README: `bun ./node_modules/wtx/src/cli.ts`, and the `./cli` export). No argument is read, so any command line, `--help` and `--version` included, starts the server and runs until it is killed. Needs bun: Bun.serve, Bun.spawn, bun-pty, and an import of ./src/server without extension that node cannot resolve."
 
 [[feature]]
 name = "listening address (TERMINAL_WS_PORT, TERMINAL_WS_HOST) and the start-up line"
