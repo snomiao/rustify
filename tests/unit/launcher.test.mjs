@@ -410,9 +410,28 @@ test("under bun on Linux and macOS, the binary gets exactly the shell's environm
   }
 });
 
-// Measured with bun 1.4.2: bun writes every assignment to process.env (the
-// name in capitals) and every delete into the process's environment block,
-// which the launcher reads, at once; the .env files it does not. If this
+test("under bun, a process.env that throws when asked is no reason to fall back to it", { skip: BUN }, () => {
+  const pkg = installed("bun", { exact: !isWindows });
+  try {
+    const given = isWindows
+      ? userEnvironment(pkg, { RUSTIFY_NO_LINK: "1" })
+      : { PATH: process.env.PATH, HOME: pkg.home, SHARED: "mine", EMPTY: "", EQ: "a=b=c", OWN_aß: "mine", RUSTIFY_NO_LINK: "1" };
+    // A preload that puts its own object in place of process.env, one whose `in` throws.
+    const pre = path.join(pkg.dir, "throwing-env.cjs");
+    fs.writeFileSync(pre, 'process.env = new Proxy(process.env, { has() { throw new Error("asked"); } });\n');
+    fs.writeFileSync(path.join(pkg.cwd, "bunfig.toml"), `preload = [${JSON.stringify(pre.replaceAll("\\", "/"))}]\n`);
+    const seen = runLauncher(pkg, { env: given });
+    if (isWindows) assertUserEnvironment(seen, pkg);
+    else assertExactly(seen, given, pkg);
+  } finally {
+    fs.rmSync(pkg.dir, { recursive: true, force: true });
+  }
+});
+
+// Measured with bun 1.4.2: bun writes every assignment that changes
+// process.env (a new name, in capitals, or a new value) and every delete into
+// the process's environment block, which the launcher reads, at once; the
+// .env files it does not. If this
 // fails, bun changed: see "The launcher's environment" in
 // docs/npm-distribution.md.
 test("under bun on Windows, what a preload set in process.env reaches the binary, in capitals, and what it deleted does not", { skip: BUN || (!isWindows && "Windows only") }, () => {

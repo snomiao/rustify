@@ -43,8 +43,8 @@ const path = require("path");
 // into what is read here (bun 1.3.14, 1.4.0 and 1.4.5 on Linux, 1.4.4 on
 // macOS), so the binary gets the environment as the command was started,
 // with what a preload deleted and without what it set. On Windows bun writes
-// every assignment (the name in capitals) and every delete into the
-// process's environment block at once, and nothing keeps the block as it was
+// every assignment that changes process.env (a new name, in capitals, or a
+// new value) and every delete into the process's environment block at once, and nothing keeps the block as it was
 // (bun 1.4.2; the PEB's block is the same one), so there the binary gets what
 // a preload set and not what it deleted.
 //
@@ -59,7 +59,9 @@ const path = require("path");
 // of two entries with the same name (on Windows in other letters, as Windows
 // compares them: see windowsKey) the first is kept, which is the one
 // getenv() and GetEnvironmentVariableW() find; an entry without "=" is left
-// out. Names that are array indices ("1", "42") come first, in numeric
+// out; so is a name "__proto__", which a plain object does not hold as a
+// key, and a NODE_CHANNEL_FD outside a fork (see TAKEN). Names that are
+// array indices ("1", "42") come first, in numeric
 // order, as they always did in process.env.
 
 // The entries ("NAME=value") of the environment this process was started
@@ -220,9 +222,20 @@ function binaryEnvironment(entries, rootName, root, windows) {
   let env = null;
   try {
     if (entries) env = environmentOf(entries, windows);
-    if (env) for (const name of TAKEN) if (!(name in process.env)) delete env[name];
   } catch {
     env = null;
+  }
+  // Only a failed read falls back. A process.env that throws when asked (a
+  // preload's own object in its place) is no reason to: the IPC variables
+  // then go, as bun takes them out of a forked bun's process.env.
+  if (env) {
+    for (const name of TAKEN) {
+      let taken = true;
+      try {
+        taken = !(name in process.env);
+      } catch {}
+      if (taken) delete env[name];
+    }
   }
   if (!env) env = Object.assign({}, process.env);
   // On Windows a variable is one in any letter case (see windowsKey).
