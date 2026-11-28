@@ -168,13 +168,25 @@ printf 'FROM_DOTENV=yes\nSHARED=from-dotenv\nNODE_ENV=production\n' > "$WORK/dot
 printf 'FROM_LOCAL=yes\n' > "$WORK/dotenv/.env.local"
 printf 'FROM_PRODUCTION=yes\n' > "$WORK/dotenv/.env.production"
 printf 'FROM_DEVELOPMENT=yes\n' > "$WORK/dotenv/.env.development"
+# On macOS node (CoreFoundation, as it starts) puts __CF_USER_TEXT_ENCODING
+# into its own environment when it is missing (an SSH session, env -i) or
+# names another user, and a node launcher passes its process.env on, as v2
+# did: the binary would have one entry more than the shell. A Terminal window
+# has it already; it is set here as there, "0x<uid>:0x0:0x0", which
+# CoreFoundation keeps.
+terminal_text_encoding() {
+  if [ "$RUNTIME" = node ] && [ "$(uname -s)" = Darwin ]; then
+    local own; own="$(printf '0x%X' "$(id -u)")"
+    case "${__CF_USER_TEXT_ENCODING-}" in "$own":*) ;; *) export __CF_USER_TEXT_ENCODING="$own:0x0:0x0" ;; esac
+  fi
+}
 env_check() { # $1 = label, $2 = an installed command that has not run yet
   local label="$1" cmd="$2"
   is_script "$cmd" || die "$label: expected a launcher before the first run"
   # env starts both, with one environment (bash would give each its own \`_\`).
   # The \`true\` keeps bash from starting the last one in place of the
   # subshell, which it does with SHLVL one lower.
-  (cd "$WORK/dotenv" && SHARED=mine /usr/bin/env "$WORK/target/release/toy$EXT" env "$WORK/env-direct.txt" \
+  (cd "$WORK/dotenv" && terminal_text_encoding && SHARED=mine /usr/bin/env "$WORK/target/release/toy$EXT" env "$WORK/env-direct.txt" \
     && SHARED=mine /usr/bin/env "$cmd" env "$WORK/env-first.txt"; true)
   grep -v '^RUSTIFY_PACKAGE_ROOT=' "$WORK/env-first.txt" > "$WORK/env-first-own.txt" || true
   if cmp -s "$WORK/env-direct.txt" "$WORK/env-first-own.txt" && grep -q '^RUSTIFY_PACKAGE_ROOT=' "$WORK/env-first.txt"; then
