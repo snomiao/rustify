@@ -7,16 +7,115 @@
 # without the two spec files), postbuild.ts, package.json, README.md, the
 # release workflow, and the bundle `bun run build` makes of them (dist/cli.js),
 # which is where the code of snorun, phpdie, package-up, tsa-composer and
-# z-chat-completion was read. The openai SDK was not read.
+# z-chat-completion was read.
 #
-# Nothing was run beyond the commands without arguments. snocommit has no
-# --help or --version, and any command given arguments runs git (see the
-# hazards below). Run: the built dist/cli-feat.js, dist/cli-chore.js and
-# dist/cli.js with no arguments under node and bun, in an empty directory
-# outside any git repository, with a home directory of its own and a `git`
-# first on PATH that only logged its calls (it logged none); and the six
-# installed commands with no arguments, through rustify's install smoke test.
-# No test was run, no service was contacted. No entry cites a proof.
+# Second pass, 2026-11-28: the port. The openai SDK the lock file pins
+# (6.15.0) was read where the program touches it: the client takes its
+# address from OPENAI_BASE_URL (trimmed; empty means
+# https://api.openai.com/v1), also reads OPENAI_ORG_ID, OPENAI_PROJECT_ID,
+# OPENAI_WEBHOOK_SECRET and OPENAI_LOG, sends JSON.stringify of the request,
+# retries twice after a connection error, 408, 409, 429 or 5xx, parses the
+# answer as JSON when its media type says so, and throws in its own words
+# otherwise. So both implementations can be pointed at a stand-in on
+# 127.0.0.1, and the cases compare the whole flow against it.
+#
+# Third pass, 2026-11-28: repairs after an independent verifier's run (porting
+# guide, step 8). The verifier reproduced every proof below at 4ce844f and
+# wrote 111 cases of its own; 9 differed on the Mac, 8 on Linux. Each was
+# reproduced here first, against the binary as it was (Linux, and Apple git
+# 2.54 on the Mac), then repaired or handed back:
+# - git's output passed through as bytes, where node's exec passes it on as
+#   UTF-8 text (U+FFFD for what is not UTF-8): repaired (rs/src/sh.rs);
+# - a hook printing more than 1 MiB: exec kills the command (SIGTERM to the
+#   shell, both pipes closed), so the TypeScript neither commits nor pushes,
+#   and the binary did both: repaired, the same kill;
+# - a post-index-change hook set in git's configuration (hook.<name>.event)
+#   and a clean filter that writes into the work tree, both of which git ran
+#   for the binary's copy of the index too (the filter made the binary stop
+#   with exit 1 and the files staged): handed back now, with every setting
+#   and variable through which git runs a program of the user's while it
+#   adds, shows the status or diffs, and with submodules;
+# - a `node` that is a hard link or a copy of bun was taken for node:
+#   repaired (the binary asks that node what it is);
+# - the copy of the index was readable by every user of the machine (0755
+#   and 0644 in /tmp): its directory is 0700 now.
+# Found here while repairing, by the whole cases file run on a terminal
+# (which the porting guide asks for, and proof.sh now does):
+# - the binary passed stdout and stderr on in another order than node when
+#   both pipes were ready at once (git commit's error and the unmerged path
+#   it prints at exit): it now takes them in the order the kernel reports,
+#   as libuv does (epoll, kqueue);
+# - bun's exec, unlike node's, leaves the pipes open when it kills a command
+#   past 1 MiB: on the Mac (bun as node, bash as /bin/sh, which forks git) a
+#   pre-commit hook printing 1.8 MB got its commit made and pushed on a
+#   terminal; where bun may run the JavaScript, a repository with a hook is
+#   handed back now.
+# The verifier's cases are in rs/parity.json under their own names: four of
+# them marked handed back since, one kept on pipes in the terminal run (the
+# TypeScript itself orders its two streams either way there), and one marked
+# for where node is bun instead of for macOS. Thirteen more pin the repairs.
+#
+# How it is proven. rs/parity.gen.mjs writes rs/parity.json, 269 cases, each
+# in a git repository of its own with a bare repository under <ROOT> as the
+# remote that is pulled from and pushed to, fixed names and dates for every
+# commit (so hashes are equal), and rs/parity/with-mock.mjs in front of both
+# sides: a server on 127.0.0.1 that answers in OpenAI's place (named in
+# OPENAI_BASE_URL, which the SDK and the binary both read, and which the
+# JavaScript a binary hands back to inherits; the wrapper refuses any other
+# address), and a log of every request it got, method, path, Authorization,
+# Content-Type, Accept and the body byte for byte, which every case prints
+# afterwards. The TypeScript side is `node dist/cli-<command>.js`, what the
+# binary hands back to and npm publishes; the binary is started under the
+# command's own name. After each run a case prints the commits, the working
+# tree, the remote's commits and the request log. rs/parity/proof.sh runs
+# them in lanes, TypeScript against the binary, on Linux and macOS again with
+# stdout and stderr a terminal (--tty stdout,stderr, the whole file), then
+# the --handback check once per command (each command hands back to a file
+# of its own). The workflow (.github/workflows/rust-npm-release.yml) runs it
+# on linux-x64, darwin-arm64 and win32-x64.
+#
+# Run here, 2026-11-28, at commit 570b0ec (the last commit changing the
+# crate or the cases), each run all 269 cases, the whole file again on a
+# terminal where there is one, and the --handback check, with
+# rs/parity/proof.sh:
+# - Linux x64 (Debian, node 20.19.2, bun 1.4.0, git 2.47.3), 4 lanes: all
+#   269 the same; 174 answered by the binary, 95 handed back, as the cases
+#   say; on a terminal (--tty stdout,stderr) all 269 the same. cargo build
+#   and clippy without a warning (also checked for macOS and Windows), cargo
+#   test 27 passed.
+# - macOS 27 arm64 (Apple git 2.54), where `node` is a link to bun 1.4.4, so
+#   the TypeScript runs under bun, 3 lanes: all 268 the same (1 skipped:
+#   APFS refuses a file name that is not UTF-8); 161 answered by the binary,
+#   107 handed back (95, and 12 where node is bun); on a terminal all 268
+#   the same; cargo test 27 passed.
+# - Windows 11 x64 (node 24.8.0, bun 1.4.2, Git for Windows 2.50, in Git
+#   Bash, a clone with core.autocrlf=true), 3 lanes: all 134 the same, all
+#   134 handed back, as the cases say; 135 skipped (30 terminal cases, 93 of
+#   the verifier's and 12 pinning repairs, all aimed at the native path,
+#   which Windows does not take); cargo test 24 passed.
+# The porter's earlier runs (at 4ce844f, 145 cases) also used bun 1.4.5 on
+# all three systems; this pass did not. The project's own tests (bun test,
+# 12) pass on Linux and the Mac with a throwaway HOME. The install rehearsal
+# (pack.mjs and smoke.mjs, bun and npm, Linux x64, openai 6.15.0 and zod
+# 4.3.5 served by a second local registry with no upstream, so nothing came
+# from registry.npmjs.org) passed every smoke line of the workflow. Found on
+# the Mac and repaired in the cases, not in the binary: under bun a proxy
+# variable sends the stand-in's own request through the proxy (the case sets
+# NO_PROXY), how often git runs a post-index-change hook depends on timing
+# (the case's hook is silent), and the runner's terminal cases run with
+# LC_CTYPE=UTF-8 there (terminal.py's python3 sets it for what it starts,
+# PEP 538), in which macOS's tr writes \377 as two bytes (the case's hook
+# uses LC_ALL=C). Found on Windows: the request log wrote the body as a JSON
+# string, so the prompt's cwd was escaped twice, a spelling the runner does
+# not recognise; it is written as it came now.
+#
+# Not covered by any proof: the real service (never contacted; see "the
+# request to api.openai.com"), Linux arm64, macOS x64 and Windows arm64 (only
+# the install test runs there), the musl build the pipeline ships (built in
+# CI only), real node on macOS (CI runs it; the Mac here has bun as node, so
+# the 12 cases marked for where node is bun are native only on Linux here),
+# bun versions other than 1.4.0, 1.4.2 and 1.4.4 for these 269 cases (1.4.5
+# only for the porter's 145), and the CI workflow itself (nothing pushed).
 #
 # How it fits together. `bun run build` bundles src/cli.ts into dist/cli.js
 # (`#!/usr/bin/env node`, so node runs it), and postbuild.ts copies that file
@@ -26,21 +125,107 @@
 # it stages files, asks OpenAI to write a conventional commit message from the
 # diff, commits, pulls and pushes, printing every git command as it goes.
 #
-# Status. The crate on build/rustify-pipeline hands every invocation to the
-# command's own dist/cli-<command>.js, so every feature below is `missing`.
-# Nothing is `dropped`: that is the owner's decision.
+# How the binary does it (rs/src/commit.rs). The TypeScript stages first and
+# only then finds out whether there is anything to commit, what the model
+# answers and whether it answers at all; every failure after that ends it as
+# an unhandled rejection. The binary may hand back only while it has printed
+# and changed nothing, so it finds all of that out first, on a copy of the
+# index (GIT_INDEX_FILE, in a directory of its own under TMPDIR, removed
+# afterwards): it stages into the copy, reads the status and the diffs from
+# it, reads the log, asks the model once and checks the answer. Only then
+# does it run the TypeScript's git commands for real, in its order, through
+# the same /bin/sh, with the same output, and the status, diffs and log must
+# come out as they did on the copy (else it stops, see "Rust-only").
 #
-# Grain. The six commands are one file with the type as its only difference,
-# so they are one entry; then one per step of the pipeline, per source of the
-# API key, and per behaviour shared by every step (the echo of git commands,
-# how errors end the program).
+# What users see differently, and the owner should know before anything is
+# announced:
+# - Nothing is printed until the model has answered. The TypeScript prints
+#   the git commands and "Generating commit message with gpt-4o..." first and
+#   then waits for the model; the binary waits first and then prints all of
+#   it at once (the same bytes). That is the price of handing back safely.
+# - The common setup goes to the model over HTTPS at api.openai.com. The
+#   binary does that natively (rustls, Mozilla's roots, no proxy), but no case
+#   can run it, so it is the one unproven part of the native path (its own
+#   entry below).
+# - A machine where `git lfs install` has run (filter.lfs.* in ~/.gitconfig)
+#   hands every invocation back, as does a repository with submodules, a
+#   textconv or external diff, an fsmonitor or hooks set in git's
+#   configuration (see "repository states"): git would run those programs
+#   for the binary's copy of the index too. git-lfs is common.
 #
-# No entries, and why:
-# - postbuild.ts: the build step that makes the command files; it is not run
-#   by users. projects.toml counts only src/.
-# - `breaking`: README.md lists it as a command, but it is not a commit type
-#   and has no `bin`. The published 0.1.0 still carries a dist/cli-breaking.js
-#   from an older build.
+# TypeScript defects found, reported to the owner, not copied where they are
+# a hazard (the binary hands those situations back, so users see no change):
+# - Security: the model's message goes to the shell inside -m"…" with only
+#   `"` escaped, so `$(…)`, `${…}` and backquotes in it run (known to the
+#   owner).
+# - Security, found here: every line of `git status --porcelain` goes to the
+#   shell unquoted as `git diff --cached -- <line>`, so a file name with `$(…)`
+#   or a backquote in it (one git does not quote, such as `$(touch${IFS}x)`)
+#   runs that command as soon as someone runs feat/fix/… in a repository that
+#   has such a file, a cloned one for instance. Case "prompt: a file name with
+#   a command in it".
+# - Data loss, found here: a staged rename is the status line `R  old -> new`,
+#   whose `>` the shell takes for a redirection: the diff of `old` is written
+#   over the working-tree file `new` (the index keeps the content, the file on
+#   disk is replaced by diff text). Case "prompt: a rename".
+# - The scope, the user's own argument, goes to the shell unquoted too
+#   (`feat 'a;touch x' …` runs touch). Case "scope: shell syntax".
+# - Not hazards, reproduced as they are: the status letters become pathspecs
+#   (`M  a.txt` asks git diff for `M` and `a.txt`), `??` is a shell glob, a
+#   name starting with # comments out the rest of its line, from a
+#   subdirectory every diff is empty (the status has paths from the root, git
+#   diff reads them from the current directory), git's exit codes are ignored
+#   ("Commit pushed successfully." after a failed commit or push), and the
+#   log has no final line feed, so "Generating commit message…" follows the
+#   last commit on the same line.
+#
+# Rust-only behaviour, with no TypeScript counterpart, for the owner to bless
+# or remove:
+# - SNOCOMMIT_NO_NATIVE=1 hands every invocation back (the template's way out).
+# - SNOCOMMIT_PACKAGE_ROOT tells the binary where the package is.
+# - RUSTIFY_HANDBACK_TRACE set to anything not empty makes the binary write
+#   `rustify: handed back to the JavaScript` to stderr when it hands back
+#   (hand-back helper v5; the install test's [native] and [handback] marks
+#   read it). Neither the JavaScript nor git and its hooks get the variable.
+# - The binary runs `git rev-parse --git-path index --git-path
+#   hooks/post-index-change --git-dir --show-toplevel` and `git config
+#   --get-regexp <the settings that run programs>` first, then every add,
+#   status and diff twice (on the copy, then for real) with `git ls-files
+#   --stage -z` on the copy between the add and the status, and the log twice
+#   (once to read it, once for real). The copy's `git add` writes into
+#   .git/objects the blobs the real one then finds there. git runs no program
+#   of the user's for the copy: every setting and variable through which it
+#   would (clean filters, textconv and external diffs, fsmonitor, hooks set
+#   in the configuration, a post-index-change hook, gpg for log signatures,
+#   trace files, submodules) hands back before the copy is made or used
+#   (see "repository states"). The copy lives in a directory of its own
+#   under TMPDIR, mode 0700, removed afterwards; killed (SIGKILL) while it
+#   works on the copy, the binary leaves that directory behind.
+# - Where none of the files bun reads is in the way, nothing more; otherwise
+#   the binary runs the `node` on PATH once, `node -e` with a line that
+#   prints whether it is bun, in the current directory, its output kept and
+#   ten seconds at most, to know whether bun would run the JavaScript.
+# - Interrupted while it waits for the model, the binary leaves nothing
+#   staged; the TypeScript has staged the files by then.
+# - Should the status, a diff or the log come out differently for real than
+#   on the copy (something else changed the repository meanwhile), it commits
+#   nothing and ends with a line naming SNOCOMMIT_NO_NATIVE=1, exit code 1,
+#   with what `git add` staged left staged. The verifier reached it, every
+#   time, with a clean filter that wrote a file into the work tree (git ran
+#   the filter for the copy, so the real `git add .` found the file and took
+#   it in). Such settings are handed back now, and no case reaches it since;
+#   reaching it is a bug or a race.
+# - Its request has User-Agent `snocommit/<version>` and none of the SDK's
+#   X-Stainless-* headers, and no Accept-Encoding (not compared; the service
+#   does not depend on them as far as is known).
+# - Where node is older than 18 the TypeScript cannot reach the model (no
+#   fetch), and the binary can.
+# - Where there is no `node` on PATH at all, the published command did not
+#   start before the port (`#!/usr/bin/env node`: env reports that node is
+#   missing, exit code 127). Now the binary answers natively, or its hand-back
+#   runs the JavaScript with bun (js_fallback's runtimes), which then works.
+# - A binary without the npm package beside it answers what it would hand
+#   back with one line and exit code 1.
 #
 # What is published differs from main. npm's latest is 0.1.0 (2025-10-24),
 # package.json on main says 0.1.1, and release.yml's semantic-release has
@@ -57,10 +242,8 @@
 # current directory, and sends the diff and recent commit subjects to OpenAI
 # with the user's key. Without a description it stops before any git command
 # (`Missing description (desc)`), and the generic form without a known type
-# stops at `commit type not found`. Parity cases need a git repository of
-# their own with a bare remote of their own, and a stand-in for the OpenAI API
-# on 127.0.0.1 (the SDK reads OPENAI_BASE_URL); a `git` shim that logs its
-# arguments shows what each side asked of git.
+# stops at `commit type not found`. Never run it outside a case's own
+# repository, and never without OPENAI_BASE_URL pointing at a stand-in.
 
 reconciled = "a683fcd"
 
@@ -68,85 +251,148 @@ reconciled = "a683fcd"
 
 [[feature]]
 name = "chore, docs, feat, fix, refactor, styles <scope> <description…>"
-status = "missing"
+status = "verified"
 ts = "src/cli.ts:8 cli; src/commitTypes.ts:2"
-note = "The type is the name of the running file: process.argv[1] matched against /(?:cli-|bin\\/)(.*?)(?:\\.[mc]?[tj]s)?$/ and kept when it is one of fix, styles, feat, docs, chore, refactor. The first argument is the scope, the rest joined with single spaces is the description. The match takes the leftmost `cli-` or `bin/` anywhere in the path, so an install path with one before the package (a home directory such as /home/robin/) leaves the type unrecognised, and the command then behaves as the generic form with its first argument as the type. Before the binary, node saw the symlink's path for an npm install (`…/bin/feat`, which the `bin/` alternative catches); handed back, it sees the real path, dist/cli-feat.js; both give `feat`."
+rs = "rs/src/main.rs; rs/src/commit.rs prepare, type_from_script"
+proof = "rs/parity.json (269 cases, 174 answered by the binary on Linux, 161 on macOS where node is bun); rs/parity/proof.sh"
+note = "Native on Linux and macOS, for every situation the entries below do not hand back; on Windows see \"the six commands on Windows\". The type is the name of the running file: process.argv[1] matched against /(?:cli-|bin\\/)(.*?)(?:\\.[mc]?[tj]s)?$/ and kept when it is one of fix, styles, feat, docs, chore, refactor. The binary is started under the command's name and hands back unless the path of the JavaScript it would start gives that same type, as node spells it (path.resolve) and as bun does (the real path): the match takes the leftmost `cli-` or `bin/` anywhere in the path, so an install path with one before the package (a home directory such as /home/robin/) leaves the type unrecognised in the TypeScript, and the command then behaves as the generic form; the binary hands that back. The first argument is the scope, the rest joined with single spaces is the description. Each of the six has a plain case and a case without arguments; `feat` has the rest. Before the binary, node saw the symlink's path for an npm install (`…/bin/feat`, which the `bin/` alternative catches); handed back, it sees the real path, dist/cli-feat.js; both give `feat`."
 
 [[feature]]
 name = "snocommit <type> <scope> <description…> (the generic form)"
 status = "missing"
 ts = "src/cli.ts:17"
-note = "When the file name gives no type, the first argument is the type, the second the scope, the rest the description. An unknown or missing type throws `commit type not found: <first argument>` (`undefined` when there is none) before anything else runs. Not reachable as an installed command: `bin` points `snocommit` at dist/cli-snocommit.js, which the build never makes (postbuild.ts copies only the six types), so neither npm nor bun installs it; rustify.bins leaves it out for that reason. Reached by running dist/cli.js itself, or through an install path the type match misreads (previous entry)."
+note = "Handed back: the binary started as `snocommit` hands everything to dist/cli-snocommit.js. When the file name gives no type, the first argument is the type, the second the scope, the rest the description. An unknown or missing type throws `commit type not found: <first argument>` (`undefined` when there is none) before anything else runs. Not reachable as an installed command: `bin` points `snocommit` at dist/cli-snocommit.js, which the build never makes (postbuild.ts copies only the six types), so neither npm nor bun installs it; rustify.bins leaves it out for that reason. Reached by running dist/cli.js itself, or through an install path the type match misreads (previous entry). No case."
 
 [[feature]]
 name = "a description is required"
 status = "missing"
 ts = "src/index.tsx:28"
-note = "With fewer than two arguments after the type (nothing, or a scope alone), throws `Missing description (desc)` before any git command. `--help`, `--version` and every other flag are not options: they are taken as the scope or as words of the description."
+note = "Handed back on purpose (12 `usage:` cases, one per command without arguments, a scope alone, an empty description): with fewer than two arguments after the type, or an empty description, the TypeScript throws `Missing description (desc)` before any git command, as an unhandled rejection whose report only the runtime writes (see \"errors end the program\"). A description of one space is not empty and is native. `--help`, `--version` and every other flag are not options: they are taken as the scope or as words of the description (case \"prompt: --help and help are words of the description\", native)."
 
 # ─────────────────────────── The pipeline ───────────────────────────
 
 [[feature]]
 name = "staging by scope: -, ., @, or a path"
-status = "missing"
+status = "verified"
 ts = "src/index.tsx:48 gitAddByScope"
-note = "`-` stages nothing; `.` runs `git add .`; `@` runs `git add <directory of the nearest package.json, searched from the current directory upwards>` and throws the string `No package.json found for \"@\" scope.` when there is none; anything else runs `git add <scope>`. Each goes through a shell unquoted (a scope with spaces is several paths; shell syntax in it is interpreted). A failing `git add` is not noticed: the program goes on."
+rs = "rs/src/commit.rs prepare, package_dir"
+proof = "rs/parity.json: `scope:` and `pipeline:` cases"
+note = "`-` stages nothing; `.` runs `git add .`; `@` runs `git add <directory of the nearest package.json, from the current directory upwards>`; anything else runs `git add <scope>`, through /bin/sh unquoted, which the binary uses too, so a scope of two paths is split and a glob expanded by the same shell (cases for a directory, two paths, a glob, a path that does not exist, @ here, @ from a subdirectory, @ above the repository, `.` from a subdirectory). A failing `git add` is not noticed; its error is passed through. Handed back: no package.json for `@` (the TypeScript throws the string `No package.json found for \"@\" scope.`), an empty scope, a word of the scope starting with `-` (an option of git add, which `--help` would make open the manual or, on Windows, a browser), and a scope with shell syntax (see \"command lines the shell would run\")."
 
 [[feature]]
 name = "what counts as changes, and `No files staged to commit.`"
-status = "missing"
+status = "verified"
 ts = "src/index.tsx:67 getStagedFileChanges; src/index.tsx:33"
-note = "`git status --porcelain`, each line trimmed, empty ones dropped. That lists unstaged and untracked files too, not only staged ones. No lines: prints `No files staged to commit.` and ends with exit code 0, also when git failed (outside a repository git's error goes to stderr, stdout is empty, so the result is the same message and exit code 0, as read). With scope `-` and nothing staged but other changes present, it goes on to the commit, which fails unnoticed (see that entry)."
+rs = "rs/src/commit.rs prepare, Plan::carry_out"
+proof = "rs/parity.json: `pipeline: nothing to commit` (also without any key), `pipeline: scope -` cases, `terminal: nothing to commit`"
+note = "`git status --porcelain`, trimmed at the end, split at line feeds, each line trimmed (JavaScript's white space), empty ones dropped. That lists unstaged and untracked files too, not only staged ones. No lines: prints `No files staged to commit.` and ends with exit code 0, before any key is looked for. With scope `-` and nothing staged but other changes present, it goes on to the commit, which fails unnoticed (case). Outside a repository the TypeScript gives the same message after git's errors; the binary hands that back (see \"repository states\")."
 
 [[feature]]
 name = "the staged diff sent with the prompt"
-status = "missing"
+status = "verified"
 ts = "src/index.tsx:75 getTruncatedGitDiffOfFiles"
-note = "For each status line, `git diff --cached -- <the whole trimmed line>` through a shell, so the status letters become a pathspec (`M src/a.ts` asks for `M` and `src/a.ts`; `??` is a shell and pathspec glob). A diff longer than 2,000 characters is cut to its first 1,000, `\\n\\n... (diff truncated) ...\\n\\n` and its last 1,000. Each diff is also printed as it runs (see the echo entry). As read, not run: a staged rename's line `R  old -> new` makes the shell redirect that git command's output into the working-tree file `new`, overwriting it (the index, and so the commit, keep the real content)."
+rs = "rs/src/commit.rs truncated, prompt; rs/src/js.rs"
+proof = "rs/parity.json: `prompt:` cases (the request body compared byte for byte)"
+note = "For each status line, `git diff --cached -- <the whole trimmed line>` through the shell, so the status letters become a pathspec and `??` a glob (case with a two-character file name). A diff longer than 2,000 UTF-16 code units is cut to its first 1,000, `\\n\\n... (diff truncated) ...\\n\\n` and its last 1,000: cases at 2,000 and 2,001 units, 1,992 units in 3,872 bytes, é by units, and 200,000 characters (into files). Also deleted, binary, CRLF and twelve files, file names with other scripts (core.quotePath off) and with # (a shell comment). Each diff is also printed as it runs. Handed back: a cut through a character of two code units (the TypeScript would send a lone surrogate), a status or a diff that is not UTF-8 (it would reach the model with U+FFFD in it), more than 1,000,000 bytes of output from a command run on the copy, counted as exec counts it, in bytes of its UTF-8 text (exec kills a command past 1 MiB, at a point that depends on timing, so the real run would be cut where the copy's was not), a status line git quotes (a space, other scripts with core.quotePath on), and the status lines the shell would run or redirect (renames among them; see \"command lines the shell would run\")."
 
 [[feature]]
 name = "recent commits sent with the prompt"
-status = "missing"
+status = "verified"
 ts = "src/index.tsx:224 getRecentCommits"
-note = "`git log -n 5 --pretty=format:\"%h<TAB>%an<TAB>%ad<TAB>%s\" --date=short`, each line made `- <hash> | <author> | <date> | <subject>`; `(no recent commits found)` when git prints nothing (also when it fails). The `(unable to read recent commits)` branch cannot be reached, as snorun never rejects. Also exported from the library (see that entry) and tested by src/index.spec.ts."
+rs = "rs/src/commit.rs recent_commits"
+proof = "rs/parity.json: every case that asks the model; `prompt: more than five commits in the log`, `prompt: a subject and an author with tabs, bars and other scripts`, `git: the first commit of a repository`"
+note = "`git log -n 5 --pretty=format:\"%h<TAB>%an<TAB>%ad<TAB>%s\" --date=short` (echoed and passed through, run with the key in OPENAI_API_KEY as the TypeScript has set it by then), each line made `- <hash> | <author> | <date> | <subject>`, a missing field `undefined`; `(no recent commits found)` when git prints nothing (also when it fails, as in a repository without commits). The `(unable to read recent commits)` branch cannot be reached, as snorun never rejects. The library export of the same function stays JavaScript (see \"library\")."
 
 [[feature]]
-name = "OpenAI API key: ~/.snocommitrc.json, then OPENAI_API_KEY, then asked and saved"
+name = "OpenAI API key: ~/.snocommitrc.json, then OPENAI_API_KEY"
+status = "verified"
+ts = "src/index.tsx:166 getOpenAIApiKey; src/index.tsx:211 validApiKey; src/index.tsx:15 zSnocommitRC"
+rs = "rs/src/openai.rs api_key, key_from_rc, valid_key"
+proof = "rs/parity.json: `key:` cases (the Authorization the stand-in got is compared)"
+note = "The home directory is $HOME, else $USERPROFILE. First .snocommitrc.json there: JSON whose OPENAI_API_KEY matches /^sk-/; any error is ignored (cases: the rc wins over the variable, a key with spaces after it, not JSON, a trailing comma, a key without sk-, a key of 20 characters). Then $OPENAI_API_KEY (case: 21 characters). A key is accepted when it starts with `sk-` and is longer than 20 characters, then trimmed. The key is put into process.env.OPENAI_API_KEY, which the log, the commit, the pull and the push then see (case \"git: a commit-msg hook sees the message and the key\"). Handed back: an rc file that is not a regular file, one that is not UTF-8, one that only JSON.parse reads (a number past a double, a lone surrogate, deep nesting), a home that is not absolute or has `.` or `..` in it, a key with anything but printable ASCII (its trimming and its way into a header are the runtime's), and no key at all (next entry). The comments number the environment variable first; the code reads the file first."
+
+[[feature]]
+name = "OpenAI API key asked on the terminal and saved"
 status = "missing"
-ts = "src/index.tsx:166 getOpenAIApiKey; src/index.tsx:211 validApiKey; src/index.tsx:15 zSnocommitRC; src/promptT.ts:5"
-note = "Asked only after the files are staged and the diff is read, so without a key the program stops with the files staged. The home directory is $HOME, else $USERPROFILE. First .snocommitrc.json there: JSON whose OPENAI_API_KEY matches /^sk-/; any error is ignored. Then $OPENAI_API_KEY. A key is accepted when it starts with `sk-` and is longer than 20 characters, then trimmed. Then `Please enter your OpenAI API Key (sk-...):` on stdout through readline, the answer trimmed; an accepted answer is written to <home>/.snocommitrc.json as two-space JSON without a final newline, with the default file mode, and `Saved OpenAI API Key to <path>` printed. Otherwise throws the string `No valid OPENAI_API_KEY provided. Please set it as an environment variable or in ~/.snocommitrc.json`. As read, not run: with stdin at its end the question is never answered and the program ends there, exit code 0. The comments number the environment variable first; the code reads the file first. The key is put into process.env.OPENAI_API_KEY for the SDK."
+ts = "src/index.tsx:189; src/promptT.ts:5"
+note = "Handed back (3 cases, one on a terminal): with no key from the file or the variable the TypeScript asks `Please enter your OpenAI API Key (sk-...):` on stdout through readline, trims the answer, writes an accepted one to <home>/.snocommitrc.json as two-space JSON without a final newline, and prints `Saved OpenAI API Key to <path>`; otherwise it throws `No valid OPENAI_API_KEY provided. …`. It asks only after the files are staged and the diff is read. With stdin at its end the question is never answered and the program ends there, exit code 0, with the files staged (case). The binary hands back before it stages anything, so a first run without a key is the JavaScript's."
 
 [[feature]]
 name = "commit message written by OpenAI"
-status = "missing"
+status = "verified"
 ts = "src/index.tsx:89 generateCommitMessage"
-note = "Prints `Generating commit message with gpt-4o...`, then one chat completion (z-chat-completion over the openai SDK, which also reads OPENAI_BASE_URL, OPENAI_ORG_ID, OPENAI_PROJECT_ID and its other variables) with the model gpt-4o, a strict JSON schema {type: one of the six, scope, title of 1 to 72 characters, body of 1 or more, is_BREAKING_CHANGE} and one system message: the current directory, the suggested type, the suggested scope as `(<scope>)` (`none` for `.` or no scope; `(-)` and `(@)` for those two), the description, the recent commits, the status lines and their diffs in a ```diff block, and the format. The message is `<type>(<scope>)<! when breaking>: <title>`, a blank line and the body; an empty scope leaves out the parentheses, one already in parentheses keeps a single pair. An empty answer throws `NO_CONTENT: No content returned from OpenAI chat completion.`; an answer that fails the schema throws zod's error; the SDK's own errors pass through."
+rs = "rs/src/openai.rs request_body, proposal, message; rs/src/commit.rs prompt"
+proof = "rs/parity.json: `model:` and `address:` cases, and every case that asks the model (the request compared byte for byte against the stand-in)"
+note = "Prints `Generating commit message with gpt-4o...`, then one chat completion (z-chat-completion over the openai SDK) with the model gpt-4o, a strict JSON schema {type: one of the six, scope, title of 1 to 72 code units, body of 1 or more, is_BREAKING_CHANGE} and one system message: the current directory, the suggested type, the suggested scope as `(<scope>)` (`none` for `.`; `(-)` and `(@)` for those two), the description, the recent commits, the status lines and their diffs in a ```diff block, and the format. The binary writes that body as JSON.stringify does, the schema as z.toJSONSchema writes it, and sends it with Authorization, Content-Type and Accept as the SDK does, to OPENAI_BASE_URL + /chat/completions (cases with a slash at the end, without /v1, a longer path). The message is `<type><(scope)><! when breaking>: <title>`, a blank line and the body; an empty scope leaves out the parentheses, one already in parentheses keeps a single pair (cases for `(core)`, `core)`, `(`, a field more, JSON with space around it, 72 units with an emoji, a line separator, the model's own type). Handed back after the one request (the JavaScript then asks again; 20 cases compare the requests as a set): anything the SDK or zod throws at (next entries), a scope with a line feed, and a message the shell would not take literally (see \"command lines the shell would run\"). Handed back before it: an OPENAI_BASE_URL other than empty or `http://127.0.0.1:<port>[/path]` (case with spaces around it)."
+
+[[feature]]
+name = "the request to api.openai.com over HTTPS (the default address)"
+status = "ported"
+ts = "src/index.tsx:108 zChatCompletion (the openai SDK's default address)"
+rs = "rs/src/openai.rs ask, endpoint"
+note = "Native, and not proven: no case may reach the real service, so every case gives OPENAI_BASE_URL (rs/parity/with-mock.mjs refuses anything but 127.0.0.1) and the HTTPS path never runs in a test. The client is ureq with rustls and Mozilla's roots (node and bun bring their own roots too), no proxy (a machine with proxy variables is handed back), no redirects, one attempt, a 600-second timeout as the SDK's. Everything but a 200 whose one Content-Type is application/json and whose body is UTF-8 JSON with a non-empty content is handed back before anything is printed or staged, so a connection, certificate or service failure costs the user the time of one attempt and one request more, never a wrong answer. This is the common setup: until it is proven, the binary's native path is exercised only against a server on 127.0.0.1."
+
+[[feature]]
+name = "errors from the service, and answers the schema refuses"
+status = "missing"
+ts = "src/index.tsx:108 zChatCompletion (z-chat-completion and the openai SDK)"
+note = "Handed back after the request (7 `service:` cases, 5 zod ones, 2 without content): another status than 200 (the SDK takes any 2xx, retries a 5xx, 429, 409 or 408 twice and throws the rest in its own words), no connection, an answer that is not JSON or not of a JSON type, no choices, no content (`NO_CONTENT: No content returned from OpenAI chat completion.`), content that is not JSON, and a proposal zod refuses (title of 0 or 73 units, empty body, a type not of the six, a field missing). The binary has printed and staged nothing then, and the JavaScript starts over: it repeats the request, with the SDK's retries, so the service sees one request more than before for each of these. Common when the key is wrong (401) or the quota is used up (429)."
 
 [[feature]]
 name = "commit"
-status = "missing"
+status = "verified"
 ts = "src/index.tsx:155 gitCommit"
-note = "Prints `Committing with message:`, a newline, a space and the message (console.log with two arguments). Then `git commit -m\"<message>\"` through a shell with only `\"` escaped: `$`, backticks and backslashes in the model's text are interpreted by the shell. A failed commit is not noticed."
+rs = "rs/src/commit.rs Plan::carry_out, message_safe"
+proof = "rs/parity.json: every case that commits; `model:` cases with quotes, !, %, tabs, other scripts and paragraphs; `git: a pre-commit hook that refuses`, `git: a commit-msg hook sees the message and the key`; `limits:` cases (hooks printing 1 MiB exactly, 3 MB, 600,000 bytes that are not UTF-8)"
+note = "Prints `Committing with message:`, a newline, a space and the message (console.log with two arguments). Then `git commit -m\"<message>\"` through /bin/sh with only `\"` escaped, echoed so (on a terminal, chalk's blue closed and opened around each line feed). A failed commit is not noticed. A hook whose output passes exec's 1 MiB gets git killed mid-commit (see \"git commands echoed\"): a pre-commit hook printing 3 MB means no commit, the files stay staged, and the pull and push run all the same; a post-commit hook printing 3 MB leaves the commit made and its summary unprinted. The binary does the same (it did not before the verifier's cases). The binary runs the same command line only for a message the shell takes literally inside double quotes: none of `$`, backquote or backslash, and no control character but line feed and tab. The others are handed back (see next entry)."
+
+[[feature]]
+name = "command lines the shell would run or redirect (the TypeScript runs them)"
+status = "missing"
+ts = "src/index.tsx:64; src/index.tsx:78; src/index.tsx:159"
+note = "Handed back on purpose, never copied: a scope, a `@` directory or a status line with any of $ ` ; & | < > ( ) ' \" \\ or a control character, and a model message with $, backquote, backslash or a control character other than line feed and tab (9 cases plus 3: a file name with a command in it, which the TypeScript runs; a rename, whose `->` line the TypeScript's shell takes for a redirection that writes the diff over the renamed file; shell syntax in the scope; a quoted scope; names git quotes; `$`, a backquote, a backslash, a carriage return and a NUL in the message). The JavaScript does what it always did, holes included: the owner has been told. Common only where file names are unusual or the model writes shell syntax; a staged rename is common, and goes back every time."
 
 [[feature]]
 name = "pull, push, and `Commit pushed successfully.`"
-status = "missing"
+status = "verified"
 ts = "src/index.tsx:162 gitPullAndPush; src/index.tsx:45"
-note = "`git pull && git push` through a shell, then `Commit pushed successfully.` and exit code 0 whatever git said: a failed pull or push is not noticed."
+rs = "rs/src/commit.rs Plan::carry_out"
+proof = "rs/parity.json: every case that commits (the remote's commits compared afterwards); `git:` cases; `verify: limits: a pre-push hook that prints 3 MB`, `verify: bytes: the remote's post-receive hook …`"
+note = "`git pull && git push` through the shell, then `Commit pushed successfully.` and exit code 0 whatever git said: a failed pull or push is not noticed. Cases: a remote it tracks, no remote, a repository without commits or upstream, a remote that moved on (pull refuses to merge; pull.rebase rebases and pushes), a linked worktree on a branch without upstream, a detached HEAD, a pre-push hook printing 3 MB (exec kills the shell: nothing is pushed, and `Commit pushed successfully.` follows), the remote's hook printing bytes that are not UTF-8."
 
 # ─────────────────────── Shared by every step ───────────────────────
 
 [[feature]]
 name = "git commands echoed, their output passed through"
-status = "missing"
+status = "verified"
 ts = "src/index.tsx:6 snorun"
-note = "Every git command is printed to stdout as `> <command>` in blue before it runs, and its stdout and stderr are piped through as they come, so diffs, logs and git's own errors show. The colour is chalk's: supports-color reads FORCE_COLOR, TERM, COLORTERM, CI variables and whether stdout is a terminal (not NO_COLOR), and also looks for --color, --no-color and their variants among the command's own arguments. Commands run through child_process.exec (a shell, the default buffer limit) and their exit codes are ignored."
+rs = "rs/src/sh.rs run, collect, Decoder; rs/src/color.rs; rs/src/commit.rs Plan::carry_out"
+proof = "rs/parity.json: every case (stdout and stderr), run a second time with stdout and stderr a terminal (rs/parity/proof.sh, every byte, Linux and macOS), the `terminal:` cases, the `bytes:` and `limits:` cases; the crate's tests of the decoder and of the limit (rs/src/sh.rs)"
+note = "Every git command is printed to stdout as `> <command>` in blue before it runs, and its stdout and stderr are passed through as they come, so diffs, logs and git's own errors show; the child gets pipes, and a stdin that is never written or closed. What is passed through is exec's text, not the bytes: exec reads both pipes as UTF-8 (setEncoding), so each ill-formed part of what git, a hook or the remote prints arrives as U+FFFD (EF BF BD), and a character split between two reads is put together again. exec also counts each stream in bytes of that text and, once one has given more than 1 MiB (maxBuffer), closes both pipes and sends the shell SIGTERM: the piece that crossed the limit is still passed on, nothing after it, and what the shell had started dies of a broken pipe when it next writes. Exactly 1,048,576 bytes pass (case). The binary does the same: it reads the pipes in the order they became readable and as long as a read fills 64 KiB (libuv's way, epoll on Linux, kqueue on macOS), decodes as node's StringDecoder does (compared with from_utf8_lossy at every cut in the crate's tests), counts, and kills. Where the kill falls depends on timing on both sides; the cases look at its outcome (no commit, no push, the summary missing) and at the text up to it with long runs of the same character folded. On one terminal shared by stdout and stderr, two lines git writes to the two at nearly the same moment come in either order in the TypeScript itself (the verifier's merge with a conflict: 1 of 8 runs against itself); that case stays on pipes in the terminal run. The colour is chalk's: supports-color for stdout (a terminal; TERM=dumb; CI and the services it names; COLORTERM; TERM_PROGRAM; TERM's patterns), all ported (cases: blue, TERM=dumb, no TERM, COLORTERM, CI alone, CI on GitHub Actions, only stdout a terminal, only stderr). Handed back: FORCE_COLOR, TF_BUILD and TEAMCITY_VERSION set, and a colour flag among the arguments (`--no-color` and its kin, which supports-color reads from the command's own arguments). Commands run through /bin/sh -c, as node's exec runs them; their exit codes are ignored."
 
 [[feature]]
 name = "errors end the program as unhandled rejections"
 status = "missing"
 ts = "src/cli.ts:5"
-note = "cli() is called as `cli().then()`, so every throw above reaches the runtime as an unhandled rejection: node prints the file and line, the source line with a caret, the error and its stack and `Node.js v<version>`, and exits 1 (for a thrown string: node's ERR_UNHANDLED_REJECTION text naming it); bun, which runs it when node is missing, prints its own report. The paths of the installed files are part of that text, so it cannot be reproduced and these errors have to be handed back. Seen by running without arguments: `Missing description (desc)` and `commit type not found: undefined` under node 20, and the first under bun 1.4.0, each with exit code 1."
+note = "Handed back on purpose, everywhere: cli() is called as `cli().then()`, so every throw reaches the runtime as an unhandled rejection: node prints the file and line, the source line with a caret, the error and its stack and `Node.js v<version>`, and exits 1 (for a thrown string: node's ERR_UNHANDLED_REJECTION text naming it); bun prints its own report. The paths of the installed files are part of that text, so it cannot be reproduced, and the binary decides before it stages anything whether one would come (or, for the service's errors and the schema, after its one request, with nothing staged or printed)."
+
+[[feature]]
+name = "repository states the binary does not reproduce"
+status = "missing"
+ts = "src/index.tsx:48; src/index.tsx:67"
+note = "Handed back before anything is staged (7 `git:` cases of the port, 6 of the verifier's, 11 since): not a git repository, a bare one, or a start inside .git (the TypeScript's git commands fail and it prints `No files staged to commit.`), an index lock (another git at work), a split index (a copy would share its shared part), a temp directory inside the work tree (the copy would be among the changes), and a copy of the index that cannot be made. Also every way git has of running a program of the user's while it adds, shows the status or diffs, since the binary does those twice, first on its copy of the index (git would run the program for the copy as well, with GIT_INDEX_FILE naming it): a post-index-change hook (the hooks directory, core.hooksPath included), any hook.* setting (hooks in git's configuration, git 2.54), a clean, smudge or process filter, a textconv or command diff driver, diff.external, core.fsmonitor, log.showSignature, any trace2.* setting, wherever git reads its configuration (the repository, ~/.gitconfig, includes, GIT_CONFIG_* variables; one `git config --get-regexp`), GIT_TRACE* and GIT_EXTERNAL_DIFF in the environment, and a submodule in the index, also an embedded repository `git add` has just taken in (git status runs a status of its own inside it, with that repository's own hooks and filters). Before the verifier's cases, a clean filter and a hook in the configuration ran for the copy: the filter's file in the work tree made the binary stop with exit code 1 and the files staged where the TypeScript commits. Rare, except one: `git lfs install` writes filter.lfs.* into ~/.gitconfig, so on a machine with git-lfs set up every invocation goes back, whether or not the repository uses it (case)."
+
+[[feature]]
+name = "what node and bun act on around the program"
+status = "missing"
+ts = "src/cli.ts:1 (#!/usr/bin/env node)"
+note = "Handed back (9 `runtime:` cases): any NODE_*, BUN_* (BUN_INSTALL* excepted, case), MIMALLOC_* or ICU_* variable; HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, NO_PROXY in either case, SSL_CERT_FILE, SSL_CERT_DIR; OPENAI_* other than OPENAI_API_KEY and OPENAI_BASE_URL (organization, project, logging); a variable that is not UTF-8. Where the JavaScript might run under bun (the `node` on PATH is not node itself: missing, a symbolic link to bun as on the Mac here, a shim script, or bun's own file under the name node, hard-linked or copied, which the binary tells apart by running that node once with `-e` and asking `typeof Bun` and `process.versions.bun`, only where one of the files below is present; before the verifier's cases a hard link or copy was taken for node), also .env, .env.local, .env.development, .env.development.local or bunfig.toml in the current directory, a ~/.bunfig.toml or $XDG_CONFIG_HOME/.bunfig.toml, any tsconfig.json or jsconfig.json in the current directory or above it, and a package.json there with more than name, version, description, license, author and private (bun reports what it cannot parse or does not expect on stderr); and a repository with a hook (an executable file in git's hooks directory, core.hooksPath included, git's samples aside): bun's exec, unlike node's, leaves the pipes open when it kills a command past 1 MiB, so a hook printing that much may still finish under bun and its commit be made, by timing (on the Mac here, with /bin/sh forking git, a pre-commit hook's commit was made and pushed on a terminal, not into files), and how much a hook prints is known only when it runs. Which cases go back where node is bun is a matter of the runtime, not of the system's name (GitHub's macOS runner has node itself): such cases carry `handbackWhereNodeIsBun`, which rs/parity/lanes.mjs turns into a hand-back for the system it runs on when its node is bun (12 cases). Cases under bun on every system (rs/parity/with-mock.mjs puts bun first on PATH as node, as a symbolic link, and with PARITY_RUNTIME=bun-hardlink as a hard link): native with no such file and with a plain package.json, handed back with a .env, a package.json bun complains about, a tsconfig.json, a bunfig.toml. So in a JavaScript project with node absent, or bun as node, the commands go back; with node they do not."
+
+[[feature]]
+name = "the six commands on Windows"
+status = "missing"
+ts = "src/index.tsx:6 snorun (child_process.exec)"
+note = "Handed back entirely, before anything is looked at (rs/src/commit.rs prepare): node's exec runs every command line through cmd.exe there, whose quoting differs from /bin/sh and which ends a command line at its first line feed (so a commit message keeps only its first line). Proven on Windows 11 (above): all 134 cases that run there reach the JavaScript through the binary and behave as the JavaScript started directly does; 135 are skipped there (the 30 terminal cases, no pseudo-terminal; the verifier's 93 and the 12 that pin repairs of the native path, which Windows does not take)."
 
 [[feature]]
 name = "library: import snocommit from \"snocommit\""

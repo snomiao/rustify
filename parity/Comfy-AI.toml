@@ -1,40 +1,97 @@
 # Parity ledger for Comfy-AI (npm package comfy-ai, command `comfy-ai`).
 # Format and rules: parity/README.md.
 #
-# Written by reading the code at aa56999 (1.2.2), 2026-11-27, on the
-# project's branch build/rustify-pipeline, whose crate (rs/) only hands every
-# command back; read this ledger with `rustify audit Comfy-AI --at <that
-# worktree>`. Nothing was run beyond --help: the only invocations were
-# `comfy-ai --help`, a bare `comfy-ai` and `comfy-ai pair not-a-url`, in a
-# throwaway home and directory, by hand and through the install smoke test.
-# No daemon was started, no port was bound, no pairing URL was fetched and no
-# test exists to cite, so every entry is `missing` and every note comes from
-# the source.
+# First written by reading the code at aa56999 (1.2.2), 2026-11-27; brought
+# up to date with the port on the project's branch build/rustify-pipeline
+# (pull request snomiao/Comfy-AI#1), 2026-11-28, and again after an
+# independent verification of the port the same day (its 136 cases are in
+# the cases file, named "v: …"). Read it with `rustify audit Comfy-AI --at
+# <that worktree>`. The TypeScript has not changed since aa56999; the branch
+# adds rs/, the workflow and .gitattributes only.
 #
-# What was read, in full: ts/cli.ts, ts/config.ts, ts/protocol.ts,
-# ts/serve.ts (1,017 lines), package.json, README.md and release.yml; and,
-# for --help and --version, the parts of dist/cli.js (built at that commit
-# with `bun run build`) that come from yargs 18.0.0 and y18n. Not in scope
-# (keep_ts in projects.toml): ts/extension/, ts/userscript/ and ts/ui/, the
-# browser extension and userscript, which run in a browser; and
-# ts/mock-spa.ts, a development stand-in for the browser tab that the package
-# does not ship. The browser panel connects to a PTY server at
-# ws://localhost:7681/ws by default, which `comfy-ai serve` does not provide;
-# package.json's description ("WebSocket PTY server CLI") is older than the
-# bridge.
+# What the binary answers itself: logout, pair, list, send, kill and eval,
+# in their plain spellings, and a bare `comfy-ai`, on Linux, macOS and
+# Windows. Everything else goes to dist/cli.js, before the binary has
+# printed, written or sent anything: serve (the daemon), tail and attach,
+# --help, --version, yargs's usage errors, and the situations the entries
+# below name.
 #
-# How it fits together. The published command is dist/cli.js (`npm view
-# comfy-ai bin`), a `bun build --target bun` bundle of ts/cli.ts with yargs
-# inside it. `comfy-ai serve` is a relay daemon on 127.0.0.1:7437: browser
-# tabs of the ComfyAI SPA connect to /spa, the CLI's other commands connect
-# to /ctl, and GET /pair/<code> turns a code the tab shows into a token the
-# CLI keeps in ~/.config/comfy-ai/state.json. The binary hands every
-# invocation to dist/cli.js, unchanged, before it prints anything.
+# The proof is rs/parity.json (479 cases, written by rs/parity.gen.mjs),
+# run by rs/parity/proof.sh: TypeScript (dist/cli.js under bun) against the
+# binary, the --handback check (exactly the cases marked "handback" for the
+# system reach the JavaScript), and on Linux and macOS the comparison again
+# with stdout and stderr a terminal. Run at the branch's e1c8ced (08df5cc
+# after it changes a comment of the workflow only), all passing: Linux x64
+# with bun 1.4.0 (4 lanes, 10.5 min), macOS arm64 (macOS 27) with bun 1.4.4
+# (3 lanes, 15 min, cargo test beside it): 479 cases the same, 358
+# answered by the binary, 121 handed back, the terminal run the same;
+# Windows 11 x64 in Git Bash with bun 1.4.2 (3 lanes, 10 min, cargo test
+# beside it): 445 the same, 326 answered by the binary, 119 handed back, 34
+# skipped there (26 need a terminal, 3 a POSIX file mode, 3 a symbolic link,
+# 1 a no_proxy that bun on Windows does not pass on, 1 a command line over
+# Windows' limit). Not run with bun 1.4.5 after the repair. The workflow
+# runs it on linux-x64, darwin-arm64 and win32-x64 (not yet run in CI:
+# nothing was pushed). No
+# case reaches a real daemon, a browser or the network: a case that talks to
+# a daemon runs the TypeScript's own daemon (`serve --port 0`) with stand-in
+# browser tabs and a recording proxy, or a fake daemon that answers by rules
+# (rs/parity/stand-in.mjs), and compares every request, frame and close the
+# command made, what the tabs received, the daemon's own log and the state
+# file it left. Every case has COMFY_AI_DAEMON set, so none can reach a
+# daemon on 127.0.0.1:7437.
 #
 # Rust-only behaviour, with no TypeScript counterpart, for the owner to bless
-# or remove (from the scaffold): COMFY_AI_NO_NATIVE=1 hands every invocation
-# back; COMFY_AI_PACKAGE_ROOT tells the binary where the package is;
-# RUSTIFY_HANDBACK_TRACE makes it say on stderr that it handed back.
+# or remove: COMFY_AI_NO_NATIVE=1 hands every invocation back;
+# COMFY_AI_PACKAGE_ROOT tells the binary where the package is;
+# RUSTIFY_HANDBACK_TRACE makes it say on stderr that it handed back; and a
+# message `comfy-ai: …; this build does not handle that, run the command with
+# COMFY_AI_NO_NATIVE=1 …`, exit 1, after a request that cannot be taken back,
+# in these situations only (none of them in the cases, since the TypeScript
+# answers them otherwise): a tab whose title (pair) or the daemon's error
+# message (eval) is nested deeper than 1000 levels (the TypeScript manages up
+# to about 4,200, where bun's String() runs out of stack); an eval stdout or
+# stderr that is truthy but not a string (the TypeScript prints bun's
+# TypeError report and waits out its 60 s); a connection that breaks before
+# the whole answer to a pairing claim has come, or a claim answered by a 5xx
+# that is not a JSON object (a comfy-ai daemon gives the first only when it
+# dies, the second where its handler throws after the claim: see below);
+# and a state file that cannot be written after the claim although it could
+# be just before.
+#
+# For the owner, found on the way (the binary is bug-compatible, or hands the
+# situation back, unless said otherwise):
+# - eval: bun loses output through a pipe. cmdEval writes the tab's stdout
+#   with process.stdout.write and the handler calls process.exit right
+#   after, which drops what is still unwritten: of 3,000,000 bytes, 65,536
+#   to 196,608 arrived through `| wc -c` (bun 1.4.0, measured by the
+#   verifier and again after the repair). The binary writes all of it. Whether it should copy the
+#   loss is the owner's decision; the cases compare such output in regular
+#   files, where bun writes everything.
+# - The daemon passes what a tab sends on unchecked: a title, an exitCode,
+#   stdout and stderr of any JSON type. A title nested deeper than about
+#   40,000 levels makes the daemon's Response.json throw after the claim:
+#   the tab is told `paired` and a token is issued, but the CLI gets bun's
+#   HTML error page with status 500 and fails with res.json()'s words (`error:
+#   Failed to parse JSON` under bun 1.4.0, `error: JSON Parse error:
+#   Unrecognized token '<'` under 1.4.4), so that pairing is lost; the binary
+#   ends with its Rust-only message there. Deeper than about 4,200 levels the
+#   TypeScript CLI writes the state and then fails with `error: Maximum call
+#   stack size exceeded.`
+# - bun's own words change between versions in two places the cases met:
+#   res.json() of a body that is not JSON (`Failed to parse JSON` in 1.4.0,
+#   JavaScriptCore's `JSON Parse error: …` in 1.4.2 and 1.4.4), and a
+#   WebSocket message over 128 MiB (1.4.0 drops the connection and fires no
+#   `error`, so `list` waits for ever; 1.4.4 fires `error`, and `list` fails
+#   with `list failed`). Both go back where they can.
+# - On Windows bun's mkdirSync('.', { recursive: true }) throws EEXIST, so
+#   the TypeScript cannot write a state file in the current directory there
+#   (COMFY_AI_CONFIG_DIR empty); `list` waits for ever when the daemon closes
+#   without answering; `eval` with a non-string stdout or stderr prints
+#   bun's TypeError report and then waits out its 60 s; bun's ws.close()
+#   ends with code 1000 or with no code, by bun version and timing; bun
+#   creates ~/.bun in the home directory it runs with; the state file keeps
+#   the token in clear text with the umask's mode; /spa takes any origin, and
+#   any /ctl client may act on any session (see the daemon entries).
 
 reconciled = "aa56999"
 
@@ -42,27 +99,39 @@ reconciled = "aa56999"
 
 [[feature]]
 name = "comfy-ai (CLI entry point, run by bun)"
-status = "missing"
+status = "partial"
 ts = "package.json:7 bin; package.json:30 build:cli; ts/cli.ts:1; ts/cli.ts:273"
-note = "The bin is ./dist/cli.js, built by `bun build ts/cli.ts --target bun` (release.yml runs the whole `bun run build`); its first line is `#!/usr/bin/env bun`. It needs bun: Bun.file, Bun.write, Bun.serve and `for await (const line of console)` have no node equivalent. yargs 18.0.0 is bundled into the file, so the installed yargs dependency is not what runs; the @xterm dependencies are for the browser builds only. yargs with script name `comfy-ai`, usage `$0 <command> [options]`, the nine commands in the order serve, pair, list, tail, attach, send, eval, kill, logout, then demandCommand(1), strict(), help(), version() and a fail() handler. Before the program, bun does what porting.md lists (.env files from the current directory, bunfig.toml, package.json and tsconfig.json above it)."
+rs = "rs/src/main.rs; rs/src/cli.rs:52 parse; rs/src/bun.rs:17 startup"
+proof = "rs/parity.json; rs/parity/proof.sh"
+note = "The bin is ./dist/cli.js, a `bun build --target bun` bundle of ts/cli.ts with yargs 18.0.0 inside it; the binary hands back to it. The binary takes the command lines of logout, pair, list, send, eval and kill in their plain spellings (positionals, `-s <id>`, `--session <id>`, `--session=<id>`, `--daemon <url>`, `--daemon=<url>`, in either order, words such as `version`, `completion`, `HELP`, `help me` that yargs takes as values) and an empty one; it hands back every other shape (53 `argv:` cases), and every invocation where bun does more than run the program (the `startup:` entry). `serve`, `tail` and `attach` are not ported."
 
 [[feature]]
 name = "--help (global and per command)"
 status = "missing"
 ts = "ts/cli.ts:354; ts/cli.ts:275"
-note = "yargs-generated help on stdout, exit 0: the usage line, `Commands:` with each command's describe text, `Options:` --help and --version (seen). Per command (`comfy-ai serve --help`) the command's positionals and options with types and defaults (`[number] [default: 7437]`, `[default: \"http://127.0.0.1:7437\"]` for list's --daemon, which follows COMFY_AI_DAEMON). Wrapped to the terminal's width, at most 80 columns. Always English in the bundle: y18n looks for its locale files at `../../../locales` from dist/cli.js (that is `<node_modules>/locales/`), finds none and falls back to the built-in strings, whatever LC_ALL, LC_MESSAGES, LANG or LANGUAGE say (read in dist/cli.js, not run under another locale). A trailing `help` word is yargs's (porting.md); not run."
+note = "Handed back on every system, and so is the word `help` anywhere on the command line (cases `argv: --help`, `argv: pair --help`, `argv: pair <url> help`, `argv: send help`, `argv: help as a command`). yargs-generated help on stdout, exit 0; always English in the bundle (y18n finds no locale files beside dist/cli.js)."
 
 [[feature]]
 name = "--version"
 status = "missing"
 ts = "ts/cli.ts:355"
-note = "Prints the `version` of the first package.json found walking up from the directory above the last `node_modules` in dist/cli.js's own path, or from the current directory when that path has no node_modules (a checkout); `unknown` when that package.json has no version or none is found. So an install with `bun i -g` reads ~/.bun/install/global/package.json, which has no version, and prints `unknown`; under `npm i -g` the walk starts at the prefix's lib/ and most likely finds nothing (`unknown`); in a development checkout it prints the version of whatever project the current directory is in. Read in dist/cli.js (yargs 18's esm shim and pkgUp), not run. Exact parity includes the `unknown`."
+note = "Handed back (case `argv: --version`). yargs prints the version of the first package.json found walking up from the directory above the last node_modules in dist/cli.js's own path, or from the current directory in a checkout: `unknown` under `bun i -g`."
 
 [[feature]]
 name = "usage errors and the error line (exit 1)"
-status = "missing"
+status = "partial"
 ts = "ts/cli.ts:352 demandCommand; ts/cli.ts:353 strict; ts/cli.ts:356 fail"
-note = "The fail() handler prints, on stderr, either yargs's own message alone (no help text) or, for an error a command threw, `error: <message>`, then exits 1. Seen: a bare `comfy-ai` prints `Specify a command`; `comfy-ai pair not-a-url` prints `error: expected an http(s) URL, got: not-a-url`. From reading: an unknown command or option is refused by strict() (`Unknown argument: …`), a missing positional (`pair`, `send`, `eval` without one) is yargs's not-enough-arguments message. Every runtime failure of the commands below comes out through this line, including bun's own messages (a URL it cannot parse, a port in use), whose wording is bun's and was not run."
+rs = "rs/src/cli.rs:103 run; rs/src/bun.rs:170 error_colour"
+proof = "rs/parity.json; rs/parity/proof.sh"
+note = "Native: a bare `comfy-ai` (`Specify a command`, exit 1) and the `error: <message>` line for every error the ported commands throw, red where bun makes console.error red (stderr a terminal, FORCE_COLOR, NO_COLOR, TERM dumb or unset, CI, COLORTERM; proven by the `--tty stdout,stderr` run and the `tty` and `colour:` cases on Linux and macOS). Handed back: yargs's own messages (unknown argument or command, missing positional); console.error where stdout is a terminal and stderr is not, unless NO_COLOR or FORCE_COLOR decides (bun decides by TERM and more); a NO_COLOR or FORCE_COLOR value whose meaning was not tried; NO_COLOR and FORCE_COLOR both set, whatever their values (the bundle imports node's assert, and bun then prints `(node:<pid>) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.` and `(Use `bun --trace-warnings ...` …)` before the command's output, for every command; seen with NO_COLOR not empty and FORCE_COLOR empty, 1, 2, 3 or true); on Windows anything on a terminal (the parity runner has none there). Handed back on Windows with both variables set, bun's warning names itself `bun` where a bun started from a shell writes `bun.exe` (normalized in those cases)."
+
+[[feature]]
+name = "what bun does before the program: .env, bunfig.toml, package.json and tsconfig.json up the tree, BUN_/NODE_ variables, proxies"
+status = "partial"
+ts = "package.json:7 bin"
+rs = "rs/src/bun.rs:17 startup; rs/src/bun.rs:88 quiet_for_bun; rs/src/bun.rs proxied"
+proof = "rs/parity.json; rs/parity/proof.sh"
+note = "60 `startup:` cases. Handed back before anything is printed: a .env, .env.local, .env.development or .env.development.local in the current directory (bun loads them; .env.production, .envrc and a .env in a parent directory are not loaded and stay native), bunfig.toml there or in ~/.bunfig.toml or $XDG_CONFIG_HOME/.bunfig.toml ($XDG_CONFIG_HOME/bun/bunfig.toml and one in a parent directory are not read and stay native), any BUN_ (but BUN_INSTALL*), NODE_, MIMALLOC_ or ICU_ variable, NO_COLOR and FORCE_COLOR together (see the error line), for the commands that connect any HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, NO_PROXY, WS_PROXY or WSS_PROXY in any case, and a package.json, tsconfig.json or jsconfig.json in the current directory or any above it unless it is one bun 1.4.0 was seen to read without a word: strict JSON (a JSON-with-comments tsconfig.json, which bun reads silently, also goes back) with no key twice in any object (bun warns `Duplicate key`); in a package.json no `type` other than module or commonjs, no `exports` or `imports`, and a `browser` object only of strings and booleans; in a tsconfig.json or jsconfig.json no `extends`, a jsxFactory and jsxFragmentFactory that are dotted names, importsNotUsedAsValues remove, preserve or error, and `paths` an object of arrays of strings with at most one `*` in each pattern and substitution, every substitution starting with ./ or ../ unless baseUrl is a string. Other fields and other value types bun does not warn about stay native (name, main, browser, bin, dependencies, sideEffects, workspaces of any type; baseUrl, jsx, jsxImportSource of any type; a file that is an array, null or a number). So a command run inside a JavaScript project with an ordinary package.json and tsconfig.json is native; one next to a .env file, or under a tsconfig.json with `extends` or with `paths` such as `src/*` and no baseUrl, is not."
 
 # ───────────────────────────── serve: the daemon ─────────────────────────────
 
@@ -70,110 +139,130 @@ note = "The fail() handler prints, on stderr, either yargs's own message alone (
 name = "serve [--port] [--host] [--verbose]"
 status = "missing"
 ts = "ts/cli.ts:276; ts/serve.ts:77; ts/serve.ts:400"
-note = "Starts the bridge daemon with Bun.serve on --host (default 127.0.0.1) and --port (number, default 7437), prints on stderr `comfy-ai bridge listening on http://<host>:<port>`, the SPA, CLI and pair endpoints, and `Press Ctrl+C to stop.`, and runs until it is killed; all state (sessions, pairing codes, tokens) is in memory only. --verbose logs on stderr with a `[comfy-ai]` prefix: `session opened <id> <title>`, `session closed <id>`, `cli disconnected` (any /ctl socket closing), `pair-request <code> → <id>`. A port in use makes Bun.serve throw, which the fail() line reports (not run). Bun's WebSocket defaults apply to both endpoints (idle timeout, automatic pings, payload limit); not read in bun's source. The four endpoints have entries of their own."
+note = "Handed back on every system (case `serve --port 0 is handed back`), not ported: a long-running Bun.serve daemon whose HTTP and WebSocket behaviour (headers, idle timeout, pings, payload limit) would all need proving. The parity cases use this TypeScript daemon as their stand-in. Starts on --host (default 127.0.0.1) and --port (default 7437), prints on stderr `comfy-ai bridge listening on http://<host>:<port>`, the three endpoints and `Press Ctrl+C to stop.`; --verbose logs `[comfy-ai] session opened <id> <title>`, `session closed <id>`, `cli disconnected`, `pair-request <code> → <id>` (seen in the cases' daemon log)."
 
 [[feature]]
 name = "daemon: GET /pair/<code> (claim a pairing code)"
 status = "missing"
 ts = "ts/serve.ts:127; ts/serve.ts:114 purgeExpiredPairs; ts/serve.ts:65 PAIR_DEFAULT_TTL_MS"
-note = "Any method on a path starting with /pair/. Codes that have expired are purged first, at each such request only. The code is the rest of the path, trimmed, as the URL spells it (percent-encoding is not decoded). JSON answers: 400 `{\"ok\":false,\"error\":\"missing code\"}`; 404 `unknown or expired pairing code`; 410 `session for this code is no longer open` (the code is dropped); otherwise a new random UUID token is added to the session, the code is used up, the tab gets `{v:1,type:\"paired\",code}`, and the answer is 200 `{\"ok\":true,\"sessionId\",\"title\",\"token\"}`, `title` left out when the tab gave none. A code lives for the tab's ttlMs, 5 minutes when it gives none."
+note = "Part of serve (handed back). Seen through `pair`'s cases: 400 `missing code`, 404 `unknown or expired pairing code` (also for a code past its ttlMs), 410 `session for this code is no longer open`, 200 `{ok,sessionId,title,token}` with the tab told `paired`. The token is issued and the code removed before Response.json: a title too deep for JSON.stringify (about 40,000 levels) gives bun's HTML error page with status 500 after the claim (for the owner)."
 
 [[feature]]
 name = "daemon: /spa WebSocket (browser tab sessions)"
 status = "missing"
 ts = "ts/serve.ts:173; ts/serve.ts:227; ts/serve.ts:247; ts/serve.ts:263 handleSpaMessage"
-note = "Upgrades any request to /spa, with no token and no Origin check (any page in a browser on the machine can connect); a failed upgrade is 400 `upgrade failed`. Frames that are not JSON objects with v === 1 are dropped. `hello` with a sessionId opens a session (id, title, the socket's open time, no tokens); a second hello with the same id from another tab replaces the record, and when either tab closes the id is removed. Before hello every frame is ignored. `event` fans the payload out unchanged to every /ctl socket subscribed to the session, as `{v:1,type:\"event\",sessionId,payload}`. `evalResult` goes only to subscribed sockets that have that opId pending, which then forget it. `pair-request` registers the code for the session (see /pair). `pong` is ignored; the daemon never sends `ping`. Closing the tab ends the session, unsubscribes every CLI from it and so voids its tokens."
+note = "Part of serve (handed back). Upgrades any request to /spa with no token and no Origin check: any page in a browser on the machine can open a session (for the owner). Frames that are not JSON objects with v === 1 are dropped; hello opens a session, event fans out to subscribed /ctl sockets, evalResult goes to the socket that has the opId pending, pair-request registers a code. What a tab sends (title, exitCode, stdout, stderr) is passed on unchecked."
 
 [[feature]]
 name = "daemon: /ctl WebSocket (CLI clients, token check)"
 status = "missing"
 ts = "ts/serve.ts:185; ts/serve.ts:324 handleCtlMessage"
-note = "A `token` query parameter that no open session holds is refused with 401 `invalid token`; a valid one binds the socket to its session and subscribes it. Without a token the socket is accepted, unbound. A socket receives events only after it has sent its first frame (that is when it is registered). `list` answers `{type:\"sessions\",sessions:[{id,title,openedAt}]}` with every session; `subscribe`, `send` and `eval` answer `{type:\"error\",message:\"unknown session: <id>\"}` for a session that is not open (eval's error carries its opId); `send` reaches the tab as `{type:\"send\",text,source:\"remote\"}`; `eval` marks the opId pending, subscribes the socket and forwards `{type:\"eval\",opId,script}`; `abort` forwards `{type:\"abort\"}` and is silently dropped for an unknown session. The session a frame names is not checked against the token: any /ctl client, with a token or without, may list, watch, send to, eval in and abort any open session."
+note = "Part of serve (handed back). A token no open session holds is refused with 401 `invalid token`; without a token the socket is accepted, unbound. The session a frame names is not checked against the token: any /ctl client may list, watch, send to, eval in and abort any open session (for the owner). Seen through the client commands' cases against the TypeScript daemon."
 
 [[feature]]
 name = "daemon: GET /health and the banner on every other path"
 status = "missing"
 ts = "ts/serve.ts:211; ts/serve.ts:219"
-note = "/health answers JSON `{\"status\":\"ok\",\"version\":1,\"sessions\":<open sessions>}`. Any other path answers text/plain: `comfy-ai bridge daemon (v1)`, `sessions: N`, and the endpoint list built from the --host and --port given (so `--port 0` shows 0 there, while the startup lines show the port actually bound)."
+note = "Part of serve (handed back). `pair` cases ask both: /health answers `{\"status\":\"ok\",\"version\":1,\"sessions\":N}`, any other path the text/plain banner, whose endpoint list shows the --port given (0 for `--port 0`)."
 
 # ───────────────────────────── The client commands ─────────────────────────────
 
 [[feature]]
 name = "pair <url>"
-status = "missing"
+status = "verified"
 ts = "ts/cli.ts:292; ts/cli.ts:124 cmdPair"
-note = "Trims the URL and refuses one that does not start with `http` (`error: expected an http(s) URL, got: <url>`, before any request; seen). Otherwise a GET with bun's fetch (redirects followed, bun's proxy variables honoured; not run), the body read as JSON (a body that is not JSON fails with bun's parse message). When the status is not 2xx or `ok` is not true: `error: pairing failed: <body.error, or HTTP <status>>`. On success the state file is replaced by sessionId, token, daemonUrl, title and pairedAt (ms); daemonUrl is the URL with path and query emptied and one trailing slash removed (a #fragment or user:password stay). Prints `Paired with session \"<title, or the session id>\".` and `Try: comfy-ai send \"hello\"`."
+rs = "rs/src/cli.rs:325 pair; rs/src/net.rs:39 get"
+proof = "rs/parity.json; rs/parity/proof.sh"
+note = "73 `pair:` cases. Native: the refusal of a URL that does not start with `http` after JavaScript's trim (before any request, any text); and a GET to http://localhost or http://127.x.y.z with a plain path, against the TypeScript daemon (a claim with or without a title, a title of 1.1 MB, nested 300 and 1000 levels deep, with a lone surrogate, numbers such as 0.30000000000000004 or 1459077941253781.25 written as JavaScript writes them, an empty title, an unknown, missing, expired or orphaned code, a percent escape, /health, the banner) and a fake server answering 2xx/4xx/5xx JSON objects of every shape (ok, error and the session fields as strings, numbers, null, objects, arrays, keys twice, a lone surrogate in a key, escapes); the state file written as JSON.stringify(…, null, 2) does, with JavaScript's key order and numbers, lone surrogates as \\udxxx, and the daemon URL as URL.toString() writes it. The answer is read to its Content-Length, of any size. Handed back before the request: https, other hosts, a query, an unusual spelling, a path that starts with // (bun's fetch sends //pair/C and ///pair/C as /pair/C), a stdout-only terminal, and on Windows a state file in the current directory. Handed back after the request, where the whole answer shows that no comfy-ai daemon gave out a token (the JavaScript asks again; for a comfy-ai daemon that only reads): anything but a JSON object at a status below 500 (what is not JSON, such as the daemon's banner, an HTML page, a trailing comma or white space, since res.json()'s words for it change with bun's version; JSON that is an array, null or a string; an empty body, a byte order mark or bytes that are not UTF-8, which res.json() reads and no daemon sends); a redirect, an encoded or chunked body, two lengths, a status without a body; anything to a path that is not /pair/…; a failed connection (bun's words). Before the claim the binary checks that the state file can be written. After a claim it never hands back: a connection broken before the whole answer, a 5xx that is not a JSON object (bun's HTML error page where the daemon's handler threw after the claim), a value nested deeper than 1000 levels, or a write that fails after all end with the Rust-only message (the code is used up by then)."
 
 [[feature]]
 name = "list [--daemon <url>]"
-status = "missing"
+status = "verified"
 ts = "ts/cli.ts:303; ts/cli.ts:149 cmdList"
-note = "--daemon defaults to the default daemon URL (see `which session and daemon`); when it is left at that value the paired daemonUrl from the state file wins. Connects to /ctl without a token, sends `list`, and prints `(no SPA tabs connected)` or one line per session: `<id>  <title, or (untitled)>  +<age>s`, the age in whole seconds by toFixed(0). Waits without a time limit for the answer."
+rs = "rs/src/cli.rs:415 list; rs/src/cli.rs:462 sessions_text"
+proof = "rs/parity.json; rs/parity/proof.sh"
+note = "43 `list:` cases, against the TypeScript daemon (two tabs, none, a title with U+2028; the age normalized there to `+<AGE>s`, 0 or 1) and a fake daemon: `(no SPA tabs connected)`, ids and titles of every JSON type as template literals write them (no format codes applied, a lone surrogate as U+FFFD, numbers to the last digit, arrays nested to 1000 levels), `(untitled)`, ages by toFixed(0) (also negative, NaN, 1e+297), a field nested 300 or 100,000 levels deep, a frame of 17 MB, frames it ignores (not JSON, null, v other than 1), a binary frame (bun reads it as text), a refused upgrade, nothing listening, the daemon closing (also with 4000) or dropping the connection or never answering (it waits for ever, as the TypeScript does: compared for 2.5 to 20 s), --daemon against COMFY_AI_DAEMON (also ws:) and the paired daemon, a state file nested 300 levels deep naming the daemon. Handed back: the built-in daemon (own entry), wss:/https and other hosts or spellings (also --daemon ws:), and after the request an answer no comfy-ai daemon gives (sessions not a list or missing, a session not an object, an id or title nested deeper than 1000 levels) or a message over 128 MiB (bun 1.4.0 waits for ever, 1.4.4 fails with `list failed`): the JavaScript asks again, read-only, one more /ctl connection."
 
 [[feature]]
 name = "tail [session]"
 status = "missing"
 ts = "ts/cli.ts:310; ts/cli.ts:175 cmdTail"
-note = "Connects with the saved token, subscribes, prints `tailing <id> — Ctrl+C to exit` on stderr, then one line per event on stdout (see `event lines`) and `error: <message>` on stderr for a daemon error (an unknown session, after which it keeps waiting). Runs until interrupted; what it does when the daemon goes away was not run (nothing handles the close). README documents `--session=<id>` here; the command declares `session` only as a positional, and whether yargs's strict mode takes the flag spelling was not run. The same applies to attach and kill."
+note = "Handed back on every system (case `tail is handed back`), not ported: it runs until interrupted, and a payload that is null or missing makes the TypeScript print bun's TypeError report and go on, which cannot be reproduced once printing has begun. The stand-in can interrupt a command after its events (scene `interrupt`), for a later port."
 
 [[feature]]
 name = "attach [session]"
 status = "missing"
 ts = "ts/cli.ts:316; ts/cli.ts:189 cmdAttach"
-note = "As tail, with `attached to <id> — type to send, Ctrl+D to detach` on stderr, and every line of stdin (read with bun's `for await (const line of console)`), trimmed, sent as a `send` frame; blank lines are skipped. At the end of stdin the socket is closed and the command ends."
+note = "Handed back on every system (case `attach is handed back`), not ported: like tail, and it reads stdin with bun's `for await (const line of console)`. The stand-in can feed stdin step by step (scene `stdin`), for a later port."
 
 [[feature]]
 name = "send <text> [-s|--session]"
-status = "missing"
+status = "verified"
 ts = "ts/cli.ts:322; ts/cli.ts:209 cmdSend"
-note = "Sends one `send` frame, waits 50 ms and closes. Prints nothing and exits 0 whether or not the daemon knew the session (its error is not listened for)."
+rs = "rs/src/cli.rs:507 send"
+proof = "rs/parity.json; rs/parity/proof.sh"
+note = "43 `send:` cases and the `argv: send …` ones: the frame byte for byte (JSON.stringify's escapes, text as given, numbers-looking text, a single space, a newline, U+2028, 100 KB), the /ctl URL with the token form-encoded, 50 ms then a close; through the TypeScript daemon to the tab (`{type:send,text,source:remote}`), to another tab with the paired token, to an unknown session (exit 0, nothing printed), a token whose tab closed (401: `cannot reach daemon`), a refused upgrade, nothing listening, the daemon answering an error (unheard). The close code (1000, or none) is logged as the normal end: bun sends either. Handed back: as for every command that connects (other entries), and a state file whose token or session id is not a string."
 
 [[feature]]
 name = "eval <script> [-s|--session] (exit code of the tab's run)"
-status = "missing"
+status = "verified"
 ts = "ts/cli.ts:331; ts/cli.ts:219 cmdEval"
-note = "Sends `eval` with a random UUID opId and waits for the evalResult with that opId: writes its stdout to stdout and its stderr to stderr as they are (no newline added), closes, and exits with its exitCode (0 when absent) through process.exit. A daemon error with that opId (an unknown session) ends it with `error: <message>`, exit 1; no answer within 60 s with `error: eval timed out (60s)`, exit 1."
+rs = "rs/src/cli.rs:544 eval; rs/src/cli.rs:600 eval_result; rs/src/cli.rs:624 exit_status"
+proof = "rs/parity.json; rs/parity/proof.sh"
+note = "113 `eval:` cases: the frame with a version-4 opId, the result's stdout and stderr written as they came (falsy ones left out, a lone surrogate as U+FFFD, 3 MB, a frame of 17 MB), and process.exit's handling of every exitCode a tab can send under bun: integers (the low byte on Unix, the 32 bits on Windows), null, non-integers and numbers beyond 2^53 written to the last digit as JavaScript writes them (also where two shortest forms are as near), Infinity, booleans, objects, arrays (also nested 300 and 100,000 levels deep) and strings: Number() of them as JavaScriptCore computes it (0x/0o/0b digits beyond 2^53 summed from the last digit, as its parseIntOverflow does), with bun's ERR_INVALID_ARG_TYPE and ERR_OUT_OF_RANGE messages, the string as bun shows it (in single quotes as it is, control characters and all; in double quotes with \\\" where it holds a single quote; over 28 UTF-16 units cut to 25 and `...`, half a pair as U+FFFD); the daemon's error for this opId (its message a string, a number to the last digit, an object, an array, a lone surrogate, nested 1000 levels deep, or none); frames for other opIds, without v 1, binary, or with a field nested 100,000 levels deep; through the TypeScript daemon and a tab; the daemon closing, dropping the connection or never answering (`eval timed out (60s)` after 60 s). Not reproduced, after the eval is sent: a truthy stdout or stderr that is not a string (bun prints a TypeError report and waits out the 60 s), and an error message nested deeper than 1000 levels: the Rust-only message instead. Not tried: an answer over 128 MiB (the binary drops the connection as bun 1.4.0's client does and waits out the timer; bun 1.4.4 fires an `error` nothing listens for, and waits too) and a text frame that is not UTF-8 (no Bun.serve daemon sends one; the binary takes it as the end of the connection and waits out the timer). Through a pipe bun loses output still unwritten at process.exit (about 128 KiB arrive), the binary does not (for the owner, see the header)."
 
 [[feature]]
 name = "kill [session]"
-status = "missing"
+status = "verified"
 ts = "ts/cli.ts:343; ts/cli.ts:256 cmdKill"
-note = "Sends `abort`, waits 50 ms, closes and prints `abort sent to <id>` on stderr, exit 0, also for a session the daemon does not know (it drops the frame silently)."
+rs = "rs/src/cli.rs:524 kill"
+proof = "rs/parity.json; rs/parity/proof.sh"
+note = "48 `kill:` cases, as send's, with `abort sent to <id>` on stderr (red on a terminal) and the tab receiving `abort` through the TypeScript daemon; an unknown session is silently dropped (exit 0); session ids such as `version`, `completion` and one with a newline."
 
 [[feature]]
 name = "logout"
-status = "missing"
+status = "verified"
 ts = "ts/cli.ts:349; ts/cli.ts:266 cmdLogout; ts/config.ts:46 clearState"
-note = "Writes `{}` and a newline to the state file (the file stays; its directory is created when missing) and prints `cleared local pairing state.`. Talks to no daemon."
+rs = "rs/src/cli.rs:237 logout; rs/src/cli.rs:248 write_state"
+proof = "rs/parity.json; rs/parity/proof.sh"
+note = "24 `logout:` cases and the `startup:` ones that stay native: `{}` and a newline over whatever was there, the directories made (0777 and a new file 0664 under the umask, an existing file keeping its mode; skipped on Windows, where Git Bash reports 644 for everything), written through a symbolic link to a file or a directory (skipped on Windows), COMFY_AI_CONFIG_DIR absolute, relative, with `..`, `./`, `//`, a trailing slash, `~` (a directory of that name), empty, HOME relative or with trailing slashes. Handed back, before anything is changed: a state directory that cannot be made or written, or a state file that is not a writable regular file (bun's own error words), a dangling link, and on Windows a state file in the current directory (bun fails there with EEXIST)."
 
 # ───────────────────────────── Shared behaviour ─────────────────────────────
 
 [[feature]]
 name = "pairing state file (~/.config/comfy-ai/state.json, COMFY_AI_CONFIG_DIR)"
-status = "missing"
+status = "verified"
 ts = "ts/config.ts:23 statePath; ts/config.ts:29 readState; ts/config.ts:40 writeState"
-note = "The file is `<COMFY_AI_CONFIG_DIR>/state.json` when that variable is set (also when set to an empty string, which makes it `state.json` in the current directory), otherwise `<home>/.config/comfy-ai/state.json`; XDG_CONFIG_HOME is not consulted. Home is os.homedir() under bun (HOME on Unix). A missing or unreadable file, or one that is not JSON, reads as empty, silently. Written with Bun.write as JSON indented by two spaces plus a newline, after creating the directory; the mode is the umask's (README: 0644 by default), with the token in clear text. Fields: sessionId, token, daemonUrl, title, pairedAt."
+rs = "rs/src/state.rs:12 path; rs/src/state.rs:96 read; rs/src/cli.rs:248 write_state"
+proof = "rs/parity.json; rs/parity/proof.sh"
+note = "As far as the cases of logout, pair, send, eval, kill and list exercise it (13 `which session` cases per command among them, and the verifier's 11 more for kill): the path by node's path.join (posix, and win32 on Windows), read as Bun.file().json() reads it (strict JSON after one byte order mark, at any depth: 300 and 100,000 levels are in the cases, 1,000,000 were tried; keys twice, the last one wins; a missing file, a directory, an empty file, white space, comments, two byte order marks or anything else that is not JSON is empty; an array is empty too; a `__proto__` key is an own key), written as above. Handed back: a state of `null` (bun's TypeError), a file that is not UTF-8 or cannot be read, HOME (USERPROFILE) unset or empty, a sessionId, token or daemonUrl that is neither a string nor null where the command uses it (a sessionId true)."
 
 [[feature]]
 name = "which session and daemon a command uses (--session, [session], COMFY_AI_DAEMON)"
-status = "missing"
+status = "partial"
 ts = "ts/cli.ts:32 DEFAULT_DAEMON; ts/cli.ts:46 resolveSession"
-note = "The default daemon URL is COMFY_AI_DAEMON when set and not empty, with a leading `ws:` turned into `http:` and `wss:` into `https:`, else `http://127.0.0.1:7437`. tail, attach, send, eval and kill take the session given (positional or -s/--session) or the saved sessionId; with neither they end with `error: no paired session — run `comfy-ai pair <url>` first, or pass --session <id>.` before connecting. Either way the daemon is the saved daemonUrl, else the default, and the saved token is sent, also when another session was named."
+rs = "rs/src/cli.rs:126 default_daemon; rs/src/cli.rs:156 resolve_session"
+proof = "rs/parity.json; rs/parity/proof.sh"
+note = "Native and proven: the session named or the paired one, `no paired session — …` for every falsy sessionId (no state, empty, 0, -0, false, null) before any connection, the state's daemonUrl over COMFY_AI_DAEMON (ws:/wss: made http:/https:), the saved token sent also with another session named. Handed back: the built-in daemon http://127.0.0.1:7437 (COMFY_AI_DAEMON unset or empty and no daemonUrl saved), because no test may connect there (someone's real daemon may run on it); after `comfy-ai pair` the state names its daemon, so that is the setup before pairing only."
 
 [[feature]]
 name = "connecting to the daemon (/ctl URL, token, unreachable daemon)"
-status = "missing"
+status = "partial"
 ts = "ts/cli.ts:38 deriveWsUrl; ts/cli.ts:70 openCtl; ts/cli.ts:91 parseDaemonMsg"
-note = "The WebSocket URL is the daemon URL with http→ws and https→wss, the path replaced by /ctl, any query kept and `token=<token>` set when there is one. A connection that fails, including the daemon's 401 for a token whose tab has closed, ends the command with `error: cannot reach daemon at <daemon url> — is `comfy-ai serve` running?`. A daemon URL that is not a URL fails in the URL parser with bun's message (not run). Frames from the daemon that are not JSON or whose v is not 1 are ignored."
+rs = "rs/src/url.rs:45 parse; rs/src/url.rs:34 ctl; rs/src/url.rs:81 plain_path; rs/src/net.rs:130 connect; rs/src/cli.rs daemon_message"
+proof = "rs/parity.json; rs/parity/proof.sh"
+note = "Native and proven for a daemon at http://localhost or http://127.x.y.z (plain decimal, a port without a leading zero, any path, no query, fragment or user): ws://…/ctl with `token=` form-encoded (URLSearchParams), `cannot reach daemon at <url> — is `comfy-ai serve` running?` for no connection, a refused or odd upgrade, a token whose tab closed. For pair's GET, a path that fetch sends as it is written: no dot segment (also not percent-encoded), nothing it would encode, and not // at its start (bun's fetch collapses a run of leading slashes; inner ones it keeps). Handed back: https/wss (needs TLS), other hosts (bun's DNS and connect rules), upper case, numeric shorthand, a query, an empty URL or one that is not a URL (bun's TypeError words). parseDaemonMsg as JSON.parse (any depth) and `v === 1`, binary frames read as their UTF-8 text, as bun's client does; messages up to 128 MiB, as bun's client takes them (above it list goes back and eval waits out its timer, see there)."
 
 [[feature]]
 name = "event lines printed by tail and attach"
 status = "missing"
 ts = "ts/cli.ts:101 formatEvent; ts/cli.ts:183"
-note = "One line per event, each followed by a newline: message `[<role>] <text>`; delta the text alone (so a streamed answer comes out one delta per line); tool `$ <script>`, then stdout and `[stderr] <stderr>` (each left out when empty), then `(exit <code>)`, joined by newlines; state `(streaming…)` or `(idle)`; clear `--- session cleared ---`. A payload of any other kind prints `undefined`."
+note = "Only tail and attach print them, and both are handed back."
 
 [[feature]]
 name = "wire protocol v1 (JSON text frames between tab, daemon and CLI)"
-status = "missing"
+status = "partial"
 ts = "ts/protocol.ts"
-note = "The compatibility surface with the ComfyAI SPA, which is not in this repository: every frame is a JSON object with `v: 1` and `type`. Tab→daemon hello, event, evalResult, pair-request, pong; daemon→tab send, eval, abort, paired (ping is declared, never sent); CLI→daemon list, subscribe, send, eval, abort; daemon→CLI sessions, event, evalResult, error. Default port 7437 and host 127.0.0.1 are defined here. The daemon passes event payloads through unchecked, so a Rust daemon must not reshape them (key order, numbers)."
+rs = "rs/src/cli.rs frame; rs/src/cli.rs daemon_message"
+proof = "rs/parity.json; rs/parity/proof.sh"
+note = "The CLI side the ported commands speak, compared byte for byte against a recording stand-in and end to end against the TypeScript daemon: list, send, eval and abort frames out; sessions, evalResult and error in. subscribe (tail, attach) and the whole daemon side (serve) are not ported."

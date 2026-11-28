@@ -1,7 +1,7 @@
 # onenote-cli
 
 snomiao/onenote-cli PR #4 (the crate and the pipeline) and PR #5 (the first
-ported commands), read at `9af05e1`.
+ported commands), read at `6a410da` (TypeScript at `9af05e1`).
 
 onenote-cli reads and searches OneNote notebooks through Microsoft Graph:
 about 5,700 lines of TypeScript, a yargs CLI with a local cache and a SQLite
@@ -27,10 +27,15 @@ full-text index, MSAL login and an ink terminal UI for `sync`.
   and Windows x64: 573 cases on Linux, 572 on macOS (382 and 389 answered by
   the binary), and on Windows every search handed back as marked, with the
   zone comparison run against the runtime on Linux and on the Mac.
-- Open: the macOS terminal run failed once in CI with the binary's output
-  empty in one case (`search tags: #star`), where the plain run was the same;
-  a re-run passed every case. The cause is not known, and a Mac did not
-  reproduce it. A second intermittent difference there, a doubled carriage
+- Fixed: the macOS terminal run once came back with the binary's output
+  empty in one case (`search tags: #star`). The cause was the harness, not
+  the port. On macOS the last close of a terminal waits at most 0.6 s for the
+  reader, then throws away what is left. `rs/parity/terminal.py` used
+  `pty.fork`, which let go of the terminal, so on a busy runner the
+  binary's output could be lost; the TypeScript side was spared only because
+  it goes through `sh`, which is bash. It was reproduced on demand on a Mac,
+  and `terminal.py` now holds the terminal (`6a410da`; CI green on all three
+  systems). A second intermittent difference on macOS, a doubled carriage
   return in the TypeScript's own terminal output, is folded by one normalize
   rule (CR CR LF as CR LF) for the terminal run only.
 - Ledger: 57 features, 6 verified, 3 partial, 48 missing.
