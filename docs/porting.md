@@ -310,6 +310,14 @@ letter case. A line's `pwd` is therefore `<CWD:msys>` there. When both sides
 print the same spelling, they compare the same. A port that prints `{:?}`
 where its TypeScript prints the plain path differs, as its users would see.
 
+The short spelling is not rare. On GitHub's Windows runners `TEMP` is
+`C:\Users\RUNNER~1\AppData\Local\Temp`, while a machine whose user name has
+eight letters or fewer never shows one. bun's `fs.realpathSync` writes such a
+name out in full, node's keeps it, and node's `fs.realpathSync.native` writes
+it out. A port's own test that compares directories runs both sides through
+`fs.realpathSync.native` first. rustify's launcher tests passed on jr and
+failed on the runners until they did.
+
 The runner compares the exit code (for a program that a signal ended, which
 signal: `signal SIGTERM`), stdout, stderr, and what each `after` line prints.
 Through pipes, stdout and stderr are read as UTF-8 text, so bytes that are
