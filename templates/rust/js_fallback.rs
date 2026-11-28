@@ -129,9 +129,11 @@ pub fn package_root() -> Option<PathBuf> {
 /// without such a line goes to bun, and to node when bun cannot be started
 /// and the entry is not TypeScript. On Windows, where nothing but the package
 /// managers' command shims reads the `#!` line, the runtime that line names
-/// comes first, then bun, then node (not for TypeScript), each looked up on
-/// PATH with PATHEXT as a command prompt looks it up (see `find_program`):
-/// that finds `bun.exe`, and the `bun.cmd` that `npm i -g bun` writes.
+/// comes first, then bun, then node (not for TypeScript), each looked up in
+/// the directories of PATH with the extensions of PATHEXT that a program can
+/// be started from (see `find_program`; unlike a command prompt, not in the
+/// working directory first): that finds `bun.exe`, and the `bun.cmd` that
+/// `npm i -g bun` writes.
 pub fn run(entry: &str) -> ! {
     if tracing() {
         // A closed stderr must not stop the hand-back.
@@ -160,13 +162,15 @@ pub fn run(entry: &str) -> ! {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        if let Shebang::Command(words) = shebang(&read_head(&script), cfg!(target_os = "macos")) {
+        let line = shebang(&read_head(&script), cfg!(target_os = "macos"));
+        // Never empty (see Shebang::Command); an empty one would go to bun below.
+        if let Some((name, words)) = match &line { Shebang::Command(words) => words.split_first(), _ => None } {
             // As the system does it: argv[0] is the interpreter as the line
             // writes it, and one without a slash is found in the working
             // directory, not on PATH.
-            let written = OsString::from_vec(words[0].clone());
-            let program = if words[0].contains(&b'/') { written.clone() } else { OsString::from_vec([b"./".as_slice(), &words[0]].concat()) };
-            let rest: Vec<OsString> = words[1..].iter().cloned().map(OsString::from_vec).collect();
+            let written = OsString::from_vec(name.clone());
+            let program = if name.contains(&b'/') { written.clone() } else { OsString::from_vec([b"./".as_slice(), name].concat()) };
+            let rest: Vec<OsString> = words.iter().cloned().map(OsString::from_vec).collect();
             // Replaces this process, so signals and the exit code need no relaying.
             let error = command(&program, &rest).arg0(&written).exec();
             let code = if error.kind() == std::io::ErrorKind::NotFound { 127 } else { 126 };
@@ -422,12 +426,15 @@ enum Shebang {
     /// No `#!` at the very start of the file (behind a byte-order mark it is
     /// not one either).
     None,
-    /// A `#!` line the system refuses to start the script with: one without
-    /// an interpreter, on macOS one that does not end within 512 bytes, on
-    /// Linux one whose interpreter's name goes past 256. Taken as no `#!`
-    /// line.
+    /// A `#!` line the system refuses to start the script with (ENOEXEC): one
+    /// without an interpreter, on macOS one that does not end within 512
+    /// bytes, on Linux one whose interpreter's name goes past 256. Taken as
+    /// no `#!` line. So is one whose interpreter's name is empty because a
+    /// NUL comes first (`#!\0…`, `#! \0…`), which the kernels try to start
+    /// and cannot (EACCES on Linux, ENOENT on macOS).
     Refused,
-    /// The interpreter, as the line writes it, and its arguments.
+    /// The interpreter, as the line writes it, and its arguments, which may
+    /// be empty. Never empty itself: the interpreter's name is there.
     Command(Vec<Vec<u8>>),
 }
 
@@ -436,7 +443,8 @@ enum Shebang {
 /// passes everything after the interpreter as one argument, macOS (`split`;
 /// XNU's exec_shell_imgact) splits it at blanks and also ends the line at a
 /// `#`. Blanks are spaces and tabs only, so a carriage return stays part of
-/// the line (`bun\r`), and a NUL ends what is read.
+/// the line (`bun\r`), and a NUL ends what is read; a NUL right after a blank
+/// leaves an empty argument, which both kernels pass on.
 #[allow(dead_code)] // unused on Windows, tested everywhere
 fn shebang(head: &[u8], split: bool) -> Shebang {
     let blank = |c: u8| c == b' ' || c == b'\t';
@@ -462,9 +470,26 @@ fn shebang(head: &[u8], split: bool) -> Shebang {
             end -= 1;
         }
         let line = &vdata[start..=end];
-        // What follows is read as a C string.
-        let line = &line[..line.iter().position(|&c| c == 0).unwrap_or(line.len())];
-        return Shebang::Command(line.split(|&c| blank(c)).filter(|w| !w.is_empty()).map(<[u8]>::to_vec).collect());
+        // Read as a C string, and split as exec_extract_strings splits it: a
+        // word ends at a blank, and the blanks after it are skipped, so a NUL
+        // right after a blank leaves one empty word at the end.
+        let mut rest = &line[..line.iter().position(|&c| c == 0).unwrap_or(line.len())];
+        let mut words = Vec::new();
+        loop {
+            let at = rest.iter().position(|&c| blank(c)).unwrap_or(rest.len());
+            words.push(rest[..at].to_vec());
+            if at == rest.len() {
+                break;
+            }
+            rest = &rest[at + 1..];
+            rest = &rest[rest.iter().position(|&c| !blank(c)).unwrap_or(rest.len())..];
+        }
+        // A NUL first: the interpreter's name is empty (the kernel cannot
+        // start that, ENOENT).
+        if words[0].is_empty() {
+            return Shebang::Refused;
+        }
+        return Shebang::Command(words);
     }
     // Linux: a buffer of 256 bytes, padded with NULs.
     let mut buf = [0u8; 256];
@@ -494,17 +519,18 @@ fn shebang(head: &[u8], split: bool) -> Shebang {
     }
     let line = &line[line.iter().position(|&c| !blank(c)).unwrap_or(line.len())..];
     let name_end = line.iter().position(|&c| blank(c) || c == 0).unwrap_or(line.len());
+    // No name, or a NUL first (the kernel cannot start an empty name, EACCES).
     if name_end == 0 {
         return Shebang::Refused;
     }
     let mut words = vec![line[..name_end].to_vec()];
     if line.get(name_end).is_some_and(|&c| c != 0) {
+        // The trailing blanks are gone, so something follows the blanks
+        // here; up to a NUL, which can leave it empty, and the kernel passes
+        // that empty argument too.
         let rest = &line[name_end..];
         let rest = &rest[rest.iter().position(|&c| !blank(c)).unwrap_or(rest.len())..];
-        let argument = &rest[..rest.iter().position(|&c| c == 0).unwrap_or(rest.len())];
-        if !argument.is_empty() {
-            words.push(argument.to_vec());
-        }
+        words.push(rest[..rest.iter().position(|&c| c == 0).unwrap_or(rest.len())].to_vec());
     }
     Shebang::Command(words)
 }
@@ -550,19 +576,21 @@ const DEFAULT_PATHEXT: &str = ".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;
 
 /// The first `<dir>\<name><ext>` that is a file, for the directories of PATH
 /// in order and, in each, the extensions of PATHEXT in order, as a command
-/// prompt looks for a command (but not in the working directory first).
-/// Only the extensions a program can be started from count: `.com`, `.exe`,
-/// and the `.bat` and `.cmd` files that Rust starts through cmd.exe, with
-/// their arguments quoted for it. A name that already ends in one of those
-/// is looked for as it is.
+/// prompt looks for a command, except that a command prompt looks in the
+/// working directory first and this does not. Only the extensions a program
+/// can be started from count: `.com`, `.exe`, and the `.bat` and `.cmd` files
+/// that Rust starts through cmd.exe, with their arguments quoted for it.
+/// They are tried in small letters, as the files are named (`bun.cmd`, not
+/// PATHEXT's `bun.CMD`; Windows finds them either way). A name that already
+/// ends in one of those is looked for as it is.
 #[allow(dead_code)] // used on Windows, tested everywhere
 fn find_program(name: &str, dirs: impl IntoIterator<Item = PathBuf>, pathext: &str, is_file: impl Fn(&std::path::Path) -> bool) -> Option<PathBuf> {
     const STARTABLE: [&str; 4] = [".com", ".exe", ".bat", ".cmd"];
     let ends_in = |ext: &str| name.len() > ext.len() && name.is_char_boundary(name.len() - ext.len()) && name[name.len() - ext.len()..].eq_ignore_ascii_case(ext);
-    let extensions: Vec<&str> = if STARTABLE.iter().any(|ext| ends_in(ext)) {
-        vec![""]
+    let extensions: Vec<String> = if STARTABLE.iter().any(|ext| ends_in(ext)) {
+        vec![String::new()]
     } else {
-        pathext.split(';').filter(|ext| STARTABLE.iter().any(|known| ext.eq_ignore_ascii_case(known))).collect()
+        pathext.split(';').filter(|ext| STARTABLE.iter().any(|known| ext.eq_ignore_ascii_case(known))).map(str::to_ascii_lowercase).collect()
     };
     for dir in dirs {
         if dir.as_os_str().is_empty() {
@@ -640,6 +668,15 @@ mod tests {
         both("#!node --flag\n", Some(&["node", "--flag"]), Some(&["node", "--flag"]));
         // A NUL ends what is read.
         both("#!/bin/sh one\0two\n", Some(&["/bin/sh", "one"]), Some(&["/bin/sh", "one"]));
+        both("#!/bin/sh\0 one\n", Some(&["/bin/sh"]), Some(&["/bin/sh"]));
+        // Right after a blank, it leaves an empty argument, which both kernels pass.
+        both("#!/bin/sh \0two\n", Some(&["/bin/sh", ""]), Some(&["/bin/sh", ""]));
+        both("#!/bin/sh\t\0two\n", Some(&["/bin/sh", ""]), Some(&["/bin/sh", ""]));
+        both("#!/bin/sh one \0two\n", Some(&["/bin/sh", "one "]), Some(&["/bin/sh", "one", ""]));
+        // First, it leaves no interpreter: refused, as the kernels cannot start one.
+        both("#!\0/usr/bin/env node\n", None, None);
+        both("#!  \0/usr/bin/env node\n", None, None);
+        both("#!\t\0", None, None);
         // Linux reads 256 bytes and cuts a longer line off; macOS reads 512 and refuses a longer one.
         let long = format!("#!/usr/bin/env {}\n", "a".repeat(300));
         both(&long, Some(&["/usr/bin/env", &"a".repeat(240)]), Some(&["/usr/bin/env", &"a".repeat(300)]));
@@ -682,6 +719,9 @@ mod tests {
         assert_eq!(find("npx", &["C:/bun", "C:/npm"], DEFAULT_PATHEXT).as_deref(), Some("c:/npm/npx.cmd"));
         // A name with its extension is looked for as it is.
         assert_eq!(find("bun.exe", &["C:/npm", "C:/bun"], ".CMD").as_deref(), Some("c:/bun/bun.exe"));
+        // The file as it is named, not in PATHEXT's capitals.
+        let found = find_program("bun", [PathBuf::from("C:/npm")], ".COM;.EXE;.BAT;.CMD", is_file).unwrap();
+        assert_eq!(found.file_name().and_then(|f| f.to_str()), Some("bun.cmd"));
         assert!(is_batch_file(std::path::Path::new("C:/npm/bun.CMD")) && is_batch_file(std::path::Path::new("x.bat")));
         assert!(!is_batch_file(std::path::Path::new("C:/bun/bun.exe")));
     }

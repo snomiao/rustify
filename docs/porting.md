@@ -198,14 +198,23 @@ What it changes, from three faults wtx's port found in version 5:
   `#!/usr/bin/env bun` with no bun on PATH is reported by env, in its words,
   with exit code 127, as when the command was the script. Version 5 started
   the runtime the line names by its name and then tried bun and node as
-  well, so without bun wtx's entry, which node cannot run, went to node. An
-  entry without a `#!` line (or with one the system refuses: empty, or
-  longer than macOS reads) goes to bun, then to node unless it is
-  TypeScript, as before. `tests/e2e/toy/tests/handback.rs` compares this
-  with the kernel on every run of the toy's tests.
+  well, so without bun wtx's entry, which node cannot run, went to node.
+  It also means that an entry whose line says `#!/usr/bin/env node`, on a
+  machine with bun and no node (where the launcher's runtime is bun, say),
+  now gets env's `No such file or directory` and exit 127, where version 5
+  ran it with bun. That is what the command did before it was ported; an
+  owner whose users may have only bun writes `#!/usr/bin/env bun` there. An
+  entry without a `#!` line (or with one the system refuses: empty, longer
+  than macOS reads, or with a NUL where the interpreter's name begins) goes
+  to bun, then to node unless it is TypeScript, as before. A NUL right after
+  a blank leaves an empty argument, which both kernels pass and version 6
+  passes too. `tests/e2e/toy/tests/handback.rs` compares all this with the
+  kernel on every run of the toy's tests.
 - On Windows the runtimes, in version 5's order (what the `#!` line names,
-  then bun, then node), are looked up on PATH with PATHEXT, as a command
-  prompt looks them up. That finds `bun.exe`, and also the `bun.cmd` that
+  then bun, then node), are looked up in the directories of PATH, in order,
+  with the extensions of PATHEXT a program can be started from (`.com`,
+  `.exe`, `.bat`, `.cmd`), in PATHEXT's order; unlike cmd.exe, not in the
+  working directory first. That finds `bun.exe`, and also the `bun.cmd` that
   `npm i -g bun` writes, which version 5 never tried. Rust starts a `.cmd`
   through cmd.exe and quotes every argument for it (since Rust 1.77.2, the
   BatBadBut fix): `%`, `"`, `&`, `^`, `|`, `<`, `>`, `!`, spaces, an empty

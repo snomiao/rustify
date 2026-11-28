@@ -124,6 +124,10 @@ mod unix {
             ("crlf", format!("#!{ARGV} one\r\nconsole.log(1)\r\n"), false),
             ("hash", format!("#!{ARGV} one # two\n"), false),
             ("nul", format!("#!{ARGV} one\0two\n"), false),
+            // An empty argument, which both kernels pass (Linux: "one "; macOS: "one", "").
+            ("nul-after-blank", format!("#!{ARGV} \0two\n"), false),
+            ("nul-after-tab", format!("#!{ARGV}\t\0two\n"), false),
+            ("nul-after-argument", format!("#!{ARGV} one \0two\n"), false),
             ("long", format!("#!{ARGV} {}\n", "a".repeat(300)), false),
             ("relative", "#!rel-argv x y\n".to_string(), false),
             ("relative-dir", "#!sub/rel-argv x\n".to_string(), false),
@@ -141,6 +145,29 @@ mod unix {
         compare("longer", longer.as_bytes(), cfg!(target_os = "macos"));
         let no_line_end = format!("#!{ARGV} one");
         compare("no-line-end", no_line_end.as_bytes(), cfg!(target_os = "macos"));
+    }
+
+    /// A NUL where the interpreter's name begins: the kernels try to start an
+    /// empty name and cannot (EACCES on Linux, ENOENT on macOS), and the
+    /// hand-back takes the line for none, as for `#!` alone: bun.
+    #[test]
+    fn an_interpreter_name_that_a_nul_empties_is_no_interpreter() {
+        let _serial = serial();
+        for (name, head) in [("nul-first", "#!\0/usr/bin/env node\n"), ("nul-after-blanks", "#!  \0/usr/bin/env node\n")] {
+            let dir = scratch(name);
+            let root = dir.join("pkg");
+            let entry = package(&root, head.as_bytes());
+            runtime_at(&dir.join("bin").join("bun"));
+            let path = std::env::join_paths([dir.join("bin"), "/usr/bin".into(), "/bin".into()]).unwrap();
+            let kernel = start(&entry, &ARGS, &dir, &path, &[]);
+            let hand_back = start(Path::new(TOY), &ARGS, &dir, &path, &[(ROOT_ENV, root.as_os_str())]).unwrap();
+            println!("== {name}\n-- the kernel: {}\n-- toy js: {}", kernel.as_ref().map(text).unwrap_or_else(|e| format!("{e}\n")), text(&hand_back));
+            let expected = if cfg!(target_os = "macos") { 2 } else { 13 };
+            assert_eq!(kernel.err().and_then(|e| e.raw_os_error()), Some(expected), "{name}: the kernel's answer");
+            let printed = String::from_utf8_lossy(&hand_back.stdout).into_owned();
+            assert!(hand_back.status.success() && printed.starts_with(&format!("bun\n{}\n{}\n", entry.display(), ARGS.join("\n"))), "{name}: bun was not started: {}", text(&hand_back));
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
     }
 
     /// Linux reads 256 bytes: an interpreter's name that a blank in the last
@@ -290,7 +317,8 @@ mod windows {
         println!("{}", text(&output));
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(output.status.code(), Some(127), "{}", text(&output));
-        assert!(stderr.to_lowercase().contains("bun.cmd is a batch file") && !stderr.contains("panicked"), "{stderr}");
+        // Named as the file is, not in PATHEXT's capitals.
+        assert!(stderr.contains("\\npm\\bun.cmd is a batch file") && !stderr.contains("panicked"), "{stderr}");
         assert!(output.stdout.is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
     }
