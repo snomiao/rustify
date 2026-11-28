@@ -1,43 +1,100 @@
 # Parity ledger for bunto (command `bunto`). Format and rules: parity/README.md.
 #
-# Written by reading, 2026-11-27, at dec02fd (the head of main; the branch
-# build/rustify-pipeline adds only the crate in rs/ and a workflow, so the
-# TypeScript is the same there). Read in full: cli.ts, index.tsx,
-# bunPMCommand.ts, notneed.ts, globWatch.ts, globMapFlow.ts,
+# First written by reading, 2026-11-27, at dec02fd (the head of main; the
+# branch build/rustify-pipeline adds only the crate in rs/, its parity cases
+# and a workflow, so the TypeScript is the same there). Read in full: cli.ts,
+# index.tsx, bunPMCommand.ts, notneed.ts, globWatch.ts, globMapFlow.ts,
 # createIgnoreFilter.ts, nil.ts, arrayDiffs.tsx, mapReads.ts,
 # promiseWithResolvers.ts, wait.ts, logError.ts, import-helpers.ts,
 # builtins.ts, PartialUnion.ts (test-data/sub/*.ts are empty), package.json,
 # bunfig.toml; the order in which yargs 17.7.2 (the version bun.lock pins)
 # answers --help, validates and runs a handler (build/lib/command.js,
-# yargs-factory.js); and bin/cli.js as `bun run build` bundles it at dec02fd.
-# For the published release, index.ts and globflow.ts of e59f19b, from which
-# 1.4.18 was published, were read too.
+# yargs-factory.js, validation.js, yargs-parser); and bin/cli.js as
+# `bun run build` bundles it at dec02fd. For the published release, index.ts
+# and globflow.ts of e59f19b, from which 1.4.18 was published, were read too.
 #
-# Nothing was run beyond --help: `bunto --help`, `bunto i --help`,
-# `bunto --version` and one usage error (`bunto --nope`), with bun from an
-# empty directory with HOME, USERPROFILE and XDG_CONFIG_HOME pointing at a
-# throwaway one, and the same help commands and usage error through rustify's
-# install smoke test. The default command, `install` and `remove` were not
-# run: they scan the current directory and start `bun install` and
-# `bun remove` there. No test exists (`bun test || true`), so no proof is
-# cited.
+# Then ported, 2026-11-28, on build/rustify-pipeline: what yargs answers
+# without running a command (the help, the version, an unknown argument) is
+# answered by the binary on Linux, macOS and Windows; every command line that
+# reaches a command's handler is handed back. Everything was run: bin/cli.js
+# (bundled by bun 1.4.0) in a throwaway home, with a `bun` first on PATH that
+# notes and does not run installs and removals (rs/parity/shim/bun), and the
+# registry of the project cases pointed at a closed port.
 #
+# The proof, `sh rs/parity/proof.sh <parity.mjs> <binary>` (what the
+# workflow's parity job runs on linux-x64, darwin-arm64 and win32-x64, with
+# the binary the pipeline built for each; on Linux the static musl one):
+# - rs/parity.json (920 cases, written by rs/parity.gen.mjs): TypeScript
+#   against the binary, and the --handback check. On Linux 691 are answered
+#   by the binary and 226 handed back as marked (3 skipped); on macOS 690 and
+#   229 (1 skipped); on Windows 668 and 207, with 45 skipped (a terminal, a
+#   symbolic link, a removed directory, a `bun` that is a shell script, what
+#   Git Bash's sh does with LD_PRELOAD and a missing HOME, a command line past
+#   32767 characters, a `#` in a path, a TEMP bun hangs on, and simdutf's
+#   values bun hangs on). On Linux and macOS the whole file passes again
+#   with stdout and stderr on a terminal (--tty stdout,stderr);
+# - rs/parity/args.mjs: 1500 more command lines, bin/cli.js against the
+#   binary (1172 answered, the same; 83 handed back exactly where bin/cli.js
+#   runs a handler; 245 outside the words modelled, handed back);
+# - cargo test: the argument model, the gates' helpers (a TEMP bun cannot use
+#   on Windows, a package path bun cannot load, the version, the variables
+#   that go back, the locale's file, what `bun --version` says), and
+#   rs/tests/handback.rs, which runs the binary with no bun on PATH, with a
+#   bun that cannot be run, that fails, says another version or hangs on
+#   --version, without bin/cli.js, and with BUNTO_NO_NATIVE.
+# Passed at 4e4f613, the branch's head, on: Linux x64 with bun 1.4.0
+# against the static musl binary; macOS 27 arm64 with bun 1.4.4; Windows 11
+# x64 (Git Bash, a clone with core.autocrlf=true) with bun 1.4.2. At 73ae4cf,
+# which differs from it in a comment only, also on Linux with bun 1.4.5
+# against the musl binary and with bun 1.4.0 against a glibc build, and on
+# macOS and Windows as above. (Before the repair, at 6339eb9, the 793
+# cases of then had passed with bun 1.4.5 on macOS and Windows too; after it,
+# no other bun was at hand there.) A Windows machine under load cannot always
+# start a program (it ends with STATUS_DLL_INIT_FAILED), and two such
+# failures compare alike: run.sh and args.mjs start such a program again.
+# Before the cases, 5007 command lines were compared the same way by hand on
+# Linux (all agreed). The help, version and error texts were also the same
+# under bun 1.1.13, 1.1.17, 1.1.21, 1.1.45, 1.2.23, 1.3.14 and 1.4.5, by
+# hand, on Linux.
+#
+# Verified independently, 2026-11-28, and repaired on the same branch. Every
+# proof reproduced, and the argument model held (10800 more command lines);
+# four states of the machine did not, and go back now (the verifier's 92
+# cases are in rs/parity.json as `verify: …`, marked where they go back):
+# - a locale longer than a path may be (y18n gets ENAMETOOLONG for
+#   `<locale>.json` and rethrows it: bin/cli.js crashes from about 4080
+#   letters on Linux, 1000 on macOS);
+# - SIMDUTF_FORCE_IMPLEMENTATION (bun 1.4.0 and 1.4.2 on x64 hang, 1.4.5
+#   stops);
+# - the variables of the system's loader and libraries (glibc's ld.so for
+#   bun, while the Linux binary is static musl; macOS's dyld, libmalloc and
+#   Objective-C runtime);
+# - a `bun` on PATH that does not run (a version manager's shim, exit 126).
+
 # How the two fit together. The Rust binary is meant to be the installed
-# command; today it hands every invocation to bin/cli.js, a bundle of cli.ts
-# that is a build product (not in git). So every feature here is `missing`.
+# command. It answers natively what rs/src/cli.rs models, in the states of the
+# machine rs/src/runtime.rs lets through, and hands everything else, before
+# it has printed anything, to bin/cli.js, a bundle of cli.ts that is a build
+# product (not in git).
 #
-# For the owner, before anything is ported:
+# For the owner:
 # - main has never been published. Its semantic-release run failed, and npm's
 #   1.4.18 is e59f19b. Between the two, index.ts became index.tsx and
-#   bunAuto() was rewritten around @snomiao/glob-watch, unfinished: as read,
-#   every command but help and version throws `ReferenceError: getDeps is not
-#   defined` (index.tsx:50). The working scan of 1.4.18 is still in
+#   bunAuto() was rewritten around @snomiao/glob-watch, unfinished: every
+#   command but help, version and a usage error throws `ReferenceError:
+#   getDeps is not defined` (index.tsx:50). Now seen, not only read (cases
+#   `work: …`): the command's help on stderr, one newline on stdout, bun's
+#   report of the error with a source excerpt and the bundle's stack, exit 1;
+#   nothing is installed or removed. The working scan of 1.4.18 is still in
 #   index.tsx as useBunAuto(), which nothing calls and the bundle leaves out.
-#   A port has to match one of the two; which one is the owner's decision.
-#   The notes below say what each does.
+#   The binary hands all of that back. Porting the scan means porting one of
+#   the two versions; which one, and fixing main first, is the owner's
+#   decision.
 # - package.json's exports, module and types name ./index.ts, which main no
 #   longer has (and `files` ships only the root's .ts), so `import "bunto"`
 #   from a release of main would fail.
+# - The help says `remove all unnessecery dependencies` (cli.ts:12); the
+#   binary prints the same.
 # - Files that nothing reachable from cli.ts imports, and that have no
 #   feature of their own: arrayDiffs.tsx, mapReads.ts, promiseWithResolvers.ts,
 #   wait.ts, logError.ts, import-helpers.ts, builtins.ts, PartialUnion.ts,
@@ -45,13 +102,21 @@
 #   784 lines to replace.
 #
 # Rust-only behaviour, with no TypeScript counterpart, for the owner to bless
-# or remove (all from the hand-back helper, rs/src/js_fallback.rs v5):
-# BUNTO_NO_NATIVE=1 hands everything back; BUNTO_PACKAGE_ROOT tells the
-# binary where the package is; with RUSTIFY_HANDBACK_TRACE set it writes
-# `rustify: handed back to the JavaScript` to stderr first; a binary without
-# its package beside it says so and fails. Handed back, bin/cli.js starts with
-# the runtime its first line names (bun), or node when there is no bun, and
-# under node the bundle cannot run (it imports `bun`).
+# or remove: BUNTO_NO_NATIVE=1 hands everything back; BUNTO_PACKAGE_ROOT tells
+# the binary where the package is; with RUSTIFY_HANDBACK_TRACE set a
+# hand-back writes `rustify: handed back to the JavaScript` to stderr first; a
+# binary without its package beside it says so and fails. Handed back,
+# bin/cli.js starts with the runtime its first line names (bun), or node when
+# there is no bun, and under node the bundle cannot run (it imports `bun`);
+# the binary answers nothing natively when no bun is on PATH, so that case
+# looks as it did. `--version` prints the version of the package.json beside
+# bin/cli.js, where bin/cli.js prints the one bundled into it: the pipeline
+# stamps package.json before it bundles, so the two agree in every package it
+# builds, but a bin/cli.js bundled from another package.json would differ.
+# Before each native answer the binary starts `bun --version` once, with its
+# output kept, to learn that the bun bin/cli.js would run with runs and is
+# of the versions proven: a version manager's shim that installs on first
+# use would do so then (bin/cli.js would have started it too).
 
 reconciled = "dec02fd"
 
@@ -61,57 +126,89 @@ reconciled = "dec02fd"
 name = "bunto / bunto auto (the default command)"
 status = "missing"
 ts = "cli.ts:13; index.tsx:38 bunAuto"
-note = "Flags: -w/--watch (default false), --dry (false), -r/--remove (true), -i/--install (true); `-r` and `-i` are these flags here, while `r` and `i` alone are the commands. At dec02fd bunAuto() reads only `watch`: it starts three glob watchers on the current directory (see `watching`) and then throws ReferenceError at index.tsx:50, which yargs reports (see `errors a command throws`); exit 1, by reading. In 1.4.18 it scans once and acts: prints `[Bun Auto] v<version>`, `* Package <file>` for every package.json, `+ <file>0<deps as JSON>` for every source file (the `0` is index.tsx:243's `${+\" \"}`), `[Bun Auto] Watching... (-w=false to turn off watching mode)` when --watch is on (nothing is watched), runs the installs, then the removals, and prints `[Bun Auto] All done!`. With no flags that removes every dependency it judges unused."
+rs = "rs/src/cli.rs Outcome::Handler"
+note = "Handed back whenever yargs would run its handler (rs/src/cli.rs Outcome::Handler; cases `work: …` and `args: …` marked so). Flags: -w/--watch (default false), --dry (false), -r/--remove (true), -i/--install (true); `-r` and `-i` are these flags here, while `r` and `i` alone are the commands. At dec02fd, as run: bunAuto() starts three glob watchers on the current directory (see `watching`) and throws ReferenceError at index.tsx:50, which yargs reports (see `errors a command throws`); exit 1. In 1.4.18 it scans once and acts: prints `[Bun Auto] v<version>`, `* Package <file>` for every package.json, `+ <file>0<deps as JSON>` for every source file (the `0` is index.tsx:243's `${+\" \"}`), `[Bun Auto] Watching... (-w=false to turn off watching mode)` when --watch is on (nothing is watched), runs the installs, then the removals, and prints `[Bun Auto] All done!`. With no flags that removes every dependency it judges unused."
 
 [[feature]]
 name = "bunto install / bunto i"
 status = "missing"
 ts = "cli.ts:45; index.tsx:38 bunAuto"
-note = "The default command with install on and remove off; -w/--watch defaults to true here, and --dry is accepted. At dec02fd bunAuto() ignores install, remove and dry, so this throws the same ReferenceError. In 1.4.18 it installs what is missing and removes nothing."
+rs = "rs/src/cli.rs Outcome::Handler"
+note = "Handed back whenever the handler runs. The default command with install on and remove off; -w/--watch defaults to true here, and --dry is accepted. At dec02fd bunAuto() ignores install, remove and dry, so this throws the same ReferenceError (cases `work: i on a project`, …). In 1.4.18 it installs what is missing and removes nothing."
 
 [[feature]]
 name = "bunto remove / bunto r"
 status = "missing"
 ts = "cli.ts:32; index.tsx:38 bunAuto"
-note = "The default command with remove on and install off; -w/--watch defaults to true, --dry is accepted. At dec02fd: the same ReferenceError. In 1.4.18 it removes what it judges unused and installs nothing."
+rs = "rs/src/cli.rs Outcome::Handler"
+note = "Handed back whenever the handler runs. The default command with remove on and install off; -w/--watch defaults to true, --dry is accepted. At dec02fd: the same ReferenceError. In 1.4.18 it removes what it judges unused and installs nothing."
 
 [[feature]]
 name = "--help / -h, and each command's help"
-status = "missing"
+status = "verified"
 ts = "cli.ts:60; cli.ts:62"
-note = "yargs 17's text, exit 0, before any handler runs. Seen: the top-level help has the usage line `bunto <cmd> [args]`, the commands auto [default], remove [aliases: r] and install [aliases: i], three examples, and of the options only -v, -h and `--dry [boolean] [default: dry run mode]` (the third argument of .default() is shown as the default); -w, -r and -i are not listed. `bunto i --help` shows `bunto install`, its description and the same options. Includes yargs's other ways to ask for help (see porting.md, `The argument parser`)."
+rs = "rs/src/cli.rs; rs/src/main.rs; rs/src/runtime.rs"
+proof = "rs/parity.json; rs/parity/args.mjs; rs/parity/proof.sh"
+note = "Native on Linux, macOS and Windows (proven on each; parity-platforms runs the cases on linux-x64, darwin-arm64 and win32-x64; rs/src/runtime.rs platform_is_proven makes it native on linux-arm64, darwin-x64 and win32-arm64 too, where the pipeline runs only the smoke lines, not the cases): yargs 17's four texts (the top level, which the default command reached without its name shows too; `auto`; `install`; `remove`), exit 0, for every command line of plain words and flags that asks for help: --help or -h anywhere, or `help` as the last word, with yargs's two parses modelled (an option the top level does not know takes the next word as its value, so `--dry help` is the default command's help and `i help -w foo` an error). Seen: the top-level help lists the commands auto [default], remove [aliases: r], install [aliases: i], three examples, and of the options only -v, -h and `--dry [boolean] [default: dry run mode]`; `bunto i --help` shows `bunto install`. LANG, LC_ALL, LC_MESSAGES and LANGUAGE change nothing while the locale is a plain name in a short path (y18n finds no translations beside the package); a longer or odder one goes back, see `the help in the user's language`. Each native answer first asks the bun on PATH for its version (see `what bun does before the program`). Handed back: see `help, version and usage errors on a terminal`, `what bun does before the program`, `the help in the user's language` and `spellings of the command line only yargs reads`."
 
 [[feature]]
 name = "--version / -v"
-status = "missing"
+status = "verified"
 ts = "cli.ts:58"
-note = "Prints package.json's version as it was bundled into bin/cli.js (`.version(pkg.version)`), so it is right under bun's global install too. The pipeline stamps package.json before it builds bin/cli.js, so the bundle carries the release version."
+rs = "rs/src/main.rs; rs/src/runtime.rs read_version; rs/src/cli.rs"
+proof = "rs/parity.json; rs/parity/args.mjs; rs/parity/proof.sh"
+note = "Native on Linux, macOS and Windows (and, unproven by the cases, on linux-arm64, darwin-x64 and win32-arm64), wherever yargs prints it: -v or --version anywhere unless help is asked too, also with unknown words (`bunto -v foo`), exit 0. bin/cli.js prints package.json's version as it was bundled (`.version(pkg.version)`), so it is right under bun's global install too; the binary prints the version of the package.json beside bin/cli.js, which the pipeline stamps before it bundles (see the Rust-only notes above). A version that is not a plain string of letters, digits, `.`, `-` and `+` is handed back. Handed back in the same situations as the help, a locale that would break the help included, although bin/cli.js looks no text up for the version (the binary decides before it knows what it prints)."
 
 [[feature]]
 name = "usage errors"
-status = "missing"
+status = "verified"
 ts = "cli.ts:61"
-note = "`.strict()`: an unknown option or word prints the top-level help to stderr, a blank line and `Unknown argument: <name>`, exit 1, before any handler runs (seen for `--nope`). The other messages are yargs's own."
+rs = "rs/src/cli.rs Outcome::Unknown; rs/src/main.rs finish"
+proof = "rs/parity.json; rs/parity/args.mjs; rs/parity/proof.sh"
+note = "`.strict()`'s `Unknown argument: <name>` / `Unknown arguments: <a>, <b>`, the only usage error this chain gives for plain words, native on Linux, macOS and Windows (and, unproven by the cases, on linux-arm64, darwin-x64 and win32-arm64): the help of the command it happened in on stderr, one newline on stdout (bun writes console.error() with no arguments there, in every bun from 1.1.45 to 1.4.5), the message on stderr, exit 1. The names in yargs's order: unknown options as they first appear, then every word after the command. Handed back when stdout or stderr is a terminal, or FORCE_COLOR is set (bun makes console.error red then; NO_COLOR, TERM and CI change nothing through pipes), and in the situations of the help."
 
 [[feature]]
 name = "errors a command throws"
 status = "missing"
 ts = "cli.ts:30; cli.ts:43; cli.ts:56"
-note = "There is no .fail() handler: a handler's rejection goes to yargs, which prints the help to stderr and then the error as bun prints it (message, source excerpt, stack of the bundle), exit 1. By reading; not run. At dec02fd this is what all three commands end in. The text cannot be reproduced natively, so these are handed back for good (porting.md)."
+rs = "rs/src/cli.rs Outcome::Handler"
+note = "There is no .fail() handler: a handler's rejection goes to yargs, which prints the command's help to stderr, a newline to stdout, and the error as bun prints it (message, source excerpt of the bundle, its stack with the paths of the installed files), exit 1. Seen at dec02fd for all three commands (cases `work: …`). The text cannot be reproduced natively, so these are handed back for good (porting.md)."
 
 [[feature]]
 name = "what bun does before the program"
-status = "missing"
+status = "partial"
 ts = "cli.ts:1"
-note = "bin/cli.js starts with `#!/usr/bin/env bun`. bun first reads .env files, bunfig.toml and package.json/tsconfig.json of the current directory (and the ones above), which for this command is the user's project; see porting.md, `What the TypeScript means`. A native command has to hand back wherever that changes what the program sees."
+rs = "rs/src/runtime.rs Runtime::startup; rs/src/runtime.rs bun_runs"
+note = "bin/cli.js starts with `#!/usr/bin/env bun`. The binary imitates none of what bun, or the system as it starts bun, reads first; it answers only where that changes nothing, and hands back, before printing, where it could. Handed back: a `.env`, `.env.local`, `.env.development` or `.env.development.local` in the current directory (bun loads them; seen with YARGS_DISABLE_WRAP=1, which unwraps the help), a bunfig.toml there (a `preload` runs code first), ~/.bunfig.toml or $XDG_CONFIG_HOME/.bunfig.toml (bun 1.4.0 does not read those to run a file; handed back all the same), any BUN_* variable but BUN_INSTALL, __BUN*, NODE_*, MIMALLOC_*, ICU_* and YARGS_* variables (YARGS_DISABLE_WRAP unwraps the help, YARGS_MIN_NODE_VERSION makes yargs-parser throw), SIMDUTF_* (with SIMDUTF_FORCE_IMPLEMENTATION=1, fallback or anything the processor does not have, bun 1.4.0 and 1.4.2 on x64 hang and 1.4.5 stops with exit 134), the variables of the system's loader and libraries (glibc's ld.so reads LD_* and GLIBC_TUNABLES for bun and writes for LD_PRELOAD of a missing library, LD_AUDIT, LD_DEBUG, LD_SHOW_AUXV and a tunable it does not know, while the Linux binary is static musl and reads none; macOS's dyld reads DYLD_*, libmalloc Malloc* (MallocStackLogging writes two lines for bun and for /usr/bin/env, MallocScribble one on a terminal for every process, the binary included) and the Objective-C runtime OBJC_* (OBJC_HELP writes a page); glibc's MALLOC_* go back too, except MALLOC_ARENA_MAX, and macOS's MallocNanoZone, which are often set in a profile and were seen to change nothing), a current directory that has been removed (bun throws), a package directory bun cannot load from (`?` in its path, `\\` outside Windows), on Windows a TEMP or TMP that is not a directory (bun hangs there), and a bun on PATH that does not answer `bun --version` with a version from 1.1.13 up to, not including, 2.0.0 and nothing else, with exit 0, within 10 s (rs/src/runtime.rs bun_runs: none on PATH; a version manager's shim with no bun behind it, which bin/cli.js gets as `No version is set for command bun`, exit 126; a bun of another system or C library; a bun 1.0 or 2). That last question is asked of every native answer, last, by starting the bun on PATH once with its output kept: it costs a bun start of a few milliseconds (on a loaded Linux machine the binary answered `--help` in 5 to 16 ms, bin/cli.js in 96 to 135 ms; the install smoke test measured 6 ms). Seen to change nothing, and answered natively: package.json, tsconfig.json and jsconfig.json that are not JSON, here or above (bin/cli.js is a `// @bun` bundle), `.env.production`, `.env.test`, `.env.example`, a `.env` or bunfig.toml of the directory above, stdin, JSC_* variables, COLUMNS, an empty or relative HOME, a TMPDIR that is not there. Cases `gate: …` and `verify: …`; the variables of dyld come into the cases through rs/parity/run.sh's X_SET, as the runner's sh and env, protected programs on macOS, take them out of what they pass on. How common: a project that keeps a `.env` file gets every native answer handed back there. Not repairable by handing back, for the owner: on macOS dyld writes for the binary itself before its first line (DYLD_PRINT_LIBRARIES: its own list of libraries, then bun's), libmalloc too on a terminal, in the binary's name (MallocScribble: `bunto(<pid>,…) malloc: enabling scribbling …`), and with DYLD_INSERT_LIBRARIES of a missing library dyld stops the binary (exit 134), where bin/cli.js, started by /usr/bin/env, which macOS protects and which takes every DYLD_* away, never sees the variable; and the hand-back starts bun directly, not through /usr/bin/env, so on macOS bun gets the DYLD_* that bin/cli.js would not, and the lines env itself writes (`env(<pid>) MallocStackLogging: …`; on Linux env's ld.so line for LD_PRELOAD) are missing."
 
-# ─────────────── What the commands do (1.4.18; at dec02fd not reached) ───────────────
+[[feature]]
+name = "help, version and usage errors on a terminal"
+status = "partial"
+ts = "cli.ts:60"
+rs = "rs/src/runtime.rs stdout_is_plain; rs/src/runtime.rs stderr_is_plain"
+note = "yargs wraps its help to process.stdout.columns when stdout is a terminal under 80 columns, and bun makes console.error red when stdout or stderr is a terminal. On Linux and macOS the help and the version are native on a terminal at least 80 columns wide (TIOCGWINSZ), and handed back under that or when the width is not known; a usage error on a terminal is handed back. On Windows a console as stdout hands the help and the version back, and an error on a console too (no terminal there to prove anything on). Proven by the cases `tty: …` (80 columns, and 60, 79, 80, 200 set with stty) and by the whole file run with stdout and stderr on a terminal, on Linux and macOS. So `bunto --help` typed at a terminal is native on Linux and macOS, and not yet on Windows."
+
+[[feature]]
+name = "spellings of the command line only yargs reads"
+status = "missing"
+ts = "cli.ts:7"
+rs = "rs/src/cli.rs lex"
+note = "Handed back before anything is looked at: `--no-<x>`, `--<x>=<v>`, groups of short flags (`-wd`), `--`, `-`, a single letter after two dashes (`--h`), capitals, words that start with a digit, `true` and `false` (a boolean takes them as its value), `constructor`, empty, spaced or non-ASCII words, arguments that are not UTF-8. yargs answers them, with a help, an error or a handler. Rare in what people type. Cases `args: …` marked so, and rs/parity/args.mjs."
+
+[[feature]]
+name = "the help in the user's language (yargs's y18n)"
+status = "partial"
+ts = "cli.ts:7"
+rs = "rs/src/runtime.rs Runtime::startup; rs/src/runtime.rs ordinary_locale_file"
+note = "yargs takes the locale from LC_ALL, LC_MESSAGES, LANG or LANGUAGE (else en_US), cut at `.` or `:`, and y18n reads `<locale>.json` (or the language's) from `locales` beside the package's directory (`resolve(bin/cli.js, \"../../../locales\")`). There is none in any install, so y18n is told the file is not there and prints the English texts: native for a locale that is a plain name (letters, digits, `_`, `-`, `@`) whose file's path is at most 240 bytes (cases `gate: LANG=de_DE.UTF-8 is still English`, `gate: LANG=sr_RS@latin …`, `gate: LC_ALL=80 letters …`, `verify: a locale named constructor`, …). Handed back: a `locales` directory, or anything of that name, beside the package (as given, or its real path; seen: German help with locales/de.json); a locale with any other character (a path, a space, non-ASCII); a longer path. y18n rethrows every error but ENOENT, so past what the system takes (from about 4080 letters on Linux, 1000 on macOS) bin/cli.js ends with bun's report of ENAMETOOLONG instead of the help (cases `verify: LANG of 5000 letters, --help`, …; found by the verifier). On Windows bun 1.4.2 printed the English help for every such locale tried (5000 letters, `*`, `<`, a space); one rule holds there all the same."
 
 [[feature]]
 name = "watching (-w / --watch)"
 status = "missing"
 ts = "globWatch.ts:17 globFlow; index.tsx:39"
-note = "At dec02fd globFlow() starts @snomiao/glob-watch 0.2.1 on ./**/package.json and ./**/*.{ts,tsx,js,jsx,mjs,cjs} under the current directory whatever --watch says, before the throw; its first answer is the only one taken (the stream closes after it). --watch decides only whether bunAuto() would run the installs and removals (index.tsx:86, index.tsx:92), which it never reaches. In 1.4.18 watching is switched off (commented out in index.ts since the commit `fix(main): disable watch`): the scan runs once, and --watch only prints the `Watching...` line."
+note = "Handed back (it is a flag of the handlers). At dec02fd globFlow() starts @snomiao/glob-watch 0.2.1 on ./**/package.json and ./**/*.{ts,tsx,js,jsx,mjs,cjs} under the current directory whatever --watch says, before the throw, and the process ends with exit 1, so a watching command ends at once (cases `work: -w on a project`, …). --watch decides only whether bunAuto() would run the installs and removals (index.tsx:86, index.tsx:92), which it never reaches. In 1.4.18 watching is switched off (commented out in index.ts since the commit `fix(main): disable watch`): the scan runs once, and --watch only prints the `Watching...` line."
+
+# ─────────────── What the commands do (1.4.18; at dec02fd not reached) ───────────────
 
 [[feature]]
 name = "finding the packages each source file imports"
@@ -141,7 +238,7 @@ note = "Not reached at dec02fd (createIgnoreFilterFlow and createIgnoreFilter.ts
 name = "running bun install / bun remove, with @types"
 status = "missing"
 ts = "bunPMCommand.ts:6"
-note = "In the bundle at dec02fd, but never reached: the throw comes first. In 1.4.18: for each package directory and each package, prints `[Bun Auto] bun <install|remove> <name> in <dir>`; with --dry nothing more; otherwise runs `bun <install|remove> <name>` there, output hidden and failure ignored, and when that succeeded and the name is not on the list below, `bun <install|remove> -d @types/<name>`. Installs first, then removals. This is the part that changes the user's project."
+note = "In the bundle at dec02fd, but never reached: the throw comes first (as run on projects with dependencies, sources, nested packages and node_modules, rs/parity/shim/bun was asked nothing). In 1.4.18: for each package directory and each package, prints `[Bun Auto] bun <install|remove> <name> in <dir>`; with --dry nothing more; otherwise runs `bun <install|remove> <name>` there through Bun's shell (which finds bun on PATH), output hidden and failure ignored, and when that succeeded and the name is not on the list below, `bun <install|remove> -d @types/<name>`. Installs first, then removals. This is the part that changes the user's project."
 
 [[feature]]
 name = "the packages that need no @types (DefinitelyTyped's list)"
