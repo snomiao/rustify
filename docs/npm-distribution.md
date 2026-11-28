@@ -113,14 +113,17 @@ NODE_OPTIONS", exit 9; node 20.19 and 24.8).
 Measured with bun 1.4.0 (Linux x64), 1.4.4 (macOS arm64) and 1.4.2
 (Windows 11 x64):
 
-- What the binary gets, compared with what the shell gave the command: on
-  Linux and macOS the same entries in the same order, byte for byte, plus
-  `rootEnv`. On Windows the same entries, byte for byte, including the hidden
-  `=C:=C:\…` entries (the working directory of each drive) that v2 dropped;
-  bun and node sort the block they hand a child (case-insensitively, as
-  CreateProcess wants it), and the hidden entries can come in another order
-  among themselves (`=D:`, `=ExitCode`, `=C:` where cmd.exe had `=C:`, `=D:`,
-  `=ExitCode`).
+- What the binary gets on a first run, installed with bun or npm and started
+  in a directory with `.env` files, compared with what the shell gave the
+  command (`toy env`; `tests/e2e/run.sh` checks it): on Linux and macOS the
+  same entries in the same order, byte for byte, and `rootEnv` after them;
+  v2 added `FROM_DOTENV`, `FROM_LOCAL`, `FROM_DEVELOPMENT` and `NODE_ENV`
+  from the files there. On Windows, from cmd.exe, the same entries byte for
+  byte, the hidden `=C:=C:\…` entries (the working directory of each drive)
+  included, which v2 dropped. bun and node sort the block they hand a child
+  (case-insensitively, as CreateProcess wants it), and the hidden entries can
+  come in another order among themselves (`=ExitCode` before `=C:` where
+  cmd.exe had them the other way round).
 - Names that are array indices (`1`, `42`) come first, in numeric order, as
   they always did in `process.env`.
 - Two entries with one name (on Windows in any letter case): the first is
@@ -141,8 +144,11 @@ Measured with bun 1.4.0 (Linux x64), 1.4.4 (macOS arm64) and 1.4.2
   bun takes nothing else out (Linux, bun 1.4.0, with `BUN_OPTIONS`,
   `NODE_OPTIONS`, `NODE_DEBUG`, `NODE_ENV`, `NO_COLOR`, `FORCE_COLOR`,
   `BUN_INSTALL` and others set).
-- 200 variables of 1000 characters and one of 30000 pass unchanged on all
-  three (the unit test does this).
+- A large environment passes unchanged: 200 variables of 1000 characters
+  and one of 30000 on all three (the unit test does this); 1.5 MB on Linux
+  (1500 variables of 1000 characters, or 15 of 100,000), 450 KB on macOS,
+  whose limit for arguments and environment together is 1 MiB, and 1.9 MB
+  on Windows (60 variables of 32,000 characters).
 - Reading it costs about a millisecond in the launcher (median of 30 runs:
   1.7 ms on Linux, on a machine with a load average above 18; 1.1 ms on
   macOS, bun:ffi's compile of the two functions included; 1.0 ms on
@@ -150,12 +156,12 @@ Measured with bun 1.4.0 (Linux x64), 1.4.4 (macOS arm64) and 1.4.2
   60). On the loaded Linux and macOS machines, runs of the whole launcher
   varied by tens of milliseconds, more than the difference.
 - bun's builds without `process.execve` (every one before 1.4.0) start the
-  binary as a child, with the same environment. Linux needs no bun:ffi. For
-  macOS (x64, arm64) and Windows x64 every bun has bun:ffi's `dlopen`
-  (TinyCC). bun 1.3.x for Windows arm64 is built without TinyCC, and its
-  `dlopen` throws, so there the launcher falls back to `process.env`; bun
-  1.4 builds TinyCC everywhere but Android and FreeBSD (read in bun's
-  sources; no Windows arm64 machine was at hand).
+  binary as a child, with the same environment. Linux needs no bun:ffi.
+  bun:ffi's `dlopen` needs TinyCC, which bun 1.3 and 1.4 build for macOS
+  (x64, arm64) and Windows x64, as their build files say. bun 1.3 does not
+  build it for Windows arm64, where `dlopen` throws and the launcher falls
+  back to `process.env`; bun 1.4 builds it everywhere but Android and
+  FreeBSD. (Read in bun's sources; no Windows arm64 machine was at hand.)
 
 What v3 cannot undo: a preload has already run in the launcher. A
 `preload` in the working directory's `bunfig.toml` runs there, and a
