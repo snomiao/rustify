@@ -241,8 +241,9 @@ function installed(runtime) {
   fs.writeFileSync(path.join(cwd, ".env.development"), "FROM_DEVELOPMENT=yes\n");
   const home = path.join(dir, "home");
   fs.mkdirSync(home);
-  // As the launcher names it: macOS hands out temp directories behind a link.
-  return { dir, root: fs.realpathSync(root), cwd, home, launcher: path.join(root, "rustify", "tool"), printer, standIn };
+  // In full: macOS hands out temp directories behind a link, and a Windows
+  // TEMP can be a short name (C:\Users\RUNNER~1 on GitHub's runners).
+  return { dir, root: fs.realpathSync.native(root), cwd, home, launcher: path.join(root, "rustify", "tool"), printer, standIn };
 }
 
 const DOTENV_NAMES = ["FROM_DOTENV", "FROM_LOCAL", "FROM_PRODUCTION", "FROM_DEVELOPMENT", "NODE_ENV"];
@@ -279,7 +280,14 @@ function assertUserEnvironment(seen, pkg) {
   assert.equal(seen.EQ, "a=b=c");
   assert.equal(seen.OWN, "mine");
   assert.equal(seen.OWN_aß, "mine", "a name with a letter outside ASCII");
-  assert.equal(seen.PKG_ROOT, pkg.root, "the root variable names the package");
+  assert.equal(fullPath(seen.PKG_ROOT), pkg.root, "the root variable names the package");
+}
+
+// A directory as the system writes it in full. Where TEMP is a Windows short
+// name, the launcher's realpath keeps it under node and writes it out under
+// bun; both name the package, and the binary takes either.
+function fullPath(dir) {
+  return dir === undefined ? dir : fs.realpathSync.native(dir);
 }
 
 test("under bun, the binary gets the user's environment, not the .env files bun loaded", { skip: BUN }, () => {
@@ -332,7 +340,7 @@ test("under bun, where the environment cannot be read, the binary gets process.e
     const seen = runLauncher(pkg, { env: userEnvironment(pkg, { RUSTIFY_NO_LINK: "1" }), flags: ["--preload", unreadable] });
     assert.equal(seen.FROM_DOTENV, "yes", "the fallback is bun's process.env, .env included");
     assert.equal(seen.SHARED, "mine");
-    assert.equal(seen.PKG_ROOT, pkg.root);
+    assert.equal(fullPath(seen.PKG_ROOT), pkg.root);
   } finally {
     fs.rmSync(pkg.dir, { recursive: true, force: true });
   }
