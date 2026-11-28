@@ -279,16 +279,29 @@ cases are BROKEN, never passed.
 
 A project's own script that gives a command a pseudo-terminal must keep the
 terminal open itself until it has read everything, as the runner's
-`terminal.py` does. On macOS, a terminal that is not the command's
-controlling terminal and that nothing else holds open drops whatever is
-still unread when the command exits. In a test on macOS 27, a line printed
-just before the exit and read 0.3 s later was gone in 20 of 20 tries.
-When the reader holds the terminal, or the terminal is the command's
-controlling terminal, the command's exit waits until its output has been
-read. Linux keeps the output either way, so the loss shows only on macOS,
-and only when the reader is late, as on a busy CI runner. dotenvdotenc's
-`rs/tty-compat.py` lost six scenes' output this way on GitHub's macOS
-runner.
+`terminal.py` does. On macOS, when a command exits and nothing else holds its
+terminal open, the terminal waits at most 0.6 s for the reader to take what
+is still unread (60 ticks in XNU's `ptsclose`), and then throws it away. If
+the terminal is not the command's controlling terminal, nothing is kept at
+all. `pty.fork` gives the command a controlling terminal but lets go of it in
+the reader, so its 0.6 s limit applies. A process in the session that opened
+`/dev/tty` lifts the limit. bash does that when it starts, and macOS's `sh`
+is bash, so a command run through `sh` keeps its output; dash, zsh, a Rust
+binary and bun started directly do not.
+
+Linux keeps the output either way, so the loss shows only on macOS, and only
+when the reader is late, as on a busy CI runner. Measured on macOS 27:
+
+- With the reader late by 0.3 s and no controlling terminal, the output was
+  lost in 20 of 20 tries.
+- With the reader stopped for 1.5 s behind `pty.fork`, it was lost in 8 of
+  8.
+- With the reader holding the terminal, it was kept every time.
+
+This loss explains two flakes on GitHub's macOS runner: six scenes of
+dotenvdotenc's `rs/tty-compat.py` lost their output, and so did one
+onenote-cli case run through `rs/parity/terminal.py` (`pty.fork` in front of
+the binary).
 
 For a command whose output changes on a terminal, run the whole cases file a
 second time with `--tty stdout,stderr`. Colours depend on those two streams:
