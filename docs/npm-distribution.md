@@ -129,7 +129,9 @@ Measured with bun 1.4.0 (Linux x64), 1.4.4 (macOS arm64) and 1.4.2
   included, which v2 dropped. bun and node sort the block they hand a child
   (case-insensitively, as CreateProcess wants it), and the hidden entries can
   come in another order among themselves (`=ExitCode` before `=C:` where
-  cmd.exe had them the other way round).
+  cmd.exe had them the other way round); the other entries keep cmd.exe's
+  order. (cmd.exe adds `=ExitCode` once a program it started has ended, so
+  a comparison starts one program first.)
 - Names that are array indices (`1`, `42`) come first, in numeric order, as
   they always did in `process.env`.
 - Two entries with one name (on Windows in other letters): the first is
@@ -161,12 +163,14 @@ Measured with bun 1.4.0 (Linux x64), 1.4.4 (macOS arm64) and 1.4.2
   (1500 variables of 1000 characters, or 15 of 100,000), 450 KB on macOS,
   whose limit for arguments and environment together is 1 MiB, and 1.9 MB
   on Windows (60 variables of 32,000 characters).
-- Reading it costs about a millisecond in the launcher (median of 30 runs:
-  1.7 ms on Linux, on a machine with a load average above 18; 1.1 ms on
-  macOS, bun:ffi's compile of the two functions included; 1.0 ms on
-  Windows), in a first run of 40 ms on Windows, v2 and v3 alike (median of
-  60). On the loaded Linux and macOS machines, runs of the whole launcher
-  varied by tens of milliseconds, more than the difference.
+- Reading it costs about a millisecond in the launcher (the first call in
+  a fresh bun, bun:ffi's compile of the two functions included, median of
+  30: 1.3 ms on Linux, 0.75 ms on macOS, 1.2 ms on Windows). A whole run
+  through the launcher with `RUSTIFY_NO_LINK=1`, which is a first run
+  without the linking, v2 against v3 taking turns, median of 30: 29.6 and
+  31.5 ms on Linux (load average 6), 87 and 90 ms on macOS (load average
+  9; another round gave 94 and 88), 37.4 and 38.9 ms on Windows. Only that
+  one run pays it.
 - bun's builds without `process.execve` (every one before 1.4.0) start the
   binary as a child, with the same environment. Linux needs no bun:ffi.
   bun:ffi's `dlopen` needs TinyCC, which bun 1.3 and 1.4 build for macOS

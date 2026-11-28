@@ -134,19 +134,26 @@ function utf8(bytes) {
   }
 }
 
+const NOT_ASCII = /[^\0-\x7f]/;
+
 // A Windows variable's name as Windows compares it: one UTF-16 unit at a
 // time, each in capitals where it has a capital of one unit whose small
 // letter it is. So "été" and "ÉTÉ" are one name (and "ǆ" and "Ǆ"), while
 // "straße" and "STRASSE" are two, as are "ı" and "I", "ſ" and "S", "ς" and
 // "Σ", "ǅ" and "Ǆ", which toUpperCase() makes one (Windows 11, measured).
-// Without the u flag a pair of surrogates is two units, and stays as it is,
-// as on Windows. Not matched: letters that got capitals after Windows' table
-// was made (Georgian "ა" and "Ა", Unicode 11), which Windows keeps apart.
+// split("") gives UTF-16 units: a pair of surrogates is two, and stays as it
+// is, as on Windows. Not matched: letters that got capitals after Windows'
+// table was made (Georgian "ა" and "Ა", Unicode 11), which Windows keeps
+// apart.
 function windowsKey(name) {
-  return name.replace(/[a-z\u0080-￿]/g, (unit) => {
+  // Most names are ASCII, where that is toUpperCase().
+  if (!NOT_ASCII.test(name)) return name.toUpperCase();
+  let key = "";
+  for (const unit of name.split("")) {
     const upper = unit.toUpperCase();
-    return upper.length === 1 && upper.toLowerCase() === unit ? upper : unit;
-  });
+    key += upper.length === 1 && upper.toLowerCase() === unit ? upper : unit;
+  }
+  return key;
 }
 
 // The environment that `entries` (see startEntries) make, as an object for
@@ -197,7 +204,7 @@ function plausible(env, windows) {
   if (!names.length) return !Object.keys(process.env).length;
   const known = new Set(Object.keys(process.env).map((name) => (windows ? name.toUpperCase() : name)));
   if (!windows) return names.every((name) => !name || known.has(name));
-  return names.every((name) => name.startsWith("=") || /[^\0-\x7f]/.test(name) || known.has(name.toUpperCase()));
+  return names.every((name) => name.startsWith("=") || NOT_ASCII.test(name) || known.has(name.toUpperCase()));
 }
 
 // The environment the binary starts with: the one this process was started
