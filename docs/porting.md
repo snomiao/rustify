@@ -88,7 +88,15 @@ found by a port or by the verification of one, and each was visible to a user.
   Windows it never removes it, and its Rust does;
 - hangs, instead of failing, when `TEMP` names a directory it cannot use:
   wtx's first CI run on Windows hung in `bun --version` until the job was
-  cancelled.
+  cancelled;
+- writes what JavaScript sets in `process.env` into the process's own
+  environment block at once, the name in capitals (`toUpperCase()`'s:
+  `lc_x` becomes `LC_X`, `straße_x` becomes `STRASSE_X`), and what it
+  deletes (bun 1.4.2); on Linux and macOS it writes nothing there. So on
+  Windows native code that reads the environment itself, or starts a
+  program with it as bun-pty does, sees those changes, and so does the npm
+  launcher, which passes what a preload did on to the binary there (see
+  "The launcher's environment" in [npm-distribution.md](npm-distribution.md)).
 
 **JavaScript itself**
 
@@ -187,7 +195,8 @@ until it adopts a newer one; nothing changes for it until then.
 Version 6 keeps every name of version 5 (`run`, `attempt`, `HandBack`,
 `commit`, `package_root`, `ROOT_ENV`, `TRACE_ENV`, `TRACE_LINE`) and adds
 `names_root`, so it replaces a version 5 file as it is.
-What it changes, from three faults wtx's port found in version 5:
+What it changes, from faults wtx's port found in version 5 and in version
+6's first cut:
 
 - On Linux and macOS an entry with a `#!` line is started as the system
   starts it, and only so: the interpreter and its argument as that system
@@ -210,8 +219,29 @@ What it changes, from three faults wtx's port found in version 5:
   a blank leaves an empty argument, which both kernels pass and version 6
   passes too. `tests/e2e/toy/tests/handback.rs` compares all this with the
   kernel on every run of the toy's tests.
-- On Windows the runtimes, in version 5's order (what the `#!` line names,
-  then bun, then node), are looked up in the directories of PATH, in order,
+- On Windows the entry is started as the package managers' shims start it,
+  which is how it was started before the binary existed. Measured on
+  Windows 11 with npm 11 (node 24.8) and bun 1.4.2, the runtime the `#!`
+  line names missing from PATH: npm's `.cmd` lets cmd.exe say `'"bun"' is
+  not recognized as an internal or external command, operable program or
+  batch file.` and exits 1; npm's `.ps1` reports PowerShell's
+  CommandNotFoundException and exits 0; npm's sh script (Git Bash) says
+  `exec: bun: not found` and exits 127; bun's `.exe` says `error: bun is
+  not installed in %PATH%` and exits 255. None of them gives an entry whose
+  line names bun to node, and none starts anything else for a line naming
+  another program (`tsx`: bun's says `interpreter executable "tsx" not found
+  in %PATH%`). Only bun's starts bun for a line naming node, when node is
+  missing and bun is there. So version 6 starts what the line names and
+  nothing else, but bun after node. Its first cut went on, as version 5
+  did, to bun and then node: a `#!/usr/bin/env bun` entry that imports
+  `./src/server`, with no bun on PATH, went to node, which failed on that
+  import with `ERR_MODULE_NOT_FOUND` and a stack trace. When nothing can be
+  started the binary says what is missing (`cannot run C:\…\cli.mjs: its
+  #! line names bun; bun was not found in PATH. See https://bun.sh`) and
+  exits 1, as npm's shim does from a command prompt; that is the exit code
+  of no other shim, and the words are the binary's own. An entry without a
+  `#!` line goes to bun, then to node unless it is TypeScript, as before.
+- On Windows each runtime is looked up in the directories of PATH, in order,
   with the extensions of PATHEXT a program can be started from (`.com`,
   `.exe`, `.bat`, `.cmd`), in PATHEXT's order; unlike cmd.exe, not in the
   working directory first. That finds `bun.exe`, and also the `bun.cmd` that
