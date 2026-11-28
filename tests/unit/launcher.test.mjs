@@ -199,8 +199,9 @@ test("what was read is taken as it is, and only without it process.env; the root
 const BUN = spawnSync("bun", ["--version"], { encoding: "utf8" }).status === 0 ? false : "bun is not installed here";
 
 // `exact`: on Linux and macOS, a stand-in that prints exactly the
-// environment it was given, as awk's ENVIRON holds it. (bash adds SHLVL, `_`
-// and PWD; macOS kills a copy of /usr/bin/env.)
+// environment it was given, as perl's %ENV holds it. (bash adds SHLVL, `_`
+// and PWD; gawk, the awk of GitHub's Ubuntu runners, adds AWKPATH and
+// AWKLIBPATH to its ENVIRON; macOS kills a copy of /usr/bin/env.)
 function installed(runtime, { exact = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rustify-unit-"));
   const key = `${process.platform === "android" ? "linux" : process.platform}-${process.arch}`;
@@ -227,7 +228,7 @@ function installed(runtime, { exact = false } = {}) {
       fs.copyFileSync(process.execPath, standIn);
     }
   } else if (exact) {
-    fs.writeFileSync(standIn, '#!/usr/bin/awk -f\nBEGIN { for (name in ENVIRON) print name "=" ENVIRON[name] }\n', { mode: 0o755 });
+    fs.writeFileSync(standIn, '#!/usr/bin/perl\nprint map { "$_=$ENV{$_}\\n" } keys %ENV;\n', { mode: 0o755 });
   } else {
     // A script: macOS kills a copy of /usr/bin/env. bash, which passes every
     // name on; dash (Ubuntu's sh) drops one that is not a shell name (OWN_aß).
