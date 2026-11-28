@@ -181,7 +181,43 @@ apart by `argv[1]` needs its own answer, such as one small file per command.
 `templates/rust/js_fallback.rs` carries a version in its first line. When the
 template moves on, copy the new file over the crate's, and put the project's
 own name back into `ROOT_ENV` (the scaffold wrote `<PROJECT>_PACKAGE_ROOT`
-there). Version 5 needs Rust 1.81 or later.
+there). Version 5 needs Rust 1.81 or later. A port keeps the copy it has
+until it adopts a newer one; nothing changes for it until then.
+
+Version 6 keeps every name of version 5 (`run`, `attempt`, `HandBack`,
+`commit`, `package_root`, `ROOT_ENV`, `TRACE_ENV`, `TRACE_LINE`) and adds
+`names_root`, so it replaces a version 5 file as it is.
+What it changes, from three faults wtx's port found in version 5:
+
+- On Linux and macOS an entry with a `#!` line is started as the system
+  starts it, and only so: the interpreter and its argument as that system
+  reads them, Linux passing all that follows the interpreter as one argument,
+  macOS splitting it at blanks and ending the line at a `#` (both keep a
+  carriage return: a CR LF entry asks env for `bun\r`). A relative
+  interpreter is found from the working directory, as the kernel finds it.
+  `#!/usr/bin/env bun` with no bun on PATH is reported by env, in its words,
+  with exit code 127, as when the command was the script. Version 5 started
+  the runtime the line names by its name and then tried bun and node as
+  well, so without bun wtx's entry, which node cannot run, went to node. An
+  entry without a `#!` line (or with one the system refuses: empty, or
+  longer than macOS reads) goes to bun, then to node unless it is
+  TypeScript, as before. `tests/e2e/toy/tests/handback.rs` compares this
+  with the kernel on every run of the toy's tests.
+- On Windows the runtimes, in version 5's order (what the `#!` line names,
+  then bun, then node), are looked up on PATH with PATHEXT, as a command
+  prompt looks them up. That finds `bun.exe`, and also the `bun.cmd` that
+  `npm i -g bun` writes, which version 5 never tried. Rust starts a `.cmd`
+  through cmd.exe and quotes every argument for it (since Rust 1.77.2, the
+  BatBadBut fix): `%`, `"`, `&`, `^`, `|`, `<`, `>`, `!`, spaces, an empty
+  argument, a trailing backslash and non-ASCII text all reached the program
+  behind npm's `bun.cmd` unchanged (Windows 11, Rust 1.96). An argument
+  with a line break (CR or LF) or a NUL is refused by Rust, and the binary
+  then says so and exits 127, instead of trying node.
+- `ROOT_ENV` is taken out of the JavaScript's environment when it names this
+  package's directory, which is what the launcher sets it to, and only then.
+  wtx hands its whole environment to every terminal session, where the
+  launcher's variable showed up. A value of the user's own that names another
+  directory stays.
 
 ## 2. Write the cases before the code
 
@@ -509,10 +545,19 @@ while it works calls `js_fallback::commit()` first. After that, a panic ends
 it as any panic does (exit code 101), and handing back is a bug. All this
 needs unwinding, Rust's default, which the scaffold's Cargo.toml keeps: with
 `panic = "abort"`, a panic ends the process with its message and the
-JavaScript never runs. Print the answer with `write_all` and ignore its
-error, as bun ignores a reader that has gone away (`| head`); `print!`
-panics there. qqdocs, onenote-cli and dotenvdotenc each wrote this guard by
-hand before it existed.
+JavaScript never runs. qqdocs, onenote-cli and dotenvdotenc each wrote this
+guard by hand before it existed.
+
+Print the answer as the TypeScript prints it, also to a reader that has gone
+away (`| head`). Measured with bun 1.4.0: what `console.log` and
+`console.error` cannot write is dropped and the program goes on and exits
+0, so print with `write_all` and ignore its error. `process.stdout.write`
+goes on too, to the end of the code that runs at once, and then bun reports
+an uncaught `EPIPE: broken pipe, write` with a stack trace and exits 1
+(rustdesk.skill's port found this): there, exit 1 when the write fails with
+`ErrorKind::BrokenPipe`. The report names bun's internals and the installed
+file and is not copied; that difference goes to the owner. `print!` panics
+in both cases.
 
 While an attempt runs, the binary keeps panics on every thread quiet, so a
 worker thread the command started says nothing either. In the crate's own

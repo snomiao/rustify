@@ -171,13 +171,13 @@ printf '%s\n' \
   '  "devDependencies": { "typescript": "^5" },' \
   "  \"rustify\": { \"mode\": \"hybrid\", \"bins\": { \"toy\": \"toy\", \"plain\": \"toy-helper\" }, \"runtime\": \"$RUNTIME\" }" \
   '}' > "$WORK/hybrid/package.json"
-# The JavaScript prints its arguments. `which-runtime`, `homedir` and `trace`
-# are answered with the runtime it runs on, the home directory it sees and
-# the value of RUSTIFY_HANDBACK_TRACE.
+# The JavaScript prints its arguments. `which-runtime`, `homedir`, `trace` and
+# `root` are answered with the runtime it runs on, the home directory it sees,
+# and the values of RUSTIFY_HANDBACK_TRACE and RUSTIFY_PACKAGE_ROOT.
 printf '%s\n' \
   "#!/usr/bin/env $RUNTIME" \
   'import os from "node:os";' \
-  'const answers = { "which-runtime": typeof Bun === "undefined" ? "node" : "bun", homedir: os.homedir(), trace: process.env.RUSTIFY_HANDBACK_TRACE ?? "unset" };' \
+  'const answers = { "which-runtime": typeof Bun === "undefined" ? "node" : "bun", homedir: os.homedir(), trace: process.env.RUSTIFY_HANDBACK_TRACE ?? "unset", root: process.env.RUSTIFY_PACKAGE_ROOT ?? "unset" };' \
   'console.log("js cli:", process.argv.slice(2).map((arg) => (Object.hasOwn(answers, arg) ? answers[arg] : arg)).join(" "));' \
   > "$WORK/hybrid/dist/cli.js"
 chmod +x "$WORK/hybrid/dist/cli.js"
@@ -199,6 +199,25 @@ out="$("$BUN_INSTALL/bin/toy" js two)"
 out="$("$BUN_INSTALL/bin/toy" js which-runtime)"
 [ "$out" = "js cli: js $RUNTIME" ] && pass "the JavaScript runs on the runtime its own first line names ($RUNTIME)" \
   || die "the hand-back ran: $out (expected $RUNTIME)"
+# The entry starts with `#!/usr/bin/env $RUNTIME`. Without that runtime on
+# PATH, env says so, as it did when the command was the script itself.
+mkdir -p "$WORK/no-runtime"
+ENTRY="$BUN_INSTALL/install/global/node_modules/$HYBRID/dist/cli.js"
+set +e
+direct="$(PATH="$WORK/no-runtime" "$ENTRY" js gone 2>&1)"; direct_code=$?
+out="$(PATH="$WORK/no-runtime" "$BUN_INSTALL/bin/toy" js gone 2>&1)"; code=$?
+set -e
+[[ "$code" = 127 && "$code" = "$direct_code" && "$out" == "env: "* && "$out" == "$direct" ]] \
+  && pass "with no $RUNTIME on PATH, env reports it, in its words and with its exit code ($code), as for the script itself" \
+  || die "with no $RUNTIME on PATH the hand-back exited $code and printed: $out (the script itself: $direct_code, $direct)"
+# RUSTIFY_PACKAGE_ROOT naming this package is the launcher's, and the
+# JavaScript does not see it; a value of the user's naming something else stays.
+out="$(RUSTIFY_PACKAGE_ROOT="$BUN_INSTALL/install/global/node_modules/$HYBRID" "$BUN_INSTALL/bin/toy" js root)"
+[ "$out" = "js cli: js unset" ] && pass "the JavaScript does not see a RUSTIFY_PACKAGE_ROOT that names its package" \
+  || die "RUSTIFY_PACKAGE_ROOT naming the package reached the JavaScript: $out"
+out="$(RUSTIFY_PACKAGE_ROOT="$WORK/elsewhere" "$BUN_INSTALL/bin/toy" js root)"
+[ "$out" = "js cli: js $WORK/elsewhere" ] && pass "and sees one that names another directory" \
+  || die "RUSTIFY_PACKAGE_ROOT naming another directory did not reach the JavaScript: $out"
 
 echo "== hybrid: a ported command that declines, and one that panics"
 TOY="$BUN_INSTALL/bin/toy"
