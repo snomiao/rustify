@@ -143,6 +143,29 @@ mod unix {
         compare("no-line-end", no_line_end.as_bytes(), cfg!(target_os = "macos"));
     }
 
+    /// Linux reads 256 bytes: an interpreter's name that a blank in the last
+    /// of them ends is taken, and what follows is cut off; macOS reads 512.
+    #[test]
+    fn an_interpreter_name_at_the_end_of_what_linux_reads() {
+        let _serial = serial();
+        let dir = scratch("edge");
+        // A copy of toy-argv whose path is 253 bytes long: "#!" and it fill bytes 0 to 254.
+        let pad = 253 - dir.as_os_str().len() - "/".len() - "/toy-argv".len();
+        let interpreter = dir.join("e".repeat(pad)).join("toy-argv");
+        assert_eq!(interpreter.as_os_str().len(), 253);
+        runtime_at(&interpreter);
+        let root = dir.join("pkg");
+        let entry = package(&root, format!("#!{} cut-off-on-linux\n", interpreter.display()).as_bytes());
+        let path = std::env::join_paths(["/usr/bin", "/bin"]).unwrap();
+        let kernel = start(&entry, &ARGS, &dir, &path, &[]).unwrap();
+        let hand_back = start(Path::new(TOY), &ARGS, &dir, &path, &[(ROOT_ENV, root.as_os_str())]).unwrap();
+        println!("-- the kernel: {}-- toy js: {}", text(&kernel), text(&hand_back));
+        let second = String::from_utf8_lossy(&kernel.stdout).lines().nth(1).unwrap_or("").to_string();
+        assert_eq!(second, if cfg!(target_os = "macos") { "cut-off-on-linux".to_string() } else { entry.display().to_string() });
+        assert_eq!(text(&hand_back), text(&kernel));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// `#!/usr/bin/env bun` with no bun on PATH: env says so, in its words and
     /// with its exit code, as when the command was the script itself.
     #[test]

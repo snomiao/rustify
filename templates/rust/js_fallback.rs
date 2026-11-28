@@ -474,11 +474,12 @@ fn shebang(head: &[u8], split: bool) -> Shebang {
         Some(at) => at,
         None => {
             // No line end: the interpreter's name has to end within the
-            // buffer, and the rest is cut off at its last byte.
-            let Some(start) = (2..255).find(|&i| !blank(buf[i])) else {
+            // buffer (its last byte included), and the line is cut off
+            // before that last byte.
+            let Some(start) = (2..=255).find(|&i| !blank(buf[i])) else {
                 return Shebang::Refused;
             };
-            if !(start..255).any(|i| blank(buf[i]) || buf[i] == 0) {
+            if !(start..=255).any(|i| blank(buf[i]) || buf[i] == 0) {
                 return Shebang::Refused;
             }
             255
@@ -645,6 +646,9 @@ mod tests {
         let longer = format!("#!/usr/bin/env {}\n", "a".repeat(600));
         both(&longer, Some(&["/usr/bin/env", &"a".repeat(240)]), None);
         both(&format!("#!/{}\n", "x".repeat(300)), None, Some(&[&format!("/{}", "x".repeat(300))]));
+        // Linux: a name that a blank at the buffer's last byte ends is taken, and cut off before that byte.
+        let edge = format!("#!/{} y{}\n", "x".repeat(252), "z".repeat(50));
+        both(&edge, Some(&[&format!("/{}", "x".repeat(252))]), Some(&[&format!("/{}", "x".repeat(252)), &format!("y{}", "z".repeat(50))]));
         // No line end at all: Linux takes the file as the line; macOS finds no end.
         both("#!/bin/sh one", Some(&["/bin/sh", "one"]), None);
         both("#!\n", None, None);
