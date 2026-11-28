@@ -76,6 +76,9 @@ cat > "$WORK/project/package.json" <<EOF
 EOF
 
 echo "== local registry"
+# With no upstream: what was not published here is not looked for on the
+# real registry either (the toy packages depend on nothing else).
+export RUSTIFY_UPSTREAM_REGISTRY=""
 node "$REPO/templates/npm/registry.mjs" "$WORK/registry" > "$WORK/registry.url" &
 REG_PID=$!
 for _ in $(seq 50); do [ -s "$WORK/registry.url" ] && break; sleep 0.1; done
@@ -155,6 +158,38 @@ out="$(RUSTIFY_NO_LINK=1 "$BUN_INSTALL/bin/toy")"
 is_script "$BUN_INSTALL/bin/toy" && [[ "$out" == *"root=$BUN_INSTALL/install/global/node_modules/$NAME "* ]] \
   && pass "RUSTIFY_NO_LINK=1 leaves the package untouched and tells the binary where the package is" \
   || die "opt out: $out"
+
+echo "== the binary's environment, in a directory with .env files"
+# The launcher's bun loads them into process.env. The binary has to start with
+# what the shell gave the command instead, byte for byte, and the root
+# variable: \`toy env\` writes the environment as the system holds it.
+mkdir -p "$WORK/dotenv"
+printf 'FROM_DOTENV=yes\nSHARED=from-dotenv\nNODE_ENV=production\n' > "$WORK/dotenv/.env"
+printf 'FROM_LOCAL=yes\n' > "$WORK/dotenv/.env.local"
+printf 'FROM_PRODUCTION=yes\n' > "$WORK/dotenv/.env.production"
+printf 'FROM_DEVELOPMENT=yes\n' > "$WORK/dotenv/.env.development"
+env_check() { # $1 = label, $2 = an installed command that has not run yet
+  local label="$1" cmd="$2"
+  is_script "$cmd" || die "$label: expected a launcher before the first run"
+  # env starts both, with one environment (bash would give each its own \`_\`).
+  # The \`true\` keeps bash from starting the last one in place of the
+  # subshell, which it does with SHLVL one lower.
+  (cd "$WORK/dotenv" && SHARED=mine /usr/bin/env "$WORK/target/release/toy$EXT" env "$WORK/env-direct.txt" \
+    && SHARED=mine /usr/bin/env "$cmd" env "$WORK/env-first.txt"; true)
+  grep -v '^RUSTIFY_PACKAGE_ROOT=' "$WORK/env-first.txt" > "$WORK/env-first-own.txt" || true
+  if cmp -s "$WORK/env-direct.txt" "$WORK/env-first-own.txt" && grep -q '^RUSTIFY_PACKAGE_ROOT=' "$WORK/env-first.txt"; then
+    pass "$label: on the first run the binary gets the shell's environment byte for byte ($(wc -l < "$WORK/env-direct.txt" | tr -d ' ') entries) and the root variable, none of .env"
+  else
+    die "$label: the binary's environment on the first run is not the shell's:
+$(diff "$WORK/env-direct.txt" "$WORK/env-first-own.txt" | sed -E 's/=.*/=…/' | head -20)"
+  fi
+}
+BUN_INSTALL="$WORK/bun-env" bun i -g "$NAME" --registry "$REGISTRY" >/dev/null 2>&1 || die "bun i -g into bun-env failed"
+env_check bun "$WORK/bun-env/bin/toy"
+if command -v npm >/dev/null 2>&1; then
+  npm i -g --prefix "$WORK/npm-env" "$NAME" --registry "$REGISTRY" >/dev/null 2>&1 || die "npm i -g into npm-env failed"
+  env_check npm "$WORK/npm-env/bin/toy"
+fi
 
 echo "== hybrid: a package that still ships JavaScript"
 HYBRID="rustify-e2e-hybrid"
