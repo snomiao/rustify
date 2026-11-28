@@ -253,8 +253,9 @@ case `"capture": "files"`, or pass `--capture files`. The program then writes
 into regular files, nothing is lost, and every byte is compared. That settles
 the case, not the question of whether the Rust should lose lines the same way
 when users pipe the command (see "What the TypeScript means"). Through pipes
-the runner reads at most 64 MiB of each stream; a case that prints more is
-BROKEN and says to use `"capture": "files"`, which has no limit.
+the runner reads at most 64 MiB of stdout and stderr together (node's
+spawnSync counts the two as one); a case that prints more is BROKEN and says
+to use `"capture": "files"`, which has no limit.
 
 Cover, for the command:
 

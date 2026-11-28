@@ -174,14 +174,14 @@
 // pipe, and what a process it left behind writes later is not seen, hence
 // not the default.
 //
-// Through pipes the runner reads at most 64 MiB of stdout and of stderr, of
-// the program and of each `setup` or `after` line (node's own limit, 1 MiB,
-// is too small for some cases). A program that writes more is stopped, and
-// its case is BROKEN, with the advice to give it "capture": "files", which
-// has no limit. 64 MiB is far below the longest text node can make of what
-// it read (2^29 - 24 UTF-16 units), and keeps what one case holds at a few
-// hundred MiB at most: both sides, both streams, and the copies the
-// comparison makes.
+// Through pipes the runner reads at most 64 MiB of stdout and stderr
+// together, of the program and of each `setup` or `after` line (node's own
+// limit, 1 MiB, is too small for some cases; spawnSync's maxBuffer counts
+// both streams as one). A program that writes more is stopped, and its case
+// is BROKEN, with the advice to give it "capture": "files", which has no
+// limit. 64 MiB is far below the longest text node can make of what it read
+// (2^29 - 24 UTF-16 units), and keeps what one case holds at a few hundred
+// MiB at most: both sides, both streams, and the copies the comparison makes.
 //
 // Platforms. The same cases run on Linux, macOS and Windows, and a port may
 // answer a command itself on some of them and hand it back on others. A
@@ -322,7 +322,8 @@ import { fileURLToPath } from "node:url";
 
 const OPTIONS = ["cases", "ts", "rs", "filter", "show", "keep", "handback", "tty", "capture", "shell"];
 
-// The most the runner reads of a stream through a pipe (see the header).
+// The most the runner reads through pipes, of stdout and stderr together
+// (see the header).
 const MAX_BUFFER = 64 * 1024 * 1024;
 // spawnSync's report of a program that wrote more than that.
 const overflowed = (result) => result.error?.code === "ENOBUFS";
@@ -1007,12 +1008,14 @@ function runIn(root, testCase, impl, plan, extraEnv) {
   // compared as usual; through terminal.py, which passes a piped stdin on, it
   // is the same thing and is treated the same way.
   const stdinLeft = result.error?.code === "EPIPE" && (result.status !== null || result.signal !== null);
-  // More than the runner reads through a pipe: spawnSync stopped the program.
+  // More than the runner reads through pipes: spawnSync stopped the program.
+  // The limit is for both streams together. When only one of them had
+  // brought anything, that one alone went past it, and it is named.
   if (overflowed(result)) {
-    const full = ["stdout", "stderr"].filter((name) => !plan.files && Buffer.byteLength(result[name] ?? "") >= MAX_BUFFER);
+    const read = plan.files ? [] : ["stdout", "stderr"].filter((name) => result[name]);
     return {
       broken:
-        `${program} wrote more than ${MAX_BUFFER / 1024 / 1024} MiB to ${full.length ? full.join(" and ") : "stdout or stderr"}, the most the runner reads through a pipe, and was stopped; ` +
+        `${program} wrote more than ${MAX_BUFFER / 1024 / 1024} MiB to ${read.length === 1 ? read[0] : "stdout and stderr together"}, the most the runner reads through pipes, and was stopped; ` +
         'give the case "capture": "files" (or run with --capture files): then it writes into regular files, which the runner reads whole',
     };
   }
