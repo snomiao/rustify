@@ -87,6 +87,80 @@ target is this very launcher; anything else is left alone and the command
 keeps working through the launcher. The `.bunx` layout is bun-internal, so the
 Windows smoke test in CI is what notices if bun changes it.
 
+### The launcher's environment
+
+The launcher's bun has loaded the working directory's `.env` files (`.env`,
+`.env.local`, `.env.<NODE_ENV>`, `.env.<NODE_ENV>.local`, and an
+`--env-file` in `BUN_OPTIONS`) into `process.env` before the launcher runs.
+Launcher v2 handed `process.env` to the binary, so on a first run, and on
+every run that cannot relink (`RUSTIFY_NO_LINK=1`, Yarn PnP, a package
+directory the user cannot write), the binary and the JavaScript it hands
+back to saw `.env` values as variables of the user's. wtx's terminal
+sessions got `.env` secrets that way, and a `NODE_ENV=production` in `.env`
+made the next bun read `.env.production`.
+
+bun puts those values into `process.env` only. The environment the system
+keeps for the process stays as the shell gave it, and launcher v3 reads that
+one under bun: `/proc/self/environ` on Linux, `_NSGetEnviron()` through
+bun:ffi on macOS, `GetEnvironmentStringsW()` through bun:ffi on Windows. It
+then sets `rootEnv`. Whatever cannot be read, or does not look like what
+the process was started with (a name `process.env` lacks), leaves
+`process.env` in its place, as in v2, without a word. Under node it is
+`process.env`: node loads no `.env` file here, and it refuses `--env-file`
+and `--env-file-if-exists` in `NODE_OPTIONS` ("is not allowed in
+NODE_OPTIONS", exit 9; node 20.19 and 24.8).
+
+Measured with bun 1.4.0 (Linux x64), 1.4.4 (macOS arm64) and 1.4.2
+(Windows 11 x64):
+
+- What the binary gets, compared with what the shell gave the command: on
+  Linux and macOS the same entries in the same order, byte for byte, plus
+  `rootEnv`. On Windows the same entries, byte for byte, including the hidden
+  `=C:=C:\…` entries (the working directory of each drive) that v2 dropped;
+  bun and node sort the block they hand a child (case-insensitively, as
+  CreateProcess wants it), and the hidden entries can come in another order
+  among themselves (`=D:`, `=ExitCode`, `=C:` where cmd.exe had `=C:`, `=D:`,
+  `=ExitCode`).
+- Names that are array indices (`1`, `42`) come first, in numeric order, as
+  they always did in `process.env`.
+- Two entries with one name (on Windows in any letter case): the first is
+  kept, which is the one getenv() and GetEnvironmentVariableW() find. bun's
+  `process.env` holds the last one (on Windows under the first one's name),
+  and v2 passed that on.
+- A name that is not UTF-8 (on Windows, one with a lone surrogate) is left
+  out; v2 left it out on Linux and passed it with U+FFFD on Windows. A value
+  that is not UTF-8 arrives with U+FFFD for the bad bytes, as in v2: bun
+  turns the text it is given into UTF-8 (UTF-16 on Windows), so no launcher
+  can pass such bytes on. An entry without `=` (Linux and macOS only; Windows
+  refuses to start a process with one) is left out; v2 passed it as `NAME=`.
+- An empty value and a `=` inside a value pass unchanged; bun keeps an empty
+  variable of the user's even when `.env` names it.
+- 200 variables of 1000 characters and one of 30000 pass unchanged on all
+  three (the unit test does this).
+- Reading it costs about a millisecond in the launcher (median of 30 runs:
+  1.7 ms on Linux, on a machine with a load average above 18; 1.1 ms on
+  macOS, bun:ffi's compile of the two functions included; 1.0 ms on
+  Windows), in a first run of 40 ms on Windows, v2 and v3 alike (median of
+  60). On the loaded Linux and macOS machines, runs of the whole launcher
+  varied by tens of milliseconds, more than the difference.
+- bun's builds without `process.execve` (every one before 1.4.0) start the
+  binary as a child, with the same environment. Linux needs no bun:ffi. For
+  macOS (x64, arm64) and Windows x64 every bun has bun:ffi's `dlopen`
+  (TinyCC). bun 1.3.x for Windows arm64 is built without TinyCC, and its
+  `dlopen` throws, so there the launcher falls back to `process.env`; bun
+  1.4 builds TinyCC everywhere but Android and FreeBSD (read in bun's
+  sources; no Windows arm64 machine was at hand).
+
+What v3 cannot undo: a preload has already run in the launcher. A
+`preload` in the working directory's `bunfig.toml` runs there, and a
+`--preload` in `BUN_OPTIONS` does too unless that `bunfig.toml` has a
+preload of its own (then bun 1.4.0 and 1.4.4 skip the `BUN_OPTIONS` one for
+the launcher, which has no file extension). The JavaScript the binary hands
+back to runs them again, so on a first run, or a run that cannot relink, a
+preload's output and side effects happen twice. What a preload sets in
+`process.env` no longer reaches the binary. `BUN_OPTIONS` itself is the
+user's variable and is passed on.
+
 ### Measured
 
 From one run of this repo's CI on GitHub-hosted runners, a trivial binary, best
@@ -312,6 +386,8 @@ Not verified:
 ## Known limits
 
 - The first run after every install or upgrade goes through the launcher once.
+  A `preload` of the working directory's `bunfig.toml`, or one in
+  `BUN_OPTIONS`, runs in it (see "The launcher's environment").
 - Windows keeps the package manager's shim in the path (a few milliseconds).
 - If the package directory is read-only, the launcher cannot link and stays in
   use on every run. Nothing breaks.

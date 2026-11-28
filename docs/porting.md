@@ -39,7 +39,11 @@ found by a port or by the verification of one, and each was visible to a user.
   from the current directory into the environment (other names under another
   `NODE_ENV`), with its own syntax (`$VAR` expansion, `export`, quoting,
   multi-line values). A project's own tests often run with `--no-env-file`
-  and never see this;
+  and never see this. It goes into `process.env` only, not into the
+  environment the system keeps for the process, so the binary started by
+  launcher v3 does not get it either (see "The launcher's environment" in
+  [npm-distribution.md](npm-distribution.md)); the JavaScript it hands back
+  to loads the files itself, as before;
 - reads `bunfig.toml` from the directory and from the user's configuration,
   and takes options from `BUN_OPTIONS` and `NODE_OPTIONS`;
 - reads `package.json`, `tsconfig.json` and `jsconfig.json` from the current
