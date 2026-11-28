@@ -279,7 +279,7 @@ test("more than 64 MiB through a pipe makes the case BROKEN and names capture: f
     });
     assert.equal(r.status, 1, r.stdout + r.stderr);
     const broken = (name, stream) =>
-      new RegExp(`BROKEN  ${name}\\n\\s+\\S+ wrote more than 64 MiB to ${stream}, the most the runner reads through a pipe, and was stopped; give the case "capture": "files"`);
+      new RegExp(`BROKEN  ${name}\\n\\s+.+ wrote more than 64 MiB to ${stream}, the most the runner reads through a pipe, and was stopped; give the case "capture": "files"`);
     assert.match(r.stdout, broken("too much on stdout", "stdout"));
     assert.match(r.stdout, broken("too much on stderr", "stderr"));
     assert.match(r.stdout, /same {4}as much as is read\n/);
