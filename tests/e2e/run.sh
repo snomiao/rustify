@@ -180,15 +180,26 @@ terminal_text_encoding() {
     case "${__CF_USER_TEXT_ENCODING-}" in "$own":*) ;; *) export __CF_USER_TEXT_ENCODING="$own:0x0:0x0" ;; esac
   fi
 }
-env_check() { # $1 = label, $2 = an installed command that has not run yet
-  local label="$1" cmd="$2"
+# $1 = label, $2 = an installed command that has not run yet, $3 = the working
+# directory, $4 = the runtime that starts the command (empty: the command's
+# own #! line), then the arguments for /usr/bin/env that make the environment.
+env_exact() {
+  local label="$1" cmd="$2" dir="$3" runner="$4"
+  shift 4
   is_script "$cmd" || die "$label: expected a launcher before the first run"
   # env starts both, with one environment (bash would give each its own \`_\`).
   # The \`true\` keeps bash from starting the last one in place of the
   # subshell, which it does with SHLVL one lower.
-  (cd "$WORK/dotenv" && terminal_text_encoding && SHARED=mine /usr/bin/env "$WORK/target/release/toy$EXT" env "$WORK/env-direct.txt" \
-    && SHARED=mine /usr/bin/env "$cmd" env "$WORK/env-first.txt"; true)
+  (cd "$dir" && terminal_text_encoding && /usr/bin/env "$@" "$WORK/target/release/toy$EXT" env "$WORK/env-direct.txt" \
+    && /usr/bin/env "$@" ${runner:+"$runner"} "$cmd" env "$WORK/env-first.txt"; true)
   grep -v '^RUSTIFY_PACKAGE_ROOT=' "$WORK/env-first.txt" > "$WORK/env-first-own.txt" || true
+  # From nothing at all (env -i), node on macOS has put __CF_USER_TEXT_ENCODING
+  # into its own environment (see terminal_text_encoding), and a node launcher
+  # passes its process.env on.
+  if [ -n "$runner" ] && [ "$RUNTIME" = node ] && [ "$(uname -s)" = Darwin ]; then
+    grep -v '^__CF_USER_TEXT_ENCODING=' "$WORK/env-first-own.txt" > "$WORK/env-first-own-cf.txt" || true
+    mv "$WORK/env-first-own-cf.txt" "$WORK/env-first-own.txt"
+  fi
   if cmp -s "$WORK/env-direct.txt" "$WORK/env-first-own.txt" && grep -q '^RUSTIFY_PACKAGE_ROOT=' "$WORK/env-first.txt"; then
     pass "$label: on the first run the binary gets the shell's environment byte for byte ($(wc -l < "$WORK/env-direct.txt" | tr -d ' ') entries) and the root variable, none of .env"
   else
@@ -196,12 +207,62 @@ env_check() { # $1 = label, $2 = an installed command that has not run yet
 $(diff "$WORK/env-direct.txt" "$WORK/env-first-own.txt" | sed -E 's/=.*/=…/' | head -20)"
   fi
 }
+env_check() { # $1 = label, $2 = an installed command that has not run yet
+  env_exact "$1" "$2" "$WORK/dotenv" "" SHARED=mine
+}
 BUN_INSTALL="$WORK/bun-env" bun i -g "$NAME" --registry "$REGISTRY" >/dev/null 2>&1 || die "bun i -g into bun-env failed"
 env_check bun "$WORK/bun-env/bin/toy"
 if command -v npm >/dev/null 2>&1; then
   npm i -g --prefix "$WORK/npm-env" "$NAME" --registry "$REGISTRY" >/dev/null 2>&1 || die "npm i -g into npm-env failed"
   env_check npm "$WORK/npm-env/bin/toy"
 fi
+
+echo "== the binary's environment, after a preload that deletes a variable of the user's, and from an empty one"
+# The launcher's bun runs a preload of the working directory's bunfig.toml, or
+# one in BUN_OPTIONS, before the launcher. On Linux and macOS what it deletes
+# or sets in process.env stays there: the binary gets the shell's environment
+# byte for byte all the same. From \`env -i\` it gets nothing but the root
+# variable, while bun's process.env holds the .env files. (A node launcher
+# runs no preload; it gets the same.)
+cat > "$WORK/preload.cjs" <<EOF
+require("fs").appendFileSync("$WORK/preload.log", "ran in " + require("path").basename(process.argv[1]) + "\n");
+delete process.env.DROP_ME;
+process.env.SET_BY_PRELOAD = "set";
+process.env.NODE_ENV = "test";
+EOF
+mkdir -p "$WORK/dotenv-bunfig"
+cp "$WORK/dotenv"/.env* "$WORK/dotenv-bunfig/"
+printf 'preload = ["%s"]\n' "$WORK/preload.cjs" > "$WORK/dotenv-bunfig/bunfig.toml"
+RUNNER="$(command -v "$RUNTIME")"
+ran=0
+preload_ran() { # $1 = label
+  [ "$RUNTIME" = bun ] || return 0
+  ran=$((ran + 1))
+  [ "$(grep -c '^ran in toy$' "$WORK/preload.log" 2>/dev/null)" = "$ran" ] && pass "$1: and the preload did run in the launcher" \
+    || die "$1: the preload did not run in the launcher: $(cat "$WORK/preload.log" 2>/dev/null)"
+}
+for installer in bun npm; do
+  command -v "$installer" >/dev/null 2>&1 || continue
+  for how in bunfig options empty; do
+    if [ "$installer" = bun ]; then
+      BUN_INSTALL="$WORK/env-bun-$how" bun i -g "$NAME" --registry "$REGISTRY" >/dev/null 2>&1 || die "bun i -g into env-bun-$how failed"
+      cmd="$WORK/env-bun-$how/bin/toy"
+    else
+      npm i -g --prefix "$WORK/env-npm-$how" "$NAME" --registry "$REGISTRY" >/dev/null 2>&1 || die "npm i -g into env-npm-$how failed"
+      cmd="$WORK/env-npm-$how/bin/toy"
+    fi
+    case "$how" in
+      bunfig)
+        env_exact "$installer: a bunfig.toml preload that deletes DROP_ME" "$cmd" "$WORK/dotenv-bunfig" "" SHARED=mine DROP_ME=exported
+        preload_ran "$installer: bunfig.toml" ;;
+      options)
+        env_exact "$installer: a BUN_OPTIONS preload that deletes DROP_ME" "$cmd" "$WORK/dotenv" "" SHARED=mine DROP_ME=exported "BUN_OPTIONS=--preload $WORK/preload.cjs"
+        preload_ran "$installer: BUN_OPTIONS" ;;
+      empty)
+        env_exact "$installer: env -i, $RUNTIME by its path" "$cmd" "$WORK/dotenv" "$RUNNER" -i ;;
+    esac
+  done
+done
 
 echo "== hybrid: a package that still ships JavaScript"
 HYBRID="rustify-e2e-hybrid"

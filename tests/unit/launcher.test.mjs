@@ -165,30 +165,28 @@ test("the environment is read as the system reads it: the first of a name, '=' i
   assert.equal(launcher.windowsKey("straße été path"), "STRAßE ÉTÉ PATH");
 });
 
-test("the root variable is set, on Windows in place of one in other letters; without entries process.env is used", () => {
+test("what was read is taken as it is, and only without it process.env; the root variable is set, on Windows in place of one in other letters", () => {
   // A copy of process.env, which on Windows spells PATH as it is spelt there (Path).
   const isProcessEnv = (env) => Object.keys(process.env).every((name) => env[name] === process.env[name]);
+  const entry = (line) => (isWindows ? line : Buffer.from(line));
   const env = binaryEnvironment(null, "PKG_ROOT", "/root", false);
   assert.equal(env.PKG_ROOT, "/root");
-  assert.ok(isProcessEnv(env), "process.env, copied");
-  // Entries this process's own environment has are taken as they are.
-  const own = Object.keys(process.env).find((name) => !name.startsWith("="));
-  const line = `${own}=${process.env[own]}`;
-  const read = binaryEnvironment([isWindows ? line : Buffer.from(line)], "PKG_ROOT", "/root", isWindows);
-  assert.ok(read[own] === process.env[own] && read.PKG_ROOT === "/root" && Object.keys(read).length === 2, "the entries and the root, nothing else");
-  // A name process.env lacks means something else was read: process.env is used instead.
-  const instead = binaryEnvironment([isWindows ? "NOT_IN_PROCESS_ENV_X=1" : Buffer.from("NOT_IN_PROCESS_ENV_X=1")], "PKG_ROOT", "/r", isWindows);
-  assert.ok(isProcessEnv(instead) && !("NOT_IN_PROCESS_ENV_X" in instead), "process.env instead");
-  // On Windows a name with a unit outside ASCII does not count: bun leaves
-  // some of them out of process.env there.
-  const unicode = binaryEnvironment([line, "NOT_IN_PROCESS_ENV_aß=1"], "PKG_ROOT", "/r", true);
-  assert.equal(unicode["NOT_IN_PROCESS_ENV_aß"], "1", "kept, and the entries are taken");
-  // So does nothing read, or nothing usable, where process.env has something.
-  for (const nothing of [[], [isWindows ? "NOEQUALS" : Buffer.from("NOEQUALS")]]) {
-    const empty = binaryEnvironment(nothing, "PKG_ROOT", "/r", isWindows);
-    assert.ok(isProcessEnv(empty) && empty.PKG_ROOT === "/r", "process.env for an empty read");
+  assert.ok(isProcessEnv(env), "nothing read (under node, or where it cannot be read): process.env, copied");
+  // Whatever was read, process.env aside: names it lacks (a preload deleted
+  // them; on Windows bun leaves some names outside ASCII out of it), and
+  // nothing at all (env -i) where it holds the .env files.
+  assert.deepEqual(binaryEnvironment([entry("NOT_IN_PROCESS_ENV_X=1"), entry("A=2")], "PKG_ROOT", "/r", isWindows), { NOT_IN_PROCESS_ENV_X: "1", A: "2", PKG_ROOT: "/r" });
+  assert.deepEqual(binaryEnvironment(["=C:=C:\\x", "NOT_IN_PROCESS_ENV_aß=1"], "PKG_ROOT", "/r", true), { "=C:": "C:\\x", "NOT_IN_PROCESS_ENV_aß": "1", PKG_ROOT: "/r" });
+  for (const nothing of [[], [entry("NOEQUALS")]]) {
+    assert.deepEqual(binaryEnvironment(nothing, "PKG_ROOT", "/r", isWindows), { PKG_ROOT: "/r" }, "an empty environment stays empty");
+  }
+  // The IPC channel's variables, which bun takes out of process.env after
+  // fork, are left out, unless process.env still has them.
+  if (!("NODE_CHANNEL_FD" in process.env)) {
+    assert.deepEqual(binaryEnvironment([entry("NODE_CHANNEL_FD=3"), entry("A=1")], "PKG_ROOT", "/r", isWindows), { A: "1", PKG_ROOT: "/r" });
   }
   // Windows: the root variable replaces one of the same name in other letters.
+  const own = Object.keys(process.env).find((name) => !name.startsWith("="));
   const spelt = Object.keys(binaryEnvironment([`${own.toLowerCase()}=x`], own.toUpperCase() === own ? `${own[0]}${own.slice(1).toLowerCase()}` : own.toUpperCase(), "/r", true));
   assert.equal(spelt.length, 1, "one variable, in the letters of the root variable");
 });
@@ -200,7 +198,10 @@ test("the root variable is set, on Windows in place of one in other letters; wit
 // (node 20's test runner skips a test whose `skip` is null: false it is.)
 const BUN = spawnSync("bun", ["--version"], { encoding: "utf8" }).status === 0 ? false : "bun is not installed here";
 
-function installed(runtime) {
+// `exact`: on Linux and macOS, a stand-in that prints exactly the
+// environment it was given, as awk's ENVIRON holds it. (bash adds SHLVL, `_`
+// and PWD; macOS kills a copy of /usr/bin/env.)
+function installed(runtime, { exact = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rustify-unit-"));
   const key = `${process.platform === "android" ? "linux" : process.platform}-${process.arch}`;
   const modules = path.join(dir, "node_modules");
@@ -225,6 +226,8 @@ function installed(runtime) {
     } catch {
       fs.copyFileSync(process.execPath, standIn);
     }
+  } else if (exact) {
+    fs.writeFileSync(standIn, '#!/usr/bin/awk -f\nBEGIN { for (name in ENVIRON) print name "=" ENVIRON[name] }\n', { mode: 0o755 });
   } else {
     // A script: macOS kills a copy of /usr/bin/env. bash, which passes every
     // name on; dash (Ubuntu's sh) drops one that is not a shell name (OWN_aß).
@@ -343,6 +346,94 @@ test("under bun, where the environment cannot be read, the binary gets process.e
     assert.equal(fullPath(seen.PKG_ROOT), pkg.root);
   } finally {
     fs.rmSync(pkg.dir, { recursive: true, force: true });
+  }
+});
+
+// A preload that deletes a variable of the user's (DROP_ME), sets two in
+// process.env, and notes that it ran.
+function preload(pkg) {
+  const file = path.join(pkg.dir, "preload.cjs");
+  const log = path.join(pkg.dir, "preload.log");
+  fs.writeFileSync(
+    file,
+    `require("fs").appendFileSync(${JSON.stringify(log)}, "ran\\n");\n` +
+      'delete process.env.DROP_ME;\nprocess.env.set_by_preload = "set";\nprocess.env.NODE_ENV = "test";\n',
+  );
+  const ran = () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8").split("\n").filter(Boolean).length : 0);
+  return { file: file.replaceAll("\\", "/"), ran };
+}
+
+// A preload of the working directory's bunfig.toml, or one in BUN_OPTIONS.
+function withPreload(pkg, how, env) {
+  const pre = preload(pkg);
+  if (how === "bunfig.toml") fs.writeFileSync(path.join(pkg.cwd, "bunfig.toml"), `preload = [${JSON.stringify(pre.file)}]\n`);
+  else env.BUN_OPTIONS = `--preload ${pre.file}`;
+  return pre;
+}
+
+// The stand-in's environment is the shell's, every name and value, and the root variable.
+function assertExactly(seen, given, pkg) {
+  const { PKG_ROOT, ...rest } = seen;
+  assert.equal(fullPath(PKG_ROOT), pkg.root, "the root variable names the package");
+  assert.deepEqual(rest, given, "exactly the shell's environment");
+}
+
+const UNIX = BUN || (isWindows && "bun writes what a preload does into the environment there: see the Windows test");
+
+test("under bun on Linux and macOS, the binary gets exactly the shell's environment, whatever a preload deleted or set, also an empty one", { skip: UNIX }, () => {
+  for (const how of ["bunfig.toml", "BUN_OPTIONS"]) {
+    const pkg = installed("bun", { exact: true });
+    try {
+      // Made here, so that every value is one line for the stand-in.
+      const given = { PATH: process.env.PATH, HOME: pkg.home, SHARED: "mine", EMPTY: "", EQ: "a=b=c", OWN_aß: "mine", DROP_ME: "exported" };
+      const pre = withPreload(pkg, how, given);
+      assertExactly(runLauncher(pkg, { env: given }), given, pkg);
+      assert.equal(pre.ran(), 1, `the ${how} preload ran in the launcher`);
+    } finally {
+      fs.rmSync(pkg.dir, { recursive: true, force: true });
+    }
+  }
+  // env -i, with bun named by its path: nothing, where bun's process.env holds the .env files.
+  const bun = spawnSync("bun", ["-e", "process.stdout.write(process.execPath)"], { encoding: "utf8" }).stdout;
+  for (const how of [null, "bunfig.toml"]) {
+    const pkg = installed("bun", { exact: true });
+    try {
+      const loaded = spawnSync("/usr/bin/env", ["-i", bun, "-e", "console.log(process.env.FROM_DOTENV)"], { cwd: pkg.cwd, encoding: "utf8" });
+      assert.equal(loaded.stdout.trim(), "yes", "bun loads .env in an empty environment");
+      const pre = how && withPreload(pkg, how, {});
+      assertExactly(runLauncher(pkg, { runtime: "/usr/bin/env", flags: ["-i", bun], env: {} }), {}, pkg);
+      if (pre) assert.equal(pre.ran(), 1, "the preload ran in the launcher");
+    } finally {
+      fs.rmSync(pkg.dir, { recursive: true, force: true });
+    }
+  }
+});
+
+// Measured with bun 1.4.2: bun writes every assignment to process.env (the
+// name in capitals) and every delete into the process's environment block,
+// which the launcher reads, at once; the .env files it does not. If this
+// fails, bun changed: see "The launcher's environment" in
+// docs/npm-distribution.md.
+test("under bun on Windows, what a preload set in process.env reaches the binary, in capitals, and what it deleted does not", { skip: BUN || (!isWindows && "Windows only") }, () => {
+  for (const how of ["bunfig.toml", "BUN_OPTIONS"]) {
+    const pkg = installed("bun");
+    try {
+      const given = userEnvironment(pkg, { DROP_ME: "exported", RUSTIFY_NO_LINK: "1" });
+      const pre = withPreload(pkg, how, given);
+      const seen = runLauncher(pkg, { env: given });
+      assert.equal(pre.ran(), 1, `the ${how} preload ran in the launcher`);
+      assert.equal(seen.SET_BY_PRELOAD, "set", "set_by_preload reached the binary, as SET_BY_PRELOAD");
+      assert.ok(!("set_by_preload" in seen), "in capitals only");
+      assert.equal(seen.NODE_ENV, "test", "and so did the NODE_ENV it set");
+      assert.ok(!("DROP_ME" in seen), "what it deleted did not");
+      for (const name of DOTENV_NAMES.filter((n) => n !== "NODE_ENV")) assert.equal(seen[name], undefined, `${name} from .env reached the binary`);
+      assert.equal(seen.SHARED, "mine");
+      assert.equal(seen.OWN, "mine");
+      assert.equal(seen.OWN_aß, "mine");
+      assert.equal(fullPath(seen.PKG_ROOT), pkg.root);
+    } finally {
+      fs.rmSync(pkg.dir, { recursive: true, force: true });
+    }
   }
 });
 
