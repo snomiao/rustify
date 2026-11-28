@@ -104,8 +104,14 @@ keeps for the process stays as the shell gave it, and launcher v3 reads that
 one under bun: `/proc/self/environ` on Linux, `_NSGetEnviron()` through
 bun:ffi on macOS, `GetEnvironmentStringsW()` through bun:ffi on Windows. It
 then sets `rootEnv`. Whatever cannot be read, or does not look like what
-the process was started with (a name `process.env` lacks), leaves
-`process.env` in its place, as in v2, without a word. Under node it is
+the process was started with (a name `process.env` lacks, or nothing where
+`process.env` has something), leaves `process.env` in its place, as in v2,
+without a word. (So `env -i` in a directory with `.env` files, where bun's
+`process.env` holds only what they say, gives the binary those values, as
+v2 did.) On Windows a name with a letter outside ASCII is not held
+against the read: bun 1.4.2 leaves some of them out of `process.env` there
+(`aß`, `éa`, `aÿ`, not `ß` or `éé`), though the block has them, so v2 lost
+them and v3 passes them on. Under node it is
 `process.env`: node loads no `.env` file here, and it refuses `--env-file`
 and `--env-file-if-exists` in `NODE_OPTIONS` ("is not allowed in
 NODE_OPTIONS", exit 9; node 20.19 and 24.8).
@@ -126,10 +132,16 @@ Measured with bun 1.4.0 (Linux x64), 1.4.4 (macOS arm64) and 1.4.2
   cmd.exe had them the other way round).
 - Names that are array indices (`1`, `42`) come first, in numeric order, as
   they always did in `process.env`.
-- Two entries with one name (on Windows in any letter case): the first is
+- Two entries with one name (on Windows in other letters): the first is
   kept, which is the one getenv() and GetEnvironmentVariableW() find. bun's
   `process.env` holds the last one (on Windows under the first one's name),
-  and v2 passed that on.
+  and v2 passed that on. Windows compares names one UTF-16 unit at a time,
+  a unit in capitals only where its capital is one unit whose small letter
+  it is: `été` and `ÉTÉ` are one variable, `straße` and `STRASSE` are two,
+  and so are `ı` and `I`, `ſ` and `S`, `ς` and `Σ` (Windows 11, measured),
+  which `toUpperCase()` makes one. The launcher compares them so, except
+  letters that Unicode gave capitals after Windows' table was made
+  (Georgian `ა` and `Ა`), which it takes for one name and Windows for two.
 - A name that is not UTF-8 (on Windows, one with a lone surrogate) is left
   out; v2 left it out on Linux and passed it with U+FFFD on Windows. A value
   that is not UTF-8 arrives with U+FFFD for the bad bytes, as in v2: bun

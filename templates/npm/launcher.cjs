@@ -37,15 +37,17 @@ const path = require("path");
 //
 // node loads no .env file for this file (it refuses --env-file in
 // NODE_OPTIONS), so under node process.env is already that environment.
-// Whenever it cannot be read, process.env is used, as by launcher v2.
+// Whenever it cannot be read, or what was read does not look like it (see
+// plausible), process.env is used, as by launcher v2.
 //
 // What cannot be passed on as it is: a name that is not UTF-8 (on Windows,
 // one with a lone surrogate) is left out, as v2 left it out on Linux; a value
 // that is not UTF-8 arrives with U+FFFD in place of the bad bytes, as in v2;
-// of two entries with the same name (on Windows in any letter case) the first
-// is kept, which is the one getenv() and GetEnvironmentVariableW() find; an
-// entry without "=" is left out. Names that are array indices ("1", "42")
-// come first, in numeric order, as they always did in process.env.
+// of two entries with the same name (on Windows in other letters, as Windows
+// compares them: see windowsKey) the first is kept, which is the one
+// getenv() and GetEnvironmentVariableW() find; an entry without "=" is left
+// out. Names that are array indices ("1", "42") come first, in numeric
+// order, as they always did in process.env.
 
 // The entries ("NAME=value") of the environment this process was started
 // with, as the operating system holds it: Buffers on Linux and macOS, text on
@@ -132,6 +134,21 @@ function utf8(bytes) {
   }
 }
 
+// A Windows variable's name as Windows compares it: one UTF-16 unit at a
+// time, each in capitals where it has a capital of one unit whose small
+// letter it is. So "été" and "ÉTÉ" are one name (and "ǆ" and "Ǆ"), while
+// "straße" and "STRASSE" are two, as are "ı" and "I", "ſ" and "S", "ς" and
+// "Σ", "ǅ" and "Ǆ", which toUpperCase() makes one (Windows 11, measured).
+// Without the u flag a pair of surrogates is two units, and stays as it is,
+// as on Windows. Not matched: letters that got capitals after Windows' table
+// was made (Georgian "ა" and "Ა", Unicode 11), which Windows keeps apart.
+function windowsKey(name) {
+  return name.replace(/[a-z\u0080-￿]/g, (unit) => {
+    const upper = unit.toUpperCase();
+    return upper.length === 1 && upper.toLowerCase() === unit ? upper : unit;
+  });
+}
+
 // The environment that `entries` (see startEntries) make, as an object for
 // process.execve and spawn. See the top of this part for what is left out.
 function environmentOf(entries, windows) {
@@ -154,7 +171,7 @@ function environmentOf(entries, windows) {
       if (name === null) continue;
       value = entry.toString("utf8", eq + 1);
     }
-    const key = windows ? name.toUpperCase() : name;
+    const key = windows ? windowsKey(name) : name;
     if (seen.has(key)) continue;
     seen.add(key);
     env[name] = value;
@@ -168,10 +185,19 @@ const TAKEN = ["NODE_CHANNEL_FD", "NODE_CHANNEL_SERIALIZATION_MODE", "NODE_UNIQU
 
 // Whether `env` can be what this process was started with: bun's process.env
 // holds every variable of it, and more (the .env files) but never fewer. Any
-// name it lacks means that something else was read.
+// name it lacks means that something else was read, and so does nothing read
+// where process.env has something. On Windows, names are matched in
+// toUpperCase()'s capitals, which join more names than Windows does, so a
+// name is not taken for unknown because process.env holds it in other
+// letters; and a name with a unit outside ASCII does not count, because bun
+// leaves some of them out of process.env there ("aß", "éa", "aÿ"; bun 1.4.2),
+// though the block has them and a child gets them.
 function plausible(env, windows) {
+  const names = Object.keys(env);
+  if (!names.length) return !Object.keys(process.env).length;
   const known = new Set(Object.keys(process.env).map((name) => (windows ? name.toUpperCase() : name)));
-  return Object.keys(env).every((name) => (windows ? name.startsWith("=") || known.has(name.toUpperCase()) : !name || known.has(name)));
+  if (!windows) return names.every((name) => !name || known.has(name));
+  return names.every((name) => name.startsWith("=") || /[^\0-\x7f]/.test(name) || known.has(name.toUpperCase()));
 }
 
 // The environment the binary starts with: the one this process was started
@@ -187,8 +213,8 @@ function binaryEnvironment(entries, rootName, root, windows) {
     env = null;
   }
   if (!env) env = Object.assign({}, process.env);
-  // On Windows a variable is one in any letter case.
-  if (windows) for (const name of Object.keys(env)) if (name !== rootName && name.toUpperCase() === rootName.toUpperCase()) delete env[name];
+  // On Windows a variable is one in any letter case (see windowsKey).
+  if (windows) for (const name of Object.keys(env)) if (name !== rootName && windowsKey(name) === windowsKey(rootName)) delete env[name];
   env[rootName] = root;
   return env;
 }
@@ -470,4 +496,4 @@ function main() {
 }
 
 if (require.main === module) main();
-else module.exports = { BUNX_VERSION, directBunx, bunxTarget, retargetBun, retargetNpm, startEntries, environmentOf, binaryEnvironment };
+else module.exports = { BUNX_VERSION, directBunx, bunxTarget, retargetBun, retargetNpm, startEntries, environmentOf, binaryEnvironment, windowsKey };

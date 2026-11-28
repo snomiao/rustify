@@ -152,6 +152,17 @@ test("the environment is read as the system reads it: the first of a name, '=' i
     Path: "x",
     V: "a\ud800b",
   });
+  // As Windows 11 compares names (measured with SetEnvironmentVariableW and
+  // GetEnvironmentVariableW): one UTF-16 unit at a time, so "été" and "ÉTÉ"
+  // are one variable, and so are "ǆ" and "Ǆ", "ɐ" and "Ɐ"; "straße" and
+  // "STRASSE" are two ("ß" has no capital of one unit), and so are "ı" and
+  // "I", "ſ" and "S", "ς" and "Σ", "ǅ" and "Ǆ" (capitals whose small letter
+  // is another one), and a pair of surrogates and its capital ("𐐨", "𐐀").
+  const one = [["été", "ÉTÉ"], ["ǆ", "Ǆ"], ["ɐ", "Ɐ"], ["path", "PATH"]];
+  const two = [["straße", "STRASSE"], ["ı", "I"], ["ſ", "S"], ["ς", "Σ"], ["ǅ", "Ǆ"], ["\u{10428}", "\u{10400}"]];
+  for (const [a, b] of one) assert.deepEqual(environmentOf([`V${a}=1`, `V${b}=2`], true), { [`V${a}`]: "1" }, `${a} and ${b} are one`);
+  for (const [a, b] of two) assert.deepEqual(environmentOf([`V${a}=1`, `V${b}=2`], true), { [`V${a}`]: "1", [`V${b}`]: "2" }, `${a} and ${b} are two`);
+  assert.equal(launcher.windowsKey("straße été path"), "STRAßE ÉTÉ PATH");
 });
 
 test("the root variable is set, on Windows in place of one in other letters; without entries process.env is used", () => {
@@ -168,6 +179,15 @@ test("the root variable is set, on Windows in place of one in other letters; wit
   // A name process.env lacks means something else was read: process.env is used instead.
   const instead = binaryEnvironment([isWindows ? "NOT_IN_PROCESS_ENV_X=1" : Buffer.from("NOT_IN_PROCESS_ENV_X=1")], "PKG_ROOT", "/r", isWindows);
   assert.ok(isProcessEnv(instead) && !("NOT_IN_PROCESS_ENV_X" in instead), "process.env instead");
+  // On Windows a name with a unit outside ASCII does not count: bun leaves
+  // some of them out of process.env there.
+  const unicode = binaryEnvironment([line, "NOT_IN_PROCESS_ENV_aß=1"], "PKG_ROOT", "/r", true);
+  assert.equal(unicode["NOT_IN_PROCESS_ENV_aß"], "1", "kept, and the entries are taken");
+  // So does nothing read, or nothing usable, where process.env has something.
+  for (const nothing of [[], [isWindows ? "NOEQUALS" : Buffer.from("NOEQUALS")]]) {
+    const empty = binaryEnvironment(nothing, "PKG_ROOT", "/r", isWindows);
+    assert.ok(isProcessEnv(empty) && empty.PKG_ROOT === "/r", "process.env for an empty read");
+  }
   // Windows: the root variable replaces one of the same name in other letters.
   const spelt = Object.keys(binaryEnvironment([`${own.toLowerCase()}=x`], own.toUpperCase() === own ? `${own[0]}${own.slice(1).toLowerCase()}` : own.toUpperCase(), "/r", true));
   assert.equal(spelt.length, 1, "one variable, in the letters of the root variable");
@@ -206,8 +226,9 @@ function installed(runtime) {
       fs.copyFileSync(process.execPath, standIn);
     }
   } else {
-    // A script: macOS kills a copy of /usr/bin/env.
-    fs.writeFileSync(standIn, "#!/bin/sh\nexec /usr/bin/env\n", { mode: 0o755 });
+    // A script: macOS kills a copy of /usr/bin/env. bash, which passes every
+    // name on; dash (Ubuntu's sh) drops one that is not a shell name (OWN_aß).
+    fs.writeFileSync(standIn, "#!/bin/bash\nexec /usr/bin/env\n", { mode: 0o755 });
   }
   const printer = path.join(dir, "print-env.cjs");
   fs.writeFileSync(printer, 'process.stdout.write(Object.entries(process.env).map(([k, v]) => `${k}=${v}\\n`).join(""));\n');
@@ -234,7 +255,8 @@ function userEnvironment(pkg, extra = {}) {
     if (/^(BUN_|NODE_|npm_|XDG_)/i.test(name) || [...DOTENV_NAMES, "SHARED", "EMPTY", "EQ", "OWN", "PKG_ROOT", "RUSTIFY_NO_LINK"].includes(name.toUpperCase())) continue;
     env[name] = value;
   }
-  return { ...env, HOME: pkg.home, USERPROFILE: pkg.home, SHARED: "mine", EMPTY: "", EQ: "a=b=c", OWN: "mine", ...extra };
+  // OWN_aß: bun 1.4.2 leaves such a name out of process.env on Windows.
+  return { ...env, HOME: pkg.home, USERPROFILE: pkg.home, SHARED: "mine", EMPTY: "", EQ: "a=b=c", OWN: "mine", OWN_aß: "mine", ...extra };
 }
 
 // What the stand-in binary saw, as name → value (the first of a name).
@@ -256,6 +278,7 @@ function assertUserEnvironment(seen, pkg) {
   assert.equal(seen.EMPTY, "", "and so does an empty one");
   assert.equal(seen.EQ, "a=b=c");
   assert.equal(seen.OWN, "mine");
+  assert.equal(seen.OWN_aß, "mine", "a name with a letter outside ASCII");
   assert.equal(seen.PKG_ROOT, pkg.root, "the root variable names the package");
 }
 
