@@ -89,8 +89,9 @@ found by a port or by the verification of one, and each was visible to a user.
 - hangs, instead of failing, when `TEMP` names a directory it cannot use:
   wtx's first CI run on Windows hung in `bun --version` until the job was
   cancelled;
-- writes what JavaScript sets in `process.env` into the process's own
-  environment block at once, the name in capitals (`toUpperCase()`'s:
+- writes what JavaScript changes in `process.env` (a new name or a new
+  value) into the process's own environment block at once, the name in
+  capitals (`toUpperCase()`'s:
   `lc_x` becomes `LC_X`, `straße_x` becomes `STRASSE_X`), and what it
   deletes (bun 1.4.2); on Linux and macOS it writes nothing there. So on
   Windows native code that reads the environment itself, or starts a
@@ -476,6 +477,14 @@ it is compared.
   data.
 - **A value that must not be in the cases file** (dotenvdotenc refuses to
   commit a file holding a private key): the wrapper computes it.
+- **What environment a program got**: print it with a program that adds
+  nothing to it. bash adds `SHLVL`, `_` and `PWD`; dash (Ubuntu's `sh`) drops
+  a name that is not a shell name (`OWN_aß`); gawk, the awk of GitHub's
+  Ubuntu runners, adds `AWKPATH` and `AWKLIBPATH` to its `ENVIRON`, where
+  mawk and macOS's awk add nothing. A copy of `/usr/bin/env` is killed on
+  macOS. `perl -e 'print map { "$_=$ENV{$_}\n" } keys %ENV'` adds nothing on
+  Linux and macOS; rustify's launcher tests passed locally and failed on
+  the runners with an awk one.
 
 On Windows a wrapper started with `sh` is a program of the MSYS family. It
 reads its command line by rules of its own and gives the program it starts

@@ -137,9 +137,12 @@ launcher's bun before the launcher (see the end of this section).
   and the unit tests check this byte for byte, for a `bunfig.toml` preload
   and a `BUN_OPTIONS` one that delete a variable of the user's and set
   others, and for `env -i`.
-- Windows: bun writes every assignment to `process.env` into the process's
-  environment block at once, and every `delete` (bun 1.4.2): a preload's,
-  the main script's, `process.loadEnvFile()`'s, `TZ`. It writes the name as
+- Windows: bun writes every assignment that changes `process.env` (a new
+  name or a new value) into the process's environment block at once, and
+  every `delete` (bun 1.4.2): a preload's, the main script's, `Bun.env`'s,
+  `TZ`, and `process.loadEnvFile()`'s for names and values the `.env` files
+  did not already give. An assignment of the value a name already has
+  writes nothing, so `process.loadEnvFile('.env')` adds nothing there. It writes the name as
   `toUpperCase()` makes it: `lc_x` becomes `LC_X`, `lc_été` `LC_ÉTÉ`, and
   `straße_x` becomes `STRASSE_X`, which Windows takes for another variable;
   a variable already there keeps its spelling (`Shared_Mixed`). The `.env`
@@ -225,6 +228,17 @@ Measured with bun 1.4.0 (Linux x64), 1.4.4 (macOS arm64) and 1.4.2
   turns the text it is given into UTF-8 (UTF-16 on Windows), so no launcher
   can pass such bytes on. An entry without `=` (Linux and macOS only; Windows
   refuses to start a process with one) is left out; v2 passed it as `NAME=`.
+  So is a variable named `__proto__`, which a plain object does not hold as
+  a key, as in v2, and a `NODE_CHANNEL_FD` set outside a fork, which bun
+  takes out of `process.env` (see below).
+- The launcher's own switches come from `process.env`, `.env` files
+  included: a `.env` with `RUSTIFY_NO_LINK=1` keeps the command from linking
+  (it stays a launcher, about 30 ms per run), and on Windows a
+  `BUN_INSTALL_BIN` there changes where it looks for bun's shims. Neither
+  reaches the binary's environment.
+- Anything thrown while the read is turned into an environment falls back
+  to `process.env`; a `process.env` that throws when asked (a preload that
+  puts its own object there) does not, and the IPC variables then go.
 - An empty value and a `=` inside a value pass unchanged; bun keeps an empty
   variable of the user's even when `.env` names it.
 - An empty environment, in a directory with `.env` files: the binary gets
