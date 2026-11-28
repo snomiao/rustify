@@ -5,7 +5,7 @@
 // tests catch offset mistakes; whether bun's real shim accepts the result is
 // checked by smoke.mjs on Windows runners.
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { fork, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -271,6 +271,25 @@ test("under bun, the binary gets the user's environment, not the .env files bun 
     const noExecve = path.join(pkg.dir, "no-execve.cjs");
     fs.writeFileSync(noExecve, "delete process.execve;\n");
     assertUserEnvironment(runLauncher(pkg, { env, flags: ["--preload", noExecve] }), pkg);
+  } finally {
+    fs.rmSync(pkg.dir, { recursive: true, force: true });
+  }
+});
+
+test("under bun started by fork, the IPC channel bun took is not passed on, and .env is not either", { skip: BUN }, async () => {
+  const pkg = installed("bun");
+  try {
+    const env = userEnvironment(pkg, { RUSTIFY_NO_LINK: "1" });
+    const child = fork(pkg.launcher, isWindows ? [pkg.printer] : [], { execPath: "bun", cwd: pkg.cwd, env, stdio: ["ignore", "pipe", "pipe", "ipc"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (d) => (stdout += d));
+    child.stderr.on("data", (d) => (stderr += d));
+    const code = await new Promise((resolve) => child.on("exit", resolve));
+    assert.equal(code, 0, stderr);
+    const seen = Object.fromEntries(stdout.split("\n").filter((l) => l.indexOf("=", 1) > 0).map((l) => [l.slice(0, l.indexOf("=", 1)), l.slice(l.indexOf("=", 1) + 1)]));
+    assertUserEnvironment(seen, pkg);
+    assert.equal(seen.NODE_CHANNEL_FD, undefined);
   } finally {
     fs.rmSync(pkg.dir, { recursive: true, force: true });
   }

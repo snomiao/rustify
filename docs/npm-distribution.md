@@ -135,6 +135,12 @@ Measured with bun 1.4.0 (Linux x64), 1.4.4 (macOS arm64) and 1.4.2
   refuses to start a process with one) is left out; v2 passed it as `NAME=`.
 - An empty value and a `=` inside a value pass unchanged; bun keeps an empty
   variable of the user's even when `.env` names it.
+- A bun started by `child_process.fork` takes its IPC channel's variables
+  (`NODE_CHANNEL_FD`, `NODE_CHANNEL_SERIALIZATION_MODE`) out of
+  `process.env`; they are left out of the binary's environment too, as in v2.
+  bun takes nothing else out (Linux, bun 1.4.0, with `BUN_OPTIONS`,
+  `NODE_OPTIONS`, `NODE_DEBUG`, `NODE_ENV`, `NO_COLOR`, `FORCE_COLOR`,
+  `BUN_INSTALL` and others set).
 - 200 variables of 1000 characters and one of 30000 pass unchanged on all
   three (the unit test does this).
 - Reading it costs about a millisecond in the launcher (median of 30 runs:

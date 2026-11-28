@@ -162,6 +162,10 @@ function environmentOf(entries, windows) {
   return env;
 }
 
+// What bun takes out of process.env when it uses it: the IPC channel that
+// child_process.fork gave it. Left out here too, as v2 left it out.
+const TAKEN = ["NODE_CHANNEL_FD", "NODE_CHANNEL_SERIALIZATION_MODE", "NODE_UNIQUE_ID"];
+
 // Whether `env` can be what this process was started with: bun's process.env
 // holds every variable of it, and more (the .env files) but never fewer. Any
 // name it lacks means that something else was read.
@@ -177,6 +181,7 @@ function binaryEnvironment(entries, rootName, root, windows) {
   let env = null;
   try {
     if (entries) env = environmentOf(entries, windows);
+    if (env) for (const name of TAKEN) if (!(name in process.env)) delete env[name];
     if (env && !plausible(env, windows)) env = null;
   } catch {
     env = null;
