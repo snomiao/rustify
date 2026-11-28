@@ -323,6 +323,57 @@ mod windows {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// The entry is started as the package managers' shims start it
+    /// (measured on Windows 11 with npm 11 and bun 1.4.2): with what its `#!`
+    /// line names and nothing else, except that bun's shim takes bun where
+    /// the line names node and node is missing. So an entry whose line names
+    /// bun never goes to node, as wtx's `wtx.mjs` did, where node then failed
+    /// on its first import. With nothing to start, the binary says what is
+    /// missing and exits 1, as npm's shim does from a command prompt.
+    #[test]
+    fn the_runtime_is_the_one_the_line_names() {
+        let _serial = serial();
+        let dir = scratch("shims");
+        let root = dir.join("pkg");
+        let system = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32");
+        // The entry's first bytes, the runtimes on PATH, and the one started (None: none).
+        let cases: [(&str, &[&str], Option<&str>); 7] = [
+            ("#!/usr/bin/env bun\nimport { serve } from \"./src/server\";\n", &["node"], None),
+            ("#!/usr/bin/env bun\r\nconsole.log(1)\r\n", &["node", "bun"], Some("bun")),
+            ("#!/usr/bin/env node\n", &["bun"], Some("bun")),
+            ("#!/usr/bin/env node\n", &["bun", "node"], Some("node")),
+            ("#!/usr/bin/env node\n", &[], None),
+            ("#!/usr/bin/env tsx\n", &["node", "bun"], None),
+            ("console.log(1)\n", &["node"], Some("node")),
+        ];
+        for (head, on_path, started) in cases {
+            let bin = dir.join(format!("bin-{}", on_path.join("-")));
+            for name in on_path {
+                runtime_at(&bin.join(format!("{name}.exe")));
+            }
+            let entry = package(&root, head.as_bytes());
+            let path = std::env::join_paths([bin, system.clone()]).unwrap();
+            let output = start(Path::new(TOY), &["js", "one"], &dir, &path, &[(ROOT_ENV, root.as_os_str())]).unwrap();
+            let label = format!("{head:?} with {on_path:?} on PATH: {}", text(&output));
+            let printed = String::from_utf8_lossy(&output.stdout).into_owned();
+            match started {
+                Some(name) => {
+                    assert!(output.status.success(), "{label}");
+                    let first = printed.lines().next().unwrap_or("").replace("\\\\", "\\").to_lowercase();
+                    assert!(first.ends_with(&format!("\\{name}.exe")), "{name} was to be started: {label}");
+                }
+                None => {
+                    assert_eq!(output.status.code(), Some(1), "{label}");
+                    assert!(printed.is_empty(), "nothing was to be started: {label}");
+                    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+                    let named = head.trim_start_matches("#!/usr/bin/env ").split(['\r', '\n']).next().unwrap();
+                    assert!(stderr.starts_with(&format!("cannot run {}: its #! line names {named}; ", entry.display())), "{label}");
+                }
+            }
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// bun.exe ahead of bun.cmd on PATH is the one started.
     #[test]
     fn bun_exe_first_on_path_wins() {

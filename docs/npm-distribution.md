@@ -102,19 +102,94 @@ made the next bun read `.env.production`.
 bun puts those values into `process.env` only. The environment the system
 keeps for the process stays as the shell gave it, and launcher v3 reads that
 one under bun: `/proc/self/environ` on Linux, `_NSGetEnviron()` through
-bun:ffi on macOS, `GetEnvironmentStringsW()` through bun:ffi on Windows. It
-then sets `rootEnv`. Whatever cannot be read, or does not look like what
-the process was started with (a name `process.env` lacks, or nothing where
-`process.env` has something), leaves `process.env` in its place, as in v2,
-without a word. (So `env -i` in a directory with `.env` files, where bun's
-`process.env` holds only what they say, gives the binary those values, as
-v2 did.) On Windows a name with a letter outside ASCII is not held
-against the read: bun 1.4.2 leaves some of them out of `process.env` there
-(`aß`, `éa`, `aÿ`, not `ß` or `éé`), though the block has them, so v2 lost
-them and v3 passes them on. Under node it is
+bun:ffi on macOS, `GetEnvironmentStringsW()` through bun:ffi on Windows.
+What it reads is what the binary gets, with `rootEnv` set in it: also an
+empty environment (`env -i`; the binary gets `rootEnv` alone), and one that
+holds names `process.env` lacks, such as a variable a preload deleted. On
+Windows bun 1.4.2 leaves some names with a letter outside ASCII out of
+`process.env` (`aß`, `éa`, `aÿ`, not `ß` or `éé`), though the block has
+them, so v2 lost them and v3 passes them on. Only where the environment
+cannot be read does `process.env` take its place, as in v2, without a word
+(see "Where it cannot be read" below). Under node it is
 `process.env`: node loads no `.env` file here, and it refuses `--env-file`
 and `--env-file-if-exists` in `NODE_OPTIONS` ("is not allowed in
 NODE_OPTIONS", exit 9; node 20.19 and 24.8).
+
+The first cut of v3 compared what it read with `process.env`, and used
+`process.env` where a name was missing from it or nothing was read. On
+Linux and macOS that happened exactly after a preload deleted a variable,
+and for an empty environment. On Windows the comparison turned down no read
+in any case measured, and an empty block could not be read at all
+(bun:ffi's `toBuffer` refuses a length of 0). Both are fixed.
+
+**What a preload did before the launcher.** A `preload` of the working
+directory's `bunfig.toml`, or a `--preload` in `BUN_OPTIONS`, runs in the
+launcher's bun before the launcher (see the end of this section).
+
+- Linux and macOS: bun writes nothing of what JavaScript does to
+  `process.env` into `/proc/self/environ` or the C `environ`: not an
+  assignment, not a `delete`, not the `.env` files, not `BUN_OPTIONS`'s
+  `--env-file`, not `process.loadEnvFile()`, not `Object.assign`, not `TZ`;
+  a long `process.title` leaves them alone too (bun 1.3.14, 1.4.0 and 1.4.5
+  on Linux x64, 1.4.4 on macOS arm64; in a preload and in the main script).
+  So the binary gets the environment as the command was started: what a
+  preload deleted is passed on, and what it set is not. `tests/e2e/run.sh`
+  and the unit tests check this byte for byte, for a `bunfig.toml` preload
+  and a `BUN_OPTIONS` one that delete a variable of the user's and set
+  others, and for `env -i`.
+- Windows: bun writes every assignment to `process.env` into the process's
+  environment block at once, and every `delete` (bun 1.4.2): a preload's,
+  the main script's, `process.loadEnvFile()`'s, `TZ`. It writes the name as
+  `toUpperCase()` makes it: `lc_x` becomes `LC_X`, `lc_été` `LC_ÉTÉ`, and
+  `straße_x` becomes `STRASSE_X`, which Windows takes for another variable;
+  a variable already there keeps its spelling (`Shared_Mixed`). The `.env`
+  files and `--env-file` are not written. Nothing keeps the block as the
+  process was started with it: the PEB's `ProcessParameters` point at the
+  same block, changed alike, and Windows documents no other. So on Windows
+  what a preload set in `process.env` reaches the binary, and what it
+  deleted does not; the unit tests assert this, so that a bun that changes
+  it is noticed.
+- On Windows, the JavaScript the binary hands back to then starts with such
+  a variable under the name in capitals: its `process.env` says `LC_X`
+  where the JavaScript run directly says `lc_x` (one variable to Windows,
+  and to a child it starts). A `NODE_ENV` a preload set is in the
+  environment the hand-back's bun starts with, so that bun reads
+  `.env.<NODE_ENV>`; the JavaScript run directly loads its `.env` files
+  before its preload runs, and reads `.env.development`. A preload setting
+  `NODE_ENV=production`, with a `.env` that does not, so brings the values
+  of `.env.production` to the hand-back. The launcher cannot tell such a
+  variable from one of the user's.
+
+**Where it cannot be read**, the binary gets bun's `process.env`, `.env`
+files included, as from v2. On the platforms the pipeline ships:
+
+- Linux x64 and arm64 (the musl builds run on glibc systems too; the read is
+  the kernel's, with no bun:ffi, the same in every bun): when
+  `/proc/self/environ` cannot be opened. That is a system without `/proc`
+  (a chroot or a sandbox without it; not measured), or a process the kernel
+  has made non-dumpable and that does not run as root, which gets `EACCES`:
+  bun installed so that the user may run it but not read it (mode 711),
+  bun given file capabilities or set-user-ID, or a preload that calls
+  `prctl(PR_SET_DUMPABLE, 0)` (the first and the last measured with bun
+  1.4.5).
+- macOS x64 and arm64: when bun:ffi's `dlopen` throws. bun 1.3 and 1.4
+  build TinyCC, which it needs, for both (read in their build files); it
+  worked on arm64 with 1.4.4.
+- Windows x64: when bun:ffi's `dlopen` throws, or `GetEnvironmentStringsW`
+  returns nothing (it fails only for want of memory). It worked with 1.4.2.
+- Windows arm64: on every run with bun 1.3, which builds no TinyCC there;
+  bun 1.4 builds it (read in bun's sources; no Windows arm64 machine was at
+  hand).
+- Anywhere, when something that ran before the launcher replaced
+  `fs.readFileSync` or bun:ffi (the unit test does this to stand for the
+  cases above).
+
+The launcher could tell the binary that it got `process.env`, with a
+variable it sets only then. It does not: the binary passes its environment
+to every program it starts, not only to the JavaScript, so such a variable
+would reach them unless every port's `main` took it out before starting
+anything (Rust runs nothing of `js_fallback.rs` before `main` that could),
+and all a binary could do with it is warn, in the few cases above.
 
 Measured with bun 1.4.0 (Linux x64), 1.4.4 (macOS arm64) and 1.4.2
 (Windows 11 x64):
@@ -152,6 +227,12 @@ Measured with bun 1.4.0 (Linux x64), 1.4.4 (macOS arm64) and 1.4.2
   refuses to start a process with one) is left out; v2 passed it as `NAME=`.
 - An empty value and a `=` inside a value pass unchanged; bun keeps an empty
   variable of the user's even when `.env` names it.
+- An empty environment, in a directory with `.env` files: the binary gets
+  `rootEnv` alone, on Linux and macOS from `env -i` (with bun named by its
+  path), on Windows from a block that CreateProcess was given empty (Rust's
+  `env_clear`), where the first cut of v3 passed the `.env` files on. node
+  does not start at all from an empty block (its random-number setup
+  asserts without `SystemRoot`; node 24.8); bun does.
 - A bun started by `child_process.fork` takes its IPC channel's variables
   (`NODE_CHANNEL_FD`, `NODE_CHANNEL_SERIALIZATION_MODE`) out of
   `process.env`; they are left out of the binary's environment too, as in v2.
@@ -185,9 +266,10 @@ What v3 cannot undo: a preload has already run in the launcher. A
 preload of its own (then bun 1.4.0 and 1.4.4 skip the `BUN_OPTIONS` one for
 the launcher, which has no file extension). The JavaScript the binary hands
 back to runs them again, so on a first run, or a run that cannot relink, a
-preload's output and side effects happen twice. What a preload sets in
-`process.env` no longer reaches the binary. `BUN_OPTIONS` itself is the
-user's variable and is passed on.
+preload's output and side effects happen twice. What a preload sets or
+deletes in `process.env` does not reach the binary on Linux and macOS; on
+Windows it does (see "What a preload did before the launcher" above).
+`BUN_OPTIONS` itself is the user's variable and is passed on.
 
 ### Measured
 
@@ -241,9 +323,17 @@ invocation of it. Two ways to get there before the port is complete:
   An extra that only some platforms have (a Windows-only helper) is named in
   `"extraPlatforms"`; it is then required there and not expected elsewhere.
 
-The hand-back starts the JavaScript with the runtime its own first line names
-(`#!/usr/bin/env node`, `bun`, `npx tsx`), which is what ran it before the
-binary existed, and falls back to the other of bun and node.
+The hand-back starts the JavaScript as it was started before the binary
+existed. On Linux and macOS an entry with a `#!` line (`#!/usr/bin/env
+node`, `bun`, `npx tsx`) is started as the system starts it, and a missing
+runtime is reported by env, exit 127. On Windows it is started as the
+package managers' shims start it: with the runtime the line names and no
+other, except bun where the line names node and node is missing, as bun's
+shim does; so an entry whose line names bun never goes to node. Nothing to
+start is said in the binary's words, with exit code 1, as npm's shim exits
+from a command prompt (bun's exits 255). An entry without a `#!` line goes
+to bun, then to node unless it is TypeScript. See
+[porting.md](porting.md), step 1.
 
 Only hand a command to Rust when its ledger entry is `ported` or `verified`.
 A `partial` Rust command behaves differently from what users have today.
@@ -371,6 +461,10 @@ Verified additionally on Linux x64 by `tests/e2e/run.sh`:
   hands back
 - a bun or node behind a version manager's shim that needs the real home
   directory still starts under the smoke test's home directory
+- on a first run the binary gets the shell's environment byte for byte and
+  `rootEnv`: in a directory with `.env` files, after a `bunfig.toml` or
+  `BUN_OPTIONS` preload that deletes a variable of the user's and sets
+  others, and from `env -i` (also run on macOS)
 
 Two bugs the six-platform run caught that Linux alone could not:
 
@@ -415,7 +509,15 @@ Not verified:
 
 - The first run after every install or upgrade goes through the launcher once.
   A `preload` of the working directory's `bunfig.toml`, or one in
-  `BUN_OPTIONS`, runs in it (see "The launcher's environment").
+  `BUN_OPTIONS`, runs in it. On Windows what such a preload sets in
+  `process.env` reaches the binary, in capitals, and what it deletes does
+  not; a `NODE_ENV` it sets makes the hand-back's bun read
+  `.env.<NODE_ENV>`. On Linux and macOS the binary gets the shell's
+  environment all the same (see "The launcher's environment").
+- Where the launcher cannot read the environment it was started with (no
+  `/proc`, a bun that may not read its own, bun 1.3 on Windows arm64), the
+  binary gets bun's `process.env`, the `.env` files included, as with
+  launcher v2, and nothing says so.
 - Windows keeps the package manager's shim in the path (a few milliseconds).
 - If the package directory is read-only, the launcher cannot link and stays in
   use on every run. Nothing breaks.
