@@ -1046,6 +1046,23 @@ function show(label, text, spell) {
   return `      ${label}:\n${shown.join("\n")}`;
 }
 
+// Where two values first differ, when that is past the 30 lines show()
+// prints: the lines around it on both sides, numbered, so that a difference
+// seen once in CI can be read from its log.
+function firstDifference(a, b, spell) {
+  const left = (spell ? spelledOut(a) : visible(a)).split("\n");
+  const right = (spell ? spelledOut(b) : visible(b)).split("\n");
+  let at = 0;
+  while (at < left.length && at < right.length && left[at] === right[at]) at++;
+  if (at < 30) return null;
+  const from = at - 2;
+  const around = (lines) =>
+    Array.from({ length: 5 }, (_, k) => from + k)
+      .map((n) => `        ${n + 1}: ${n < lines.length ? lines[n] : "(no such line)"}`)
+      .join("\n");
+  return `      the first difference is in line ${at + 1}:\n      TypeScript:\n${around(left)}\n      Rust:\n${around(right)}`;
+}
+
 let failed = 0;
 let ran = 0;
 
@@ -1131,6 +1148,8 @@ function compareAll() {
       console.log(`    ${k}`);
       console.log(show("TypeScript", ts.observed[k], spell));
       console.log(show("Rust", rs.observed[k], spell));
+      const later = firstDifference(ts.observed[k], rs.observed[k], spell);
+      if (later) console.log(later);
     }
   }
 }
