@@ -270,6 +270,23 @@ test("a failing setup command is reported as broken, not as a pass", () => {
   }
 });
 
+test("a difference past the 30 lines shown is printed with the lines around it", () => {
+  // The Rust side prints one more line after 40 that both print.
+  const dir = setup(`if (cmd === "bytes") process.stdout.write("x");`);
+  try {
+    const forty = Buffer.from(Array.from({ length: 40 }, (_, i) => `line ${i + 1}\n`).join("")).toString("hex");
+    const r = run(dir, { cases: [{ name: "long", args: ["bytes", forty] }] });
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /… 11 more line\(s\)/);
+    assert.match(r.stdout, /the first difference is in line 41:\n {6}TypeScript:\n {8}39: line 39\n {8}40: line 40\n {8}41: \n {8}42: \(no such line\)\n {8}43: \(no such line\)\n {6}Rust:\n {8}39: line 39\n {8}40: line 40\n {8}41: x\n/);
+    // A difference within the lines shown needs no more.
+    const short = run(dir, { cases: [{ name: "short", args: ["bytes", Buffer.from("a\n").toString("hex")] }] });
+    assert.doesNotMatch(short.stdout, /the first difference/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a file of a case that this system cannot make is that case BROKEN, and the other cases still run", () => {
   const dir = setup();
   try {
