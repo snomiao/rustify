@@ -4,13 +4,90 @@
 # First pass, 2026-11-27, written by reading the code at c759994. Every line
 # of the TypeScript was read: bin/rustdesk-skill.ts and the seven files of
 # src/ (1,317 lines), with test/unit.test.ts, the two OCR scripts in ocr/,
-# package.json, README.md, SKILL.md and CLAUDE.md. Nothing was run beyond
-# --help: the only invocations were the install smoke test of the branch
-# build/rustify-pipeline (`--help`, `connect --help`, no command, an unknown
-# command), with a home directory of its own, all answered by yargs before
-# any command runs. No browser, no playwright-cli, no OCR, no test, and
-# nothing was contacted. No test was seen to pass, so none is cited as a
-# proof. A statement that is a deduction from the code, not something a test
+# package.json, README.md, SKILL.md and CLAUDE.md.
+#
+# Second pass, 2026-11-28, with the port on branch build/rust-port: every
+# command is native on Linux and macOS in its plain spellings, on a machine
+# the binary finds plain (see the entries for what goes back), and handed
+# back on Windows. The proof is rs/parity/proof.sh, which the workflow runs
+# on linux-x64, darwin-arm64 and win32-x64 (first in CI at 9b1b75d: see the
+# fourth pass):
+#
+# - rs/parity.json (written by rs/parity.gen.mjs): 553 cases, TypeScript
+#   against the binary, then the binary against a stand-in package (the
+#   --handback check: exactly the cases marked "handback" for the system
+#   reach the JavaScript), then once more with stdout and stderr on a
+#   terminal (not on Windows). No case reaches a browser, a screen, OCR or a
+#   clipboard: rs/parity/run.sh puts stand-ins for playwright-cli, python3,
+#   xclip and pbcopy first on PATH (rs/parity/shim.mjs, which also stands in
+#   RDS_PW_BIN), and they and a logging git write down every call with its
+#   arguments, directory, stdin and a digest of its environment; the cases
+#   compare that log, stdout, stderr, the exit code and the files left
+#   behind (names, modes, contents).
+# - rs/src/compare.rs (cargo test): the argument gate against the project's
+#   own yargs chain (buildParser) over 134,123 generated command lines;
+#   toLowerCase and trim of every code point, os.tmpdir(), String(x),
+#   toFixed(2) and Math.round against bun; and for what connect answers
+#   after it has acted: String(x) of 140,000 doubles, Number(s) of 40,000
+#   strings, Number(v) of 30,000 JSON values, src/ocr.ts normalizeBoxes and
+#   matchText themselves on 20,000 generated OCR outputs, the order
+#   `(a, b) => a.y - b.y` gives 6,000 lists with NaN and infinities
+#   (rs/src/jssort.rs is JavaScriptCore's own sort), and connect's fixed
+#   texts among 40,000 texts of scripts whose lower case is not certain.
+#
+# Third pass, 2026-11-28, after an independent verification (rustify's
+# docs/porting.md, step 8) found 7 differences in 67 cases of its own: a
+# step printing between 1,000,000 bytes and bun's mebibyte, a program that
+# never stops printing, stdout that cannot be written, and, once connect had
+# acted, a capital sigma on screen, viewports and OCR output of unusual
+# shapes and a password field at -0. Each is now answered as the TypeScript
+# answers it, or looked at before the first act; the verifier's cases are
+# in rs/parity.json (v …), with cases for each repair (r …), 553 in all.
+#
+# Fourth pass, 2026-11-28, after the first CI run (46115487466, at 9b1b75d,
+# bun 1.4.5): win32-x64 passed, linux-x64 and darwin-arm64 failed.
+# - On both, cargo test: compare::lower_case_and_white_space_as_bun_has_them
+#   found 18 code points (U+AB6C, U+AB6D and 16 capitals from U+1DF40 to
+#   U+1DF7E) that the binary lower-cased and bun keeps. CI builds with the
+#   runner's stable Rust, 1.100, whose tables are Unicode 18; bun 1.4 and the
+#   Rust here (1.97, and 1.99 on the Mac) have Unicode 17. The binary's lower
+#   case came from Rust's to_lowercase, so it followed the toolchain that
+#   built it. It now comes from rs/src/unicode.rs, recorded from bun by
+#   rs/unicode.gen.mjs (`--check` in proof.sh), and a character goes back
+#   when the table's Unicode does not assign it or the building toolchain's
+#   tables disagree with the table (see text matching). The test stays, as
+#   the alarm against the bun CI runs. Nothing else in the crate asks Rust's
+#   Unicode tables (white space and the controls are listed).
+# - On macOS, the cases of a stdout whose reader has gone differed at random
+#   (12 differences in 8 of the 9 cases, on pipes and on the terminal):
+#   `<ROOT>/tmp/stdout.N: Interrupted system call` from rs/parity/run.sh, on
+#   either side. The FIFO's writer opened while a reader started in the
+#   background came and went; when the reader had left before the open saw
+#   it, the open waited and SIGCHLD failed it. run.sh now opens the FIFO for
+#   reading and writing, then for writing, and closes the first: nothing
+#   waits and no process comes and goes.
+# - On the macOS terminal, `r pw: a step that never stops printing` differed
+#   in how many y's bun kept (557,056 lines in the TypeScript, 540,540 in the
+#   binary), which the case's rule is there to make the same: XNU ends a line
+#   in CR CR LF every 341 lines of y, where the terminal's output queue was
+#   full, so the rule's half a million lines in a row never matched there.
+#   The case takes the CRs before a line feed off first.
+#
+# Run with rs/parity/proof.sh at 9bbba53 of build/rust-port on Linux x64
+# (bun 1.4.0 with Rust 1.97.1; bun 1.4.5 with the binary and cargo test both
+# built by Rust 1.100.1, Unicode 18, as CI builds them): 423 cases answered
+# by the binary, 130 handed back; on macOS arm64 (bun 1.4.4 and 1.4.5, Rust
+# 1.99.0): 422 and 129 (paste without pbcopy goes back there; 2 skipped: no
+# /dev/full); on Windows 11 x64 (bun 1.4.2): 301 handed back, 252 skipped
+# (they need a stand-in on PATH, a terminal, a pipe made with mkfifo or
+# /dev/full, or a command line longer than Windows takes). The terminal run:
+# 553 of 553 on Linux, 551 of 551 on macOS. cargo test: 44 on Linux and
+# macOS (against bun 1.4.0, 1.4.5 and 1.4.4), 3 on Windows. rs/src/unicode.rs
+# is what bun 1.4.0, 1.4.2, 1.4.4 and 1.4.5 say. clippy -D warnings passes
+# with Rust 1.97.1 and 1.100.1 on Linux, 1.99.0 on macOS, 1.96.1 on Windows.
+# CI at 9bbba53 (run 46121022956): all 16 checks pass, the parity job on
+# linux-x64, darwin-arm64 and win32-x64 included, with bun 1.4.5.
+# A statement that is a deduction from the code, not something a case
 # asserts, says `read, not run`.
 #
 # How it fits together. Every command except `list` drives a browser tab
@@ -22,20 +99,42 @@
 # recent IDs under ~/.config/rustdesk-skill (RDS_CONFIG_DIR), the session
 # name in the environment or ./.env.local, screenshots in the temp directory.
 # The package has no `exports` and no library entry; the commands are the
-# whole interface.
+# whole interface. The binary still starts playwright-cli and python3 for
+# every step, as the TypeScript does: a port saves the start of bun and
+# yargs per invocation, not the work.
 #
-# Status. The crate on build/rustify-pipeline hands every invocation back to
-# bin/rustdesk-skill.ts, so every feature below is `missing`. Nothing is
-# `dropped`: that is the owner's decision.
+# Handing back. The binary declines before it has printed, started or
+# changed anything that shows: a command line yargs has to answer, a machine
+# it does not imitate (the situations below). A command keeps what it would
+# print until its first step that acts on the page (any playwright-cli step
+# but `screenshot` and `eval`, once it has started), sets the clipboard or
+# writes a file of the user's; until then it can still decline after a step
+# that only looks (a screenshot, the address, the viewport, OCR), and the
+# JavaScript takes that step again: a second screenshot and OCR, which costs
+# time, not more. A program that cannot be started has started nothing, and
+# goes back too. After the first act every outcome is reported as the
+# TypeScript reports it: a step's output past bun's buffer, E2BIG, and for
+# connect any OCR output and viewport (see connect).
 #
-# For the owner. Almost every command spends its time in playwright-cli and
-# Python, which a Rust binary would still start; a port saves the start of
-# bun and yargs per invocation, not the work. `list` and the argument
-# errors are the only paths that touch neither.
+# What is still not imitated after the first act, none of it reachable by
+# what the OCR scripts and playwright-cli print, read, not run unless a
+# case is named: a value connect has to turn into a number that nests lists
+# or objects more than 200 deep (JavaScript answers, or overflows its stack
+# somewhere past 3,000); a program found on PATH that then cannot be
+# started for a reason other than E2BIG or ENOENT (no process left, no
+# memory); a screenshot file that cannot be read for a reason other than
+# being a directory (a FIFO, no permission when not root); a store that
+# cannot be written for a reason other than a full disk although it was
+# writable before the first act. These end with `[rustdesk-skill] stopped:
+# this build does not handle what it met after acting on the page; nothing
+# further was done`, exit 1, without another step and without advising to
+# run it again. And a stdout that stops taking output while connect works
+# ends with exit 1 and the first lines of bun's report, without its stack
+# trace (see "stdout that cannot be written").
 #
-# Rust-only behaviour, from the hand-back helper (no TypeScript counterpart;
-# to be blessed or removed): RUSTDESK_SKILL_NO_NATIVE=1 hands everything
-# back; RUSTDESK_SKILL_PACKAGE_ROOT tells the binary where the package is.
+# Rust-only behaviour (no TypeScript counterpart; to be blessed or removed):
+# RUSTDESK_SKILL_NO_NATIVE=1 hands everything back; RUSTDESK_SKILL_PACKAGE_ROOT
+# tells the binary where the package is; and the stop just described.
 
 reconciled = "c759994"
 
@@ -43,158 +142,242 @@ reconciled = "c759994"
 
 [[feature]]
 name = "connect / c <id> [pw] [--remember-password] [--new]"
-status = "missing"
+status = "verified"
 ts = "bin/rustdesk-skill.ts:95; src/connect.ts:180 connect; src/connect.ts:58 enterId; src/connect.ts:74 triggerConnect"
-note = "Resolves the password first (see the password store), then opens the RustDesk tab (navigates only when not on it already, or always with --new), OCRs the screen and clicks the first box containing リモートID / Remote ID / Control Remote / ID, types the id and presses Enter, OCRs again and clicks 接続 / Connect, handles the password dialog once, saves the password with --remember-password, records the id in the recents, and prints {ok, id, connected, note} as JSON (two-space indent). `ok` is always true and the id is recorded whatever happened on screen (read, not run). note is \"password dialog handled\" or \"no password dialog observed\". The id is kept as a string (leading zeros stay)."
+rs = "rs/src/connect.rs; rs/src/commands.rs"
+proof = "rs/parity.json (connect: …); rs/parity/proof.sh"
+note = "Resolves the password first (see the password store), then opens the RustDesk tab (navigates only when not on it already, or always with --new), OCRs the screen and clicks the first box containing リモートID / Remote ID / Control Remote / ID, types the id and presses Enter, OCRs again and clicks 接続 / Connect, handles the password dialog once, saves the password with --remember-password, records the id in the recents, and prints {ok, id, connected, note} as JSON (two-space indent). `ok` is always true and the id is recorded whatever happened on screen. 37 cases of the port, 19 of the verifier's and 64 of the repair on Linux and macOS: the whole flow against scripted screens, a retina screenshot, open failing and goto taking over, RDS_PW_BROWSER, a missing playwright-cli, OCR and clicks failing on the way, the stores in every shape below. Before its first step the binary reads both stores, checks that the config directory and both files can be written, that the OCR's PNG has an absolute path and that stdout still takes output; a store in a shape it does not write as JavaScript does (a list, values that are not text, __proto__), an id named like a member of Object.prototype, a config directory that cannot be written, a relative temp directory and a stdout whose reader has gone (or /dev/full) go back. Once it has acted (with --new or off the client from `open` on, otherwise from the first click), it reads every screen as JavaScript reads any output of the OCR script: a list, a string (boxes without text), anything else (`{} is not iterable`, `number is not iterable`, `null is not an object (evaluating 'r of raw')`), boxes of any shape (`null is not an object (evaluating 'r.x1_norm')`; corners in strings, lists, true or objects turned into numbers as JavaScript does, `No default value` for an object with a toString of its own; a text that is not a string fails as `b.text.trim()` fails, in JavaScriptCore's words), a lone surrogate (U+FFFD, as bun prints it), a non-JSON report cut inside a character; a viewport of any shape; a remote screen in any script (Greek with its capital sigma, Glagolitic, Adlam: connect's fixed texts are ASCII, kana and CJK, which no such character lower-cases to); numbers of every size as JavaScript writes them (Infinity, NaN, 1e+300, 1152921504606847000); and E2BIG for a remembered password longer than one argument may be (Linux). The cases show each, rs/src/compare.rs holds the pieces against bun. What is left is listed at the top."
 
 [[feature]]
 name = "screenshot / ss [file]"
-status = "missing"
+status = "verified"
 ts = "bin/rustdesk-skill.ts:115; src/screen.ts:43 screenshot"
-note = "Writes the canvas PNG to <file>, relative to the current directory, default ./rds-screenshot.png, and says `[rustdesk-skill] saved <file>` on stderr. Does not navigate."
+rs = "rs/src/commands.rs screenshot"
+proof = "rs/parity.json (screenshot: …); rs/parity/proof.sh"
+note = "Writes the canvas PNG to <file>, relative to the current directory, default ./rds-screenshot.png, and says `[rustdesk-skill] saved <file>` on stderr. Does not navigate. A file that cannot be written (a folder that is not there, a directory in the way) goes back after the screenshot step, as bun reports it in its own words."
 
 [[feature]]
 name = "ocr [--json] [--lang ja,en] [--ocr paddle|vision]"
-status = "missing"
+status = "verified"
 ts = "bin/rustdesk-skill.ts:125; src/screen.ts:51 ocr"
-note = "Screenshot, then OCR. Plain output is one line per box: x and y padded to 5, `  `, w and h padded to 4 around `x`, `  `, the confidence with two decimals (toFixed), `  `, the text. --json prints the boxes {text, conf, x, y, w, h} as JSON with a two-space indent. --ocr outside its choices is a yargs error."
+rs = "rs/src/commands.rs ocr_command; rs/src/ocr.rs"
+proof = "rs/parity.json (ocr: …); rs/parity/proof.sh; rs/src/compare.rs numbers_as_bun_writes_them"
+note = "Plain output is one line per box: x and y padded to 5, `  `, w and h padded to 4 around `x`, `  `, the confidence with two decimals (toFixed), `  `, the text. --json prints the boxes {text, conf, x, y, w, h} as JSON with a two-space indent. 41 cases. OCR output in shapes JavaScript would have to coerce (not a list, a box without text or with corners in strings, a number that JavaScript writes in its own way, a character cut in two at the 200 units of the non-JSON message) goes back after OCR, which the JavaScript runs again."
 
 [[feature]]
 name = "click <text> [--nth N] [--contains] [--ocr] [--lang]"
-status = "missing"
+status = "verified"
 ts = "bin/rustdesk-skill.ts:150; src/screen.ts:57 clickText"
-note = "OCR, match (see text matching), click the box's centre. Says `[rustdesk-skill] clicked \"<box text>\" @ <x>,<y>` on stderr, with the box's top-left corner, not the point clicked. Several matches without --nth: a warning on stderr naming the count, then the first. No match, or --nth past the matches: `text not found on screen: \"<text>\" (<n> boxes scanned)`, exit 1."
+rs = "rs/src/commands.rs click"
+proof = "rs/parity.json (click: …); rs/parity/proof.sh"
+note = "OCR, match (see text matching), click the box's centre. Says `[rustdesk-skill] clicked \"<box text>\" @ <x>,<y>` on stderr, with the box's top-left corner, not the point clicked. Several matches without --nth: a warning on stderr naming the count, then the first. No match, or --nth past the matches (or 0): `text not found on screen: \"<text>\" (<n> boxes scanned)`, exit 1. --nth is taken as a whole number written plainly; any other spelling goes to yargs."
 
 [[feature]]
 name = "click-xy <x> <y>"
-status = "missing"
+status = "verified"
 ts = "bin/rustdesk-skill.ts:171; src/screen.ts:77 clickXY; src/pw.ts:191 clickScreenshotPx"
-note = "Coordinates in screenshot pixels: takes a screenshot for its size, converts to CSS pixels, then mousemove, mousedown, mouseup. A value that is not a number reaches playwright-cli as `NaN` (read, not run)."
+rs = "rs/src/pw.rs click_screenshot_px"
+proof = "rs/parity.json (click-xy: …, move: …); rs/parity/proof.sh"
+note = "Coordinates in screenshot pixels: takes a screenshot for its size, converts to CSS pixels, then mousemove, mousedown, mouseup. Numbers written plainly (up to 15 digits, a sign, up to 6 decimals) are native; 1e3, 0x10, NaN and the like go to yargs (where NaN would reach playwright-cli as `NaN`, read, not run)."
 
 [[feature]]
 name = "move <x> <y>"
-status = "missing"
+status = "verified"
 ts = "bin/rustdesk-skill.ts:180; src/screen.ts:82 move; src/pw.ts:183 moveScreenshotPx"
-note = "As click-xy without the button: a screenshot for the size, then mousemove in CSS pixels."
+rs = "rs/src/pw.rs move_screenshot_px"
+proof = "rs/parity.json (move: …); rs/parity/proof.sh"
+note = "As click-xy without the button: a screenshot for the size, then mousemove in CSS pixels. 26 cases over viewports of every shape the eval can report (none, 0, negative, fractions, a list, null, a name given twice); a viewport in strings or too large to be a number goes back after the eval."
 
 [[feature]]
 name = "scroll <dy>"
-status = "missing"
+status = "verified"
 ts = "bin/rustdesk-skill.ts:186; src/screen.ts:87 scroll; src/pw.ts:198 scroll"
-note = "`mousewheel 0 <dy>` at the pointer, dy in CSS pixels, negative is up. No screenshot."
+rs = "rs/src/commands.rs; rs/src/pw.rs pw"
+proof = "rs/parity.json (scroll: …); rs/parity/proof.sh"
+note = "`mousewheel 0 <dy>` at the pointer, dy in CSS pixels as String(dy) writes it, negative is up. No screenshot."
 
 [[feature]]
 name = "type <text> [--force]"
-status = "missing"
+status = "verified"
 ts = "bin/rustdesk-skill.ts:192; src/screen.ts:98 type; src/screen.ts:26 SHIFT_CHARS"
-note = "Refuses text with a character that needs Shift on a JP layout (A-Z and ~!@#$%^&*()_+{}|:\"<>?): a warning on stderr listing them once each in order of appearance, then exit 4, before playwright-cli is started. --force says on stderr that it types them anyway, and types. Covered by test/unit.test.ts (`type shift-warning`)."
+rs = "rs/src/commands.rs type_text"
+proof = "rs/parity.json (type: …); rs/parity/proof.sh"
+note = "Refuses text with a character that needs Shift on a JP layout (A-Z and ~!@#$%^&*()_+{}|:\"<>?): a warning on stderr listing them once each in order of appearance, then exit 4, before playwright-cli is started. --force says on stderr that it types them anyway, and types."
 
 [[feature]]
 name = "key <key>"
-status = "missing"
+status = "verified"
 ts = "bin/rustdesk-skill.ts:201; src/pw.ts:208 pressKey; src/pw.ts:237 parseKeyChord; src/pw.ts:250 normalizeKeyName"
-note = "`mod+mod+key`: modifiers ctrl/control, alt/option, shift, meta/cmd/win (any case) become keydown before and keyup after (reversed) a press. Key names enter, esc/escape, tab, backspace, delete, space, up/down/left/right, backquote (any case) are mapped to Playwright's; other keys go as typed. An unknown modifier or an empty chord: `[rustdesk-skill] error: unknown modifier: <m>` / `empty key chord: <chord>`, exit 1."
+rs = "rs/src/pw.rs press_key"
+proof = "rs/parity.json (key: …); rs/parity/proof.sh"
+note = "`mod+mod+key`: modifiers ctrl/control, alt/option, shift, meta/cmd/win (any case) become keydown before and keyup after (reversed) a press. Key names enter, esc/escape, tab, backspace, delete, space, up/down/left/right, backquote (any case) are mapped to Playwright's; other keys go as typed. An unknown modifier or an empty chord: `[rustdesk-skill] error: unknown modifier: <m>` / `empty key chord: <chord>`, exit 1. A modifier or key named constructor or __proto__ (which the TypeScript's plain-object maps answer for) and the Kelvin sign or dotted capital I (which toLowerCase turns into ASCII) go back."
 
 [[feature]]
 name = "paste <text>"
-status = "missing"
+status = "verified"
 ts = "bin/rustdesk-skill.ts:207; src/screen.ts:119 paste; src/pw.ts:216 pasteCtrlV"
-note = "Sets the local clipboard with pbcopy on macOS and `xclip -selection clipboard` elsewhere, Windows included (read, not run), then sends Ctrl+V (never Cmd+V). Failures: `pbcopy failed: …` or `clipboard set failed (need xclip on Linux)`, exit 1."
+rs = "rs/src/commands.rs paste"
+proof = "rs/parity.json (paste: …); rs/parity/proof.sh"
+note = "Sets the local clipboard with pbcopy on macOS and `xclip -selection clipboard` elsewhere, Windows included (read, not run), then sends Ctrl+V (never Cmd+V). Failures: `pbcopy failed: <stderr, else undefined>` or `clipboard set failed (need xclip on Linux)`, exit 1. On Linux a missing xclip is answered natively; on macOS a pbcopy that cannot be started goes back (bun's words). The cases run against stand-ins, so neither machine's clipboard was touched."
 
 [[feature]]
 name = "status"
-status = "missing"
+status = "verified"
 ts = "bin/rustdesk-skill.ts:213; src/connect.ts:234 status"
-note = "Prints {onRustdesk, connected, url} as JSON; url is the fixed text `rustdesk.com/web` when on the client, else empty. The URL check swallows every error, a missing playwright-cli and a session-name error included, so without a browser it prints false/false/\"\" and exits 0 (read, not run). connected comes from the detection below."
+rs = "rs/src/commands.rs status"
+proof = "rs/parity.json (status: …); rs/parity/proof.sh"
+note = "Prints {onRustdesk, connected, url} as JSON; url is the fixed text `rustdesk.com/web` when on the client, else empty. The URL check swallows every error, a missing playwright-cli and a session-name error included (cases show both: false/false/\"\" and exit 0). connected comes from the detection below, which asks for the address a second time. A remote screen in Greek or Glagolitic is answered (r cases); a stdout that cannot take the JSON goes back (see that entry)."
 
 [[feature]]
 name = "disconnect"
-status = "missing"
+status = "verified"
 ts = "bin/rustdesk-skill.ts:214; src/connect.ts:244 disconnect; src/browser.ts:51 reloadHome"
+rs = "rs/src/commands.rs"
+proof = "rs/parity.json (disconnect: …); rs/parity/proof.sh"
 note = "Navigates the tab to https://rustdesk.com/web/ again, which drops the remote session, and says `[rustdesk-skill] disconnect sent` on stderr."
 
 [[feature]]
 name = "list"
-status = "missing"
+status = "verified"
 ts = "bin/rustdesk-skill.ts:220; src/connect.ts:222 listRecent"
-note = "Prints the recent ids as a JSON array with a two-space indent; [] when the file is missing, unreadable, not JSON or not an array. Starts no browser. The array is printed as stored, whatever its elements are."
+rs = "rs/src/commands.rs list; rs/src/store.rs list_recent"
+proof = "rs/parity.json (list: …, runtime: …); rs/parity/proof.sh"
+note = "Prints the recent ids as a JSON array with a two-space indent; [] when the file is missing, a directory, unreadable, not JSON (a byte order mark included) or not an array. Starts no browser. Native on a terminal too (the cases run it there). A list holding anything but strings (which JSON.stringify would write in JavaScript's own way), a lone surrogate and a file that is not UTF-8 go back, and so does a stdout that cannot take the list (see that entry)."
 
 # ─────────────────────── Shared by every command ───────────────────────
 
 [[feature]]
 name = "command line: yargs, --help, --version, usage errors"
-status = "missing"
+status = "partial"
 ts = "bin/rustdesk-skill.ts:91 buildParser; bin/rustdesk-skill.ts:221 demandCommand/strict/help; bin/rustdesk-skill.ts:227"
-note = "yargs 17 with scriptName `rustdesk-skill` whatever the command was called (`rds --help` says rustdesk-skill too), usage `$0 <command> [options]   (alias: rds)`, aliases c and ss, strict, at least one command. No command: the help and `Not enough non-option arguments: got 0, need at least 1`, exit 1; an unknown command or option: `Unknown argument: …`, exit 1 (both seen in the smoke test). --version is yargs's own: `unknown` when installed globally with bun. `help` as the last word, --help on each command, option types and choices are yargs's."
+rs = "rs/src/args.rs"
+proof = "rs/src/compare.rs the_gate_takes_only_what_yargs_does_the_same_with; rs/parity.json (args: …)"
+note = "The plain spellings of every command are native: the command or alias first, `--name value`, `--name=value`, `--flag`, the positionals, each option once, numbers written plainly. rs/src/compare.rs runs 134,123 generated lines through the project's own buildParser and requires the same call for each of the 1,552 the binary takes. Everything else goes to yargs: --help, --version (`unknown` when installed globally with bun), `help` as a word, no command, unknown commands and options, `--no-flag`, `--flag=true`, a flag followed by true/false, `-x`, `--`, `-`, repeated options, values starting with `-` or empty. yargs 17 with scriptName `rustdesk-skill` whatever the command was called, usage `$0 <command> [options]   (alias: rds)`, strict, at least one command."
 
 [[feature]]
 name = "error messages and exit codes"
-status = "missing"
+status = "verified"
 ts = "bin/rustdesk-skill.ts:66 guard"
-note = "Every handler runs in one guard: playwright-cli missing exit 5, no session name exit 6, no password exit 3 (each `[rustdesk-skill] <message>` on stderr), shift characters refused exit 4 (the warning was already printed), anything else `[rustdesk-skill] error: <message>` and exit 1. Output already printed before the error stays (a click warns before it clicks)."
+rs = "rs/src/run.rs Stop; rs/src/main.rs answer"
+proof = "rs/parity.json (pw: …, session: …, connect: …, type: …); rs/parity/proof.sh"
+note = "Every handler runs in one guard: playwright-cli missing exit 5, no session name exit 6, no password exit 3 (each `[rustdesk-skill] <message>` on stderr), shift characters refused exit 4 (the warning was already printed), anything else `[rustdesk-skill] error: <message>` and exit 1. Output already printed before the error stays (a click warns before it clicks). A failed step's message carries its stderr, else its stdout, else `unknown error`, decoded with U+FFFD as bun decodes it (a case with bytes that are not UTF-8, one with a byte order mark, one with % signs); a step a signal ended counts as done (exit 0), as in the TypeScript, unless bun's buffer ran over (exit 1). When printJson cannot write stdout the TypeScript exits 1 with bun's own report: see the entry for that."
+
+[[feature]]
+name = "stdout that cannot be written (a reader that has gone, a full disk)"
+status = "partial"
+ts = "bin/rustdesk-skill.ts:61 printJson; bin/rustdesk-skill.ts:136 console.log"
+rs = "rs/src/run.rs finish, stdout_unwritable; rs/src/main.rs bun_write_error"
+proof = "rs/parity.json (r list: stdout…, r status: stdout…, r ocr…: stdout…, r connect: stdout…, r scroll: stdout…); rs/parity/run.sh PARITY_STDOUT"
+note = "printJson (list, status, ocr --json, connect) writes with process.stdout.write, whose failure bun reports as an uncaught error with a stack trace through the installed files and its version line, exit 1 (EPIPE: broken pipe, write; ENOSPC: no space left on device, write). The binary cannot print that report: list, status and ocr --json hand back when their write fails before anything is out (stdout first when it is not the same file as stderr, whose order then cannot be seen), and the JavaScript fails the same way, status and ocr --json taking their screenshot and OCR again; connect hands back before its first act when stdout is closed, a pipe or socket nothing reads any more, or /dev/full. ocr's lines (console.log) and everything on stderr (console.error) ignore failures in bun as in the binary: native, exit 0. Not imitated: stdout that stops taking output while connect works, after it has acted (a reader that leaves during the seconds a real connect takes, a disk that fills up): the binary then exits 1 with the first lines of bun's report but without the stack trace and the version line. Linux: a gone reader and /dev/full; macOS: a gone reader (no /dev/full); Windows hands everything back (the cases are skipped there: no mkfifo in Git Bash). rs/parity/run.sh makes the gone reader without waiting for anyone (the FIFO opened for reading and writing, then for writing, the first closed), since a reader in the background raced the writer's open on macOS (see the fourth pass); the 9 cases ran 30 times on pipes and on a terminal on macOS and on Linux, the same every time."
 
 [[feature]]
 name = "session name: RDS_SESSION_NAME, git or folder default, prompt, .env.local"
-status = "missing"
+status = "partial"
 ts = "src/session.ts:97 resolveSessionName; src/session.ts:35 sanitizeSessionName; src/session.ts:48 gitDefaultSessionName; src/session.ts:74 upsertEnvLocal"
-note = "RDS_SESSION_NAME (trimmed) wins, sanitised: runs of characters outside [A-Za-z0-9._-] become one `-`, repeated `-` collapse, leading and trailing `-` go. Otherwise the default is `<repo>/<branch>` from `git rev-parse` (repo alone on a detached HEAD), else the current folder's name, sanitised. Unless stdin and stdout are both terminals: a note on stderr naming the default, once per playwright-cli call, so several times in one command (read, not run); exit 6 when no default exists (the root directory). When both are: two prompts (the name, editable; whether to save it, Y by default), an empty name is exit 6, and `RDS_SESSION_NAME=<name>` is written into ./.env.local (replacing an existing line, else appended, trailing blank lines dropped), with a message, or a warning when it cannot be written. Asked only once per process. Covered in part by test/unit.test.ts (`session name`)."
+rs = "rs/src/session.rs"
+proof = "rs/parity.json (session: …); rs/parity/proof.sh"
+note = "Native: RDS_SESSION_NAME (trimmed with JavaScript's trim) wins, sanitised: runs of characters outside [A-Za-z0-9._-] become one `-`, repeated `-` collapse, leading and trailing `-` go (so it may end empty: `-s=`). Otherwise `<repo>/<branch>` from `git rev-parse` (repo alone on a detached HEAD or before the first commit), else the current folder's name, sanitised, with the note on stderr, asked again by every playwright-cli step (git twice and the note each time, as the cases' git log shows); exit 6 when no default exists (the root directory, a folder named in Japanese only). Handed back: the question on a terminal (stdin and stdout both one) and what it writes into ./.env.local; on a terminal every command but list goes back anyway (see below)."
 
 [[feature]]
 name = "environment files read by bun (.env, .env.local)"
-status = "missing"
+status = "partial"
 ts = "src/session.ts:12 contract; bin/rustdesk-skill.ts:1 #!/usr/bin/env bun"
-note = "The session-name contract rests on bun loading .env, .env.local and the NODE_ENV variants from the current directory before the program starts, with bun's syntax. Every RDS_* variable in this ledger can come from there. A Rust binary has to read them the same way or hand back when such a file exists."
+rs = "rs/src/runtime.rs read_plain_dotenv"
+proof = "rs/parity.json (runtime: …); rs/parity/proof.sh"
+note = "bun loads .env.development.local, .env.local, .env.development and .env from the current directory before the program starts (a variable already set wins, then that order), and every program the TypeScript starts gets them. The binary reads those four in the plain part of bun's syntax (KEY=value, quoted values, comments, CR LF) and adds their variables as bun does, to its own reading and to every program it starts (a case shows playwright-cli getting them). A file in any other syntax (export, $ expansion, escapes, values over several lines), the same name twice, a directory where the file should be, a file that sets a variable that steers bun or the lookup of programs (PATH, HOME, TMPDIR, NODE_*, BUN_*, …), and a variable set but empty in the environment that a file sets too, go back. .env.production and .env.test are not loaded (no NODE_ENV: any NODE_* variable goes back)."
 
 [[feature]]
 name = "browser backend: playwright-cli, RDS_PW_BIN, RDS_SESSION_DIR"
-status = "missing"
+status = "verified"
 ts = "src/pw.ts:67 pw; src/pw.ts:37 pwCmd; src/pw.ts:48 sessionDir"
-note = "Each step starts `playwright-cli -s=<session> <args>` (RDS_PW_BIN replaces the command and is split on whitespace, so it may carry arguments) in the session directory, RDS_SESSION_DIR or <temp>/rustdesk-skill, created when missing, with the whole environment. Not found: the message naming @playwright/cli, RDS_PW_BIN and RDS_PW_BROWSER, exit 5 (test/unit.test.ts `pw backend availability`). A failed step: `playwright-cli <subcommand> failed (exit <n>): <stderr, else stdout, else the error>`, exit 1. Commands run one after another, each waiting for the last."
+rs = "rs/src/pw.rs pw; rs/src/proc.rs"
+proof = "rs/parity.json (pw: …, scroll: …); rs/parity/proof.sh"
+note = "Each step starts `playwright-cli -s=<session> <args>` (RDS_PW_BIN replaces the command and is split on JavaScript's white space, so it may carry arguments) in the session directory, RDS_SESSION_DIR or <temp>/rustdesk-skill, created when missing, with the whole environment; the binary finds the program as bun's lookup does and starts it by that path with its name as argv[0]. Not found: the message naming @playwright/cli, RDS_PW_BIN and RDS_PW_BROWSER, exit 5. A failed step: `playwright-cli <subcommand> failed (exit <n>): <stderr, else stdout, else unknown error>`, exit 1. Commands run one after another, each waiting for the last. bun reads a step's stdout and stderr 64 KiB at a time; once a stream holds more than a mebibyte (1,048,576 bytes) it sends the program SIGTERM, stops reading and reports ENOBUFS, so the step has status 1 when the signal ended it (`playwright-cli <subcommand> failed (exit 1): <what it kept>`, a little more than a mebibyte, as many bytes as the reads took) and its own status otherwise; the binary reads and stops the same way, a program that never ends its output included (r cases: a mebibyte, a mebibyte and one byte, two megabytes on stdout and stderr, `sh -c yes`). Handed back: a program bun cannot start (not executable, a directory, no #! line, a relative path; one that the system refuses to start, before the first act), a PATH with a relative entry, a session directory that is relative, has `..` or is a file, and a step that only looks and passes the mebibyte (before the first act; the JavaScript takes it again). After the first act E2BIG is `E2BIG: argument list too long, posix_spawn '<command>'` as bun says it. The programs get pipes, where bun gives them /dev/null (or a memfd holding the input) and socket pairs; nothing the cases' stand-ins do shows the difference (read, not run)."
 
 [[feature]]
 name = "RustDesk web tab: open, reuse, RDS_PW_BROWSER"
-status = "missing"
+status = "verified"
 ts = "src/browser.ts:31 ensureSession; src/browser.ts:14 currentUrl; src/pw.ts:131 parseEvalResult"
-note = "Only connect and disconnect navigate. The current URL comes from `eval () => location.href`, its value taken from the `### Result` block of playwright-cli's report (test/unit.test.ts `parseEvalResult`), quotes stripped; a URL containing rustdesk.com/web counts as the client. To open: `open [--browser=<RDS_PW_BROWSER>] https://rustdesk.com/web/`, and `goto` when that fails."
+rs = "rs/src/pw.rs current_url, parse_eval_result; rs/src/connect.rs connect"
+proof = "rs/parity.json (status: …, connect: …); rs/parity/proof.sh"
+note = "Only connect and disconnect navigate. The current URL comes from `eval () => location.href`, its value taken from the `### Result` block of playwright-cli's report, quotes stripped; a URL containing rustdesk.com/web counts as the client. To open: `open [--browser=<RDS_PW_BROWSER>] https://rustdesk.com/web/`, and `goto` when that fails."
 
 [[feature]]
 name = "screenshots and coordinates"
-status = "missing"
+status = "verified"
 ts = "src/pw.ts:109 screenshotPng; src/pw.ts:99 pngSize; src/pw.ts:151 viewport; src/pw.ts:169 screenshotToCss"
-note = "`screenshot --hires --filename=<session dir>/rds-shot.png`, then the file is looked for there and as ./rds-shot.png; missing: `screenshot not found (looked in: …)`, exit 1. Its size comes from the PNG header (`not a valid PNG (too short)` below 24 bytes). Screenshot pixels are the one coordinate space users see; they become CSS pixels by the viewport (`eval` of innerWidth/innerHeight, once per process), rounded, and 1:1 when the viewport is unknown (test/unit.test.ts `screenshotToCss`)."
+rs = "rs/src/pw.rs screenshot_png, viewport, screenshot_to_css"
+proof = "rs/parity.json (screenshot: …, move: …, click-xy: …); rs/parity/proof.sh"
+note = "`screenshot --hires --filename=<session dir>/rds-shot.png`, then the file is looked for there and as ./rds-shot.png; missing: `screenshot not found (looked in: …)`, exit 1. Its size comes from the PNG header (`not a valid PNG (too short)` below 24 bytes). Screenshot pixels are the one coordinate space users see; they become CSS pixels by the viewport (`eval` of innerWidth/innerHeight, once per process), rounded as Math.round does, and 1:1 when the viewport is unknown. Before the first act (move, click-xy, click, connect on the client), a viewport in strings, lists or too large, a coordinate of 16 digits or more and a screenshot path that is a directory go back, after the eval or the screenshot, which the JavaScript takes again. After it (connect from `open` on), a viewport of any shape is taken as JavaScript takes it (`vpW > 0 && pngW > 0 ? vpW / pngW : 1` on strings, lists, true, objects; `No default value`), every coordinate is written as String(x) writes it, and a directory where the PNG should be is `EISDIR: illegal operation on a directory, read` (r cases)."
 
 [[feature]]
 name = "OCR backends: RDS_OCR, --lang, ocr/ocr.py, ocr/ocr-mac.py"
-status = "missing"
+status = "verified"
 ts = "src/ocr.ts:34 resolveBackend; src/ocr.ts:41 langArg; src/ocr.ts:104 runOcr; src/ocr.ts:128 ocrBuffer; src/ocr.ts:76 normalizeBoxes; ocr/ocr.py; ocr/ocr-mac.py"
-note = "Backend: --ocr, else RDS_OCR (paddle or vision, any case; another value is ignored), else vision on macOS and paddle elsewhere. --lang for vision maps ja, en→en-US, zh/ch→zh-Hans and passes others on (an empty list gives ja,en-US); for paddle only the first language counts, en, ja→japan, zh/ch→ch, others passed on, ch when empty. The PNG is written to <temp>/rds-ocr-<pid>.png, which is never removed (read, not run), and `python3 <package>/ocr/<script> <png> <lang>` is run; the scripts are found beside the package, so a port needs the package root. Paddle boxes are pixels, Vision boxes are fractions scaled by the PNG size; all rounded; confidence 1 when missing. Failures: `OCR (<backend>) failed: …`, `OCR (<backend>) produced non-JSON output: <first 200 characters>`, `OCR script missing: <path>`, exit 1. The Python scripts can stay as they are."
+rs = "rs/src/ocr.rs"
+proof = "rs/parity.json (ocr: …, status: …); rs/parity/proof.sh"
+note = "Backend: --ocr, else RDS_OCR (paddle or vision, any case; another value is ignored), else vision on macOS and paddle elsewhere. --lang for vision maps ja, en→en-US, zh/ch→zh-Hans and passes others on (an empty list gives ja,en-US); for paddle only the first language counts, en, ja→japan, zh/ch→ch, others passed on, ch when empty. The PNG is written to <temp>/rds-ocr-<pid>.png, which is never removed (a case shows it left), and `python3 <package>/ocr/<script> <png> <lang>` is run; the cases' python3 is a stand-in that checks the PNG's bytes. Paddle boxes are pixels, Vision boxes are fractions scaled by the PNG size; all rounded; confidence 1 when it is not a number. Failures: `OCR (<backend>) failed: <stderr, else unknown error>` (a signal included), `OCR (<backend>) produced non-JSON output: <first 200 units>`, `OCR script missing: <path>`, and without python3 bun's `Executable not found in $PATH: \"python3\"`, exit 1. A script whose output passes bun's mebibyte goes back before the first act (the JavaScript runs OCR again); after it (connect) it is `OCR (<backend>) failed: spawnSync python3 ENOBUFS (stdout or stderr buffer reached maxBuffer size limit)` when it was stopped, as in bun. A language named like a member of Object.prototype goes back; RDS_OCR is compared with two ASCII words, so any value is answered. The Python scripts stay as they are."
 
 [[feature]]
 name = "text matching (--contains, --nth)"
-status = "missing"
+status = "verified"
 ts = "src/ocr.ts:155 matchText; src/ocr.ts:169 boxCenter; src/connect.ts:46 findAny"
-note = "Trimmed and lower-cased with JavaScript's toLowerCase (full Unicode case mapping), exact by default, substring with --contains; --nth is 1-based; several matches without it take the first and warn. The centre is rounded with Math.round (halves go up). connect's own lookups always match by substring and try their candidate texts in order. test/unit.test.ts `matchText`."
+rs = "rs/src/ocr.rs match_text, box_center, find_any; rs/src/js.rs to_lower, lowercase_unsure; rs/src/unicode.rs"
+proof = "rs/parity.json (click: …); rs/src/compare.rs lower_case_and_white_space_as_bun_has_them; rs/src/js.rs lower_case_comes_from_the_table; bun rs/unicode.gen.mjs --check"
+note = "Trimmed and lower-cased with JavaScript's toLowerCase (full Unicode case mapping), exact by default, substring with --contains; --nth is 1-based; several matches without it take the first and warn. The centre is rounded with Math.round (halves go up). The lower case of each character comes from rs/src/unicode.rs, which rs/unicode.gen.mjs records from bun (1,488 lower cases, the code points its Unicode 17 assigns; its --check runs first in proof.sh), never from Rust's own tables, which follow the toolchain that builds the binary: a binary built with Rust 1.100 (Unicode 18) answers as one built with 1.97. rs/src/compare.rs compares every code point the binary answers with bun. In click, text goes back after OCR when it holds a capital sigma (whose lower case depends on its neighbours), a character of the blocks whose case pairs came with Unicode 14 or later (Cyrillic Extended-C of U+1C89 added: the one code point outside them whose lower case differs between Unicode 13, Python 3.9's tables, and bun's 17), a code point the table's Unicode does not assign (U+AB6C, which Unicode 18 makes a capital), or one where the building toolchain's tables disagree with the table (with Rust 1.100: 20 code points, U+A7DD, U+A7E2 and the 18 of the fourth pass, all of them unassigned in Unicode 17 anyway). connect's and status's own lookups always match by substring and try their candidate texts in order; their texts are ASCII, kana and CJK, which none of those characters lower-cases to in any runtime, so they are answered whatever is on screen (a Greek or Glagolitic remote desktop: v and r cases; 40,000 generated texts against bun in rs/src/compare.rs)."
 
 [[feature]]
 name = "password store: passwords.json, RDS_CONFIG_DIR"
-status = "missing"
+status = "verified"
 ts = "src/passwords.ts:17 configDir; src/passwords.ts:26 loadPasswords; src/passwords.ts:39 savePasswords; src/passwords.ts:65 resolvePassword"
-note = "<RDS_CONFIG_DIR, else ~/.config/rustdesk-skill>/passwords.json, an id→password object in plain text, written whole with a two-space indent and a final newline; the directory is created 0700 and the file 0600 (the mode applies when the file is created). Missing or corrupt reads as empty. Password: the argument unless empty, else the remembered one, else `no password for id <id>; pass one (rds c <id> <pw>) or save it with --remember-password`, exit 3, before any browser starts. test/unit.test.ts `password store`, `resolvePassword precedence`."
+rs = "rs/src/store.rs"
+proof = "rs/parity.json (connect: …); rs/parity/proof.sh"
+note = "<RDS_CONFIG_DIR, else ~/.config/rustdesk-skill>/passwords.json, an id→password object in plain text, written whole with a two-space indent and a final newline, names that are array indices first as JavaScript orders them; the directory is created 0700 and the file 0600 when created (the cases compare the modes). Missing or corrupt reads as empty. Password: the argument unless empty, else the remembered one, else `no password for id <id>; pass one (rds c <id> <pw>) or save it with --remember-password`, exit 3, before any browser starts. A store that is a list, holds anything but text, or has a __proto__ member goes back."
 
 [[feature]]
 name = "recent ids: recents.json"
-status = "missing"
+status = "verified"
 ts = "src/connect.ts:214 recordRecent; src/connect.ts:210 recentsPath"
-note = "<config dir>/recents.json, written by every connect: the id moves to the front, at most 20 kept, two-space indent, directory 0700 and file 0600 when created. Read by `list`."
+rs = "rs/src/store.rs record_recent, list_recent"
+proof = "rs/parity.json (connect: …, list: …); rs/parity/proof.sh"
+note = "<config dir>/recents.json, written by every connect: the id moves to the front, at most 20 kept, two-space indent, directory 0700 and file 0600 when created. Read by `list`. Recents holding anything but strings go back."
 
 [[feature]]
 name = "connected detection"
-status = "missing"
+status = "verified"
 ts = "src/connect.ts:169 detectConnected; src/connect.ts:153 homeScreenPresent; src/connect.ts:84 passwordDialogPresent"
-note = "By OCR: not connected while a password dialog shows (パスワードが必要です, Password Required, Please enter, パスワード) or the home screen does (リモートID, Remote ID, リモートデスクトップ, Control Remote, Remote Desktop), otherwise connected if the tab is on the client. Used by connect and status. test/unit.test.ts `homeScreenPresent`."
+rs = "rs/src/commands.rs detect_connected"
+proof = "rs/parity.json (status: …, connect: …); rs/parity/proof.sh"
+note = "By OCR: not connected while a password dialog shows (パスワードが必要です, Password Required, Please enter, パスワード) or the home screen does (リモートID, Remote ID, リモートデスクトップ, Control Remote, Remote Desktop), otherwise connected if the tab is on the client. Used by connect and status."
 
 [[feature]]
 name = "password dialog"
-status = "missing"
+status = "verified"
 ts = "src/connect.ts:110 handlePasswordDialog; src/connect.ts:93 pickPasswordField"
-note = "One OCR: the field is the topmost box below the title that mentions パスワード/password and none of 必要, 確認, 記憶, remember, required, confirm; without one, a click 2×(title height), at least 40 px, below the title. Types the password directly, ticks 記憶する / Remember with --remember-password, then clicks OK / 确定 / 確定 / 接続 / Connect or presses Enter. test/unit.test.ts `pickPasswordField`."
+rs = "rs/src/connect.rs handle_password_dialog, pick_password_field"
+proof = "rs/parity.json (connect: …); rs/parity/proof.sh"
+note = "One OCR: the field is the topmost box below the title that mentions パスワード/password and none of 必要, 確認, 記憶, remember, required, confirm (the regular expressions' `i` matches the ASCII letters in either case, nothing else), sorted with `(a, b) => a.y - b.y` by JavaScriptCore's own sort (rs/src/jssort.rs), so -0 and 0 keep their order and NaN or infinite heights order as in bun (v and r cases; 6,000 lists in rs/src/compare.rs); without one, a click Math.max(40, 2×title height) below the title (NaN when the height is). Types the password directly, ticks 記憶する / Remember with --remember-password, then clicks OK / 确定 / 確定 / 接続 / Connect or presses Enter."
+
+# ─────────────────────── What still goes back ───────────────────────
+
+[[feature]]
+name = "every command on Windows"
+status = "missing"
+ts = "bin/rustdesk-skill.ts"
+rs = "rs/src/main.rs"
+note = "On Windows the binary hands every invocation back before it does anything; none of the port is compiled there. The cases ran on a Windows 11 machine (the workflow is set to run them on win32-x64 too) and show that each reaches the JavaScript through the binary and behaves as bin/rustdesk-skill.ts run directly does (301 cases); 252 are skipped there: those that need a stand-in found on PATH (bun finds programs by PATHEXT and never runs rs/parity/run.sh's shell scripts, so playwright-cli by its name, python3 and xclip would be the machine's own), those on a pseudo-terminal, those whose stdout is a pipe made with mkfifo or /dev/full, and those whose report is more than the runner's own pipe takes there. The project's own test `file is created with mode 600` fails on Windows (no POSIX modes), as it did before the port."
+
+[[feature]]
+name = "on a terminal: every command but list"
+status = "missing"
+ts = "src/session.ts:69 interactive; bin/rustdesk-skill.ts:66 guard"
+rs = "rs/src/commands.rs run"
+note = "When stdout or stderr is a terminal (or FORCE_COLOR is set), bun prints console.error in red, and every command but `list` may write to stderr: they go back there, with the session-name question. A person typing `rds …` at a terminal gets the JavaScript; an agent piping the output gets the binary. `list` is native on a terminal. The whole cases file runs again with --tty stdout,stderr on Linux and macOS and behaves the same (553 of 553 on Linux, 551 of 551 on macOS, at 9bbba53 with bun 1.4.0, 1.4.4 and 1.4.5)."
+
+[[feature]]
+name = "in a JavaScript project: package.json, tsconfig.json or jsconfig.json here or above; bunfig.toml"
+status = "partial"
+ts = "bin/rustdesk-skill.ts:1 #!/usr/bin/env bun"
+rs = "rs/src/runtime.rs plain_project_file"
+proof = "rs/parity.json (runtime: project file: …, runtime: package.json here, runtime: tsconfig.json here); rs/parity/proof.sh"
+note = "bun reads package.json, tsconfig.json and jsconfig.json in the current directory and every directory above it, and bunfig.toml here and in the user's configuration, and says on stderr what it does not like in them (seen: a syntax error, `Duplicate key`, a `type` it does not know, a bad `paths` pattern). The binary answers when each of those files is plain: strict JSON, an object, no name given twice at any depth, in package.json a type of module or commonjs if any and no exports, imports or browser, in the others no extends and no paths, jsxFactory, jsxFragmentFactory or importsNotUsedAsValues in compilerOptions (17 cases: typical files here and above, in a git repository). Anything else goes back, valid or not: comments and trailing commas (common in a tsconfig.json), exports in a package.json, an extends, and any bunfig.toml. So inside many real projects users still get the JavaScript."
