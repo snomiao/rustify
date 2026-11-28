@@ -630,6 +630,21 @@ test("tty: a case says which of stdin, stdout and stderr are a terminal; --tty s
   }
 });
 
+test("tty: a program that ends without reading its piped stdin is compared, as it is without a terminal", { skip: noTerminal }, () => {
+  const dir = setup();
+  try {
+    // Far more than a pipe holds: the runner is still writing when the program has ended.
+    const cases = { cases: [{ name: "stdin left unread", args: ["echo", "hi"], stdin: "x".repeat(1 << 20) }] };
+    for (const extra of [[], ["--tty", "stdout,stderr"]]) {
+      const r = run(dir, cases, extra);
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      assert.match(r.stdout, /same {4}stdin left unread\n/);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("tty: a difference that only a terminal shows is reported, with its control characters spelled out", { skip: noTerminal }, () => {
   // Stands for a port that forgot the colour its TypeScript prints on a terminal.
   const dir = setup(`

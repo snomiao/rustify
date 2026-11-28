@@ -987,9 +987,14 @@ function runIn(root, testCase, impl, plan, extraEnv) {
   // the runner always has.
   const written = (name) => (plan.files ? fromBytes(fs.readFileSync(path.join(own, name))) : result[name]);
   const onTerminal = terminals.length && fs.existsSync(transcript) ? fromBytes(fs.readFileSync(transcript)) : null;
+  // EPIPE: the program ended without reading all of the case's stdin, as a
+  // program may. On pipes spawnSync reports it beside the exit code, which is
+  // compared as usual; through terminal.py, which passes a piped stdin on, it
+  // is the same thing and is treated the same way.
+  const stdinLeft = result.error?.code === "EPIPE" && (result.status !== null || result.signal !== null);
   // On a terminal the runner started terminal.py, which had started the
-  // program: any trouble with that is the run's, whatever exit code came back.
-  if (result.error && (result.status === null || terminals.length)) {
+  // program: any other trouble with that is the run's, whatever exit code came back.
+  if (result.error && !stdinLeft && (result.status === null || terminals.length)) {
     if (terminals.length && result.error.code === "ETIMEDOUT") {
       // The last line that shows something: an echo ends with a line end.
       const last = spelledOut((onTerminal ?? "").slice(-200))
