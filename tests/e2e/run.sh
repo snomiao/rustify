@@ -76,6 +76,9 @@ cat > "$WORK/project/package.json" <<EOF
 EOF
 
 echo "== local registry"
+# With no upstream: what was not published here is not looked for on the
+# real registry either (the toy packages depend on nothing else).
+export RUSTIFY_UPSTREAM_REGISTRY=""
 node "$REPO/templates/npm/registry.mjs" "$WORK/registry" > "$WORK/registry.url" &
 REG_PID=$!
 for _ in $(seq 50); do [ -s "$WORK/registry.url" ] && break; sleep 0.1; done
@@ -156,6 +159,50 @@ is_script "$BUN_INSTALL/bin/toy" && [[ "$out" == *"root=$BUN_INSTALL/install/glo
   && pass "RUSTIFY_NO_LINK=1 leaves the package untouched and tells the binary where the package is" \
   || die "opt out: $out"
 
+echo "== the binary's environment, in a directory with .env files"
+# The launcher's bun loads them into process.env. The binary has to start with
+# what the shell gave the command instead, byte for byte, and the root
+# variable: \`toy env\` writes the environment as the system holds it.
+mkdir -p "$WORK/dotenv"
+printf 'FROM_DOTENV=yes\nSHARED=from-dotenv\nNODE_ENV=production\n' > "$WORK/dotenv/.env"
+printf 'FROM_LOCAL=yes\n' > "$WORK/dotenv/.env.local"
+printf 'FROM_PRODUCTION=yes\n' > "$WORK/dotenv/.env.production"
+printf 'FROM_DEVELOPMENT=yes\n' > "$WORK/dotenv/.env.development"
+# On macOS node (CoreFoundation, as it starts) puts __CF_USER_TEXT_ENCODING
+# into its own environment when it is missing (an SSH session, env -i) or
+# names another user, and a node launcher passes its process.env on, as v2
+# did: the binary would have one entry more than the shell. A Terminal window
+# has it already; it is set here as there, "0x<uid>:0x0:0x0", which
+# CoreFoundation keeps.
+terminal_text_encoding() {
+  if [ "$RUNTIME" = node ] && [ "$(uname -s)" = Darwin ]; then
+    local own; own="$(printf '0x%X' "$(id -u)")"
+    case "${__CF_USER_TEXT_ENCODING-}" in "$own":*) ;; *) export __CF_USER_TEXT_ENCODING="$own:0x0:0x0" ;; esac
+  fi
+}
+env_check() { # $1 = label, $2 = an installed command that has not run yet
+  local label="$1" cmd="$2"
+  is_script "$cmd" || die "$label: expected a launcher before the first run"
+  # env starts both, with one environment (bash would give each its own \`_\`).
+  # The \`true\` keeps bash from starting the last one in place of the
+  # subshell, which it does with SHLVL one lower.
+  (cd "$WORK/dotenv" && terminal_text_encoding && SHARED=mine /usr/bin/env "$WORK/target/release/toy$EXT" env "$WORK/env-direct.txt" \
+    && SHARED=mine /usr/bin/env "$cmd" env "$WORK/env-first.txt"; true)
+  grep -v '^RUSTIFY_PACKAGE_ROOT=' "$WORK/env-first.txt" > "$WORK/env-first-own.txt" || true
+  if cmp -s "$WORK/env-direct.txt" "$WORK/env-first-own.txt" && grep -q '^RUSTIFY_PACKAGE_ROOT=' "$WORK/env-first.txt"; then
+    pass "$label: on the first run the binary gets the shell's environment byte for byte ($(wc -l < "$WORK/env-direct.txt" | tr -d ' ') entries) and the root variable, none of .env"
+  else
+    die "$label: the binary's environment on the first run is not the shell's:
+$(diff "$WORK/env-direct.txt" "$WORK/env-first-own.txt" | sed -E 's/=.*/=…/' | head -20)"
+  fi
+}
+BUN_INSTALL="$WORK/bun-env" bun i -g "$NAME" --registry "$REGISTRY" >/dev/null 2>&1 || die "bun i -g into bun-env failed"
+env_check bun "$WORK/bun-env/bin/toy"
+if command -v npm >/dev/null 2>&1; then
+  npm i -g --prefix "$WORK/npm-env" "$NAME" --registry "$REGISTRY" >/dev/null 2>&1 || die "npm i -g into npm-env failed"
+  env_check npm "$WORK/npm-env/bin/toy"
+fi
+
 echo "== hybrid: a package that still ships JavaScript"
 HYBRID="rustify-e2e-hybrid"
 mkdir -p "$WORK/hybrid/dist"
@@ -171,13 +218,13 @@ printf '%s\n' \
   '  "devDependencies": { "typescript": "^5" },' \
   "  \"rustify\": { \"mode\": \"hybrid\", \"bins\": { \"toy\": \"toy\", \"plain\": \"toy-helper\" }, \"runtime\": \"$RUNTIME\" }" \
   '}' > "$WORK/hybrid/package.json"
-# The JavaScript prints its arguments. `which-runtime`, `homedir` and `trace`
-# are answered with the runtime it runs on, the home directory it sees and
-# the value of RUSTIFY_HANDBACK_TRACE.
+# The JavaScript prints its arguments. `which-runtime`, `homedir`, `trace` and
+# `root` are answered with the runtime it runs on, the home directory it sees,
+# and the values of RUSTIFY_HANDBACK_TRACE and RUSTIFY_PACKAGE_ROOT.
 printf '%s\n' \
   "#!/usr/bin/env $RUNTIME" \
   'import os from "node:os";' \
-  'const answers = { "which-runtime": typeof Bun === "undefined" ? "node" : "bun", homedir: os.homedir(), trace: process.env.RUSTIFY_HANDBACK_TRACE ?? "unset" };' \
+  'const answers = { "which-runtime": typeof Bun === "undefined" ? "node" : "bun", homedir: os.homedir(), trace: process.env.RUSTIFY_HANDBACK_TRACE ?? "unset", root: process.env.RUSTIFY_PACKAGE_ROOT ?? "unset" };' \
   'console.log("js cli:", process.argv.slice(2).map((arg) => (Object.hasOwn(answers, arg) ? answers[arg] : arg)).join(" "));' \
   > "$WORK/hybrid/dist/cli.js"
 chmod +x "$WORK/hybrid/dist/cli.js"
@@ -199,6 +246,25 @@ out="$("$BUN_INSTALL/bin/toy" js two)"
 out="$("$BUN_INSTALL/bin/toy" js which-runtime)"
 [ "$out" = "js cli: js $RUNTIME" ] && pass "the JavaScript runs on the runtime its own first line names ($RUNTIME)" \
   || die "the hand-back ran: $out (expected $RUNTIME)"
+# The entry starts with `#!/usr/bin/env $RUNTIME`. Without that runtime on
+# PATH, env says so, as it did when the command was the script itself.
+mkdir -p "$WORK/no-runtime"
+ENTRY="$BUN_INSTALL/install/global/node_modules/$HYBRID/dist/cli.js"
+set +e
+direct="$(PATH="$WORK/no-runtime" "$ENTRY" js gone 2>&1)"; direct_code=$?
+out="$(PATH="$WORK/no-runtime" "$BUN_INSTALL/bin/toy" js gone 2>&1)"; code=$?
+set -e
+[[ "$code" = 127 && "$code" = "$direct_code" && "$out" == "env: "* && "$out" == "$direct" ]] \
+  && pass "with no $RUNTIME on PATH, env reports it, in its words and with its exit code ($code), as for the script itself" \
+  || die "with no $RUNTIME on PATH the hand-back exited $code and printed: $out (the script itself: $direct_code, $direct)"
+# RUSTIFY_PACKAGE_ROOT naming this package is the launcher's, and the
+# JavaScript does not see it; a value of the user's naming something else stays.
+out="$(RUSTIFY_PACKAGE_ROOT="$BUN_INSTALL/install/global/node_modules/$HYBRID" "$BUN_INSTALL/bin/toy" js root)"
+[ "$out" = "js cli: js unset" ] && pass "the JavaScript does not see a RUSTIFY_PACKAGE_ROOT that names its package" \
+  || die "RUSTIFY_PACKAGE_ROOT naming the package reached the JavaScript: $out"
+out="$(RUSTIFY_PACKAGE_ROOT="$WORK/elsewhere" "$BUN_INSTALL/bin/toy" js root)"
+[ "$out" = "js cli: js $WORK/elsewhere" ] && pass "and sees one that names another directory" \
+  || die "RUSTIFY_PACKAGE_ROOT naming another directory did not reach the JavaScript: $out"
 
 echo "== hybrid: a ported command that declines, and one that panics"
 TOY="$BUN_INSTALL/bin/toy"

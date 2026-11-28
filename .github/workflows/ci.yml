@@ -51,8 +51,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      # The launcher's tests run it under bun, in a directory with .env files.
+      - uses: oven-sh/setup-bun@v2
       - run: node --test tests/unit/*.test.mjs
-      # The hand-back helper's own tests: `attempt` and the panic hook.
+      # The hand-back helper's own tests: `attempt` and the panic hook, and
+      # tests/e2e/toy/tests/handback.rs: the entry started as this system
+      # starts it, ROOT_ENV, and on Windows bun found as bun.cmd.
       - run: cargo test --manifest-path tests/e2e/toy/Cargo.toml
 
   pipeline:

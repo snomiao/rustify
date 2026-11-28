@@ -5,6 +5,7 @@
 // tests catch offset mistakes; whether bun's real shim accepts the result is
 // checked by smoke.mjs on Windows runners.
 import assert from "node:assert/strict";
+import { fork, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -128,5 +129,244 @@ test("retargetNpm rewrites the three shims of this launcher and no others", () =
     assert.equal(retargetNpm(prefix, "toy", launcherPath, native), false, "second call has nothing to do");
   } finally {
     fs.rmSync(prefix, { recursive: true, force: true });
+  }
+});
+
+// ─────────────────────────── the binary's environment ───────────────────────
+
+const { environmentOf, binaryEnvironment } = launcher;
+const isWindows = process.platform === "win32";
+const entries = (...lines) => lines.map((line) => Buffer.from(line, "latin1"));
+
+test("the environment is read as the system reads it: the first of a name, '=' inside a value, an empty value", () => {
+  assert.deepEqual(environmentOf(entries("A=1", "EQ=a=b=c", "E=", "A=2", "NOEQUALS", "=x"), false), { A: "1", EQ: "a=b=c", E: "", "": "x" });
+  // A name that is not UTF-8 is left out; a value that is not keeps its other bytes.
+  assert.deepEqual(environmentOf([Buffer.from("BAD\xe9NAME=x", "latin1"), Buffer.from("V=a\xffb", "latin1"), Buffer.from("U=\u00e9")], false), { V: "a\ufffdb", U: "\u00e9" });
+  // A byte-order mark is part of the name, not taken off it.
+  assert.deepEqual(Object.keys(environmentOf([Buffer.from("\ufeffBOM=1")], false)), ["\ufeffBOM"]);
+  // Windows: a name may start with "=", and two names in different letter
+  // case are one variable, the first.
+  assert.deepEqual(environmentOf(["=C:=C:\\Users", "Foo=lower", "FOO=upper", "Path=x", "LONE\udc00=1", "V=a\ud800b"], true), {
+    "=C:": "C:\\Users",
+    Foo: "lower",
+    Path: "x",
+    V: "a\ud800b",
+  });
+  // As Windows 11 compares names (measured with SetEnvironmentVariableW and
+  // GetEnvironmentVariableW): one UTF-16 unit at a time, so "été" and "ÉTÉ"
+  // are one variable, and so are "ǆ" and "Ǆ", "ɐ" and "Ɐ"; "straße" and
+  // "STRASSE" are two ("ß" has no capital of one unit), and so are "ı" and
+  // "I", "ſ" and "S", "ς" and "Σ", "ǅ" and "Ǆ" (capitals whose small letter
+  // is another one), and a pair of surrogates and its capital ("𐐨", "𐐀").
+  const one = [["été", "ÉTÉ"], ["ǆ", "Ǆ"], ["ɐ", "Ɐ"], ["path", "PATH"]];
+  const two = [["straße", "STRASSE"], ["ı", "I"], ["ſ", "S"], ["ς", "Σ"], ["ǅ", "Ǆ"], ["\u{10428}", "\u{10400}"]];
+  for (const [a, b] of one) assert.deepEqual(environmentOf([`V${a}=1`, `V${b}=2`], true), { [`V${a}`]: "1" }, `${a} and ${b} are one`);
+  for (const [a, b] of two) assert.deepEqual(environmentOf([`V${a}=1`, `V${b}=2`], true), { [`V${a}`]: "1", [`V${b}`]: "2" }, `${a} and ${b} are two`);
+  assert.equal(launcher.windowsKey("straße été path"), "STRAßE ÉTÉ PATH");
+});
+
+test("the root variable is set, on Windows in place of one in other letters; without entries process.env is used", () => {
+  // A copy of process.env, which on Windows spells PATH as it is spelt there (Path).
+  const isProcessEnv = (env) => Object.keys(process.env).every((name) => env[name] === process.env[name]);
+  const env = binaryEnvironment(null, "PKG_ROOT", "/root", false);
+  assert.equal(env.PKG_ROOT, "/root");
+  assert.ok(isProcessEnv(env), "process.env, copied");
+  // Entries this process's own environment has are taken as they are.
+  const own = Object.keys(process.env).find((name) => !name.startsWith("="));
+  const line = `${own}=${process.env[own]}`;
+  const read = binaryEnvironment([isWindows ? line : Buffer.from(line)], "PKG_ROOT", "/root", isWindows);
+  assert.ok(read[own] === process.env[own] && read.PKG_ROOT === "/root" && Object.keys(read).length === 2, "the entries and the root, nothing else");
+  // A name process.env lacks means something else was read: process.env is used instead.
+  const instead = binaryEnvironment([isWindows ? "NOT_IN_PROCESS_ENV_X=1" : Buffer.from("NOT_IN_PROCESS_ENV_X=1")], "PKG_ROOT", "/r", isWindows);
+  assert.ok(isProcessEnv(instead) && !("NOT_IN_PROCESS_ENV_X" in instead), "process.env instead");
+  // On Windows a name with a unit outside ASCII does not count: bun leaves
+  // some of them out of process.env there.
+  const unicode = binaryEnvironment([line, "NOT_IN_PROCESS_ENV_aß=1"], "PKG_ROOT", "/r", true);
+  assert.equal(unicode["NOT_IN_PROCESS_ENV_aß"], "1", "kept, and the entries are taken");
+  // So does nothing read, or nothing usable, where process.env has something.
+  for (const nothing of [[], [isWindows ? "NOEQUALS" : Buffer.from("NOEQUALS")]]) {
+    const empty = binaryEnvironment(nothing, "PKG_ROOT", "/r", isWindows);
+    assert.ok(isProcessEnv(empty) && empty.PKG_ROOT === "/r", "process.env for an empty read");
+  }
+  // Windows: the root variable replaces one of the same name in other letters.
+  const spelt = Object.keys(binaryEnvironment([`${own.toLowerCase()}=x`], own.toUpperCase() === own ? `${own[0]}${own.slice(1).toLowerCase()}` : own.toUpperCase(), "/r", true));
+  assert.equal(spelt.length, 1, "one variable, in the letters of the root variable");
+});
+
+// The generated launcher, run by bun in a directory with .env files, in front
+// of a stand-in binary that prints its environment: a script that runs
+// /usr/bin/env on Linux and macOS, a link to this node on Windows (which then
+// runs a script that prints process.env; node reads no .env file).
+// (node 20's test runner skips a test whose `skip` is null: false it is.)
+const BUN = spawnSync("bun", ["--version"], { encoding: "utf8" }).status === 0 ? false : "bun is not installed here";
+
+function installed(runtime) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rustify-unit-"));
+  const key = `${process.platform === "android" ? "linux" : process.platform}-${process.arch}`;
+  const modules = path.join(dir, "node_modules");
+  const root = path.join(modules, "pkg");
+  const platform = path.join(modules, `pkg-${key}`);
+  fs.mkdirSync(path.join(root, "rustify"), { recursive: true });
+  fs.mkdirSync(path.join(platform, "bin"), { recursive: true });
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({
+    name: "pkg",
+    version: "1.0.0",
+    optionalDependencies: { [`pkg-${key}`]: `npm:pkg@1.0.0-${key}` },
+    rustify: { bins: { tool: "tool" }, rootEnv: "PKG_ROOT" },
+  }));
+  fs.writeFileSync(path.join(root, "rustify", "package.json"), JSON.stringify({ type: "commonjs" }));
+  const template = fs.readFileSync(new URL("../../templates/npm/launcher.cjs", import.meta.url), "utf8");
+  fs.writeFileSync(path.join(root, "rustify", "tool"), template.replace("__RUNTIME__", runtime), { mode: 0o755 });
+  fs.writeFileSync(path.join(platform, "package.json"), JSON.stringify({ name: "pkg", version: `1.0.0-${key}` }));
+  const standIn = path.join(platform, "bin", isWindows ? "tool.exe" : "tool");
+  if (isWindows) {
+    try {
+      fs.linkSync(process.execPath, standIn);
+    } catch {
+      fs.copyFileSync(process.execPath, standIn);
+    }
+  } else {
+    // A script: macOS kills a copy of /usr/bin/env. bash, which passes every
+    // name on; dash (Ubuntu's sh) drops one that is not a shell name (OWN_aß).
+    fs.writeFileSync(standIn, "#!/bin/bash\nexec /usr/bin/env\n", { mode: 0o755 });
+  }
+  const printer = path.join(dir, "print-env.cjs");
+  fs.writeFileSync(printer, 'process.stdout.write(Object.entries(process.env).map(([k, v]) => `${k}=${v}\\n`).join(""));\n');
+  // The user's working directory, with what bun loads from it.
+  const cwd = path.join(dir, "work");
+  fs.mkdirSync(cwd);
+  fs.writeFileSync(path.join(cwd, ".env"), "FROM_DOTENV=yes\nSHARED=from-dotenv\nEMPTY=from-dotenv\nNODE_ENV=production\n");
+  fs.writeFileSync(path.join(cwd, ".env.local"), "FROM_LOCAL=yes\n");
+  fs.writeFileSync(path.join(cwd, ".env.production"), "FROM_PRODUCTION=yes\n");
+  fs.writeFileSync(path.join(cwd, ".env.development"), "FROM_DEVELOPMENT=yes\n");
+  const home = path.join(dir, "home");
+  fs.mkdirSync(home);
+  // In full: macOS hands out temp directories behind a link, and a Windows
+  // TEMP can be a short name (C:\Users\RUNNER~1 on GitHub's runners).
+  return { dir, root: fs.realpathSync.native(root), cwd, home, launcher: path.join(root, "rustify", "tool"), printer, standIn };
+}
+
+const DOTENV_NAMES = ["FROM_DOTENV", "FROM_LOCAL", "FROM_PRODUCTION", "FROM_DEVELOPMENT", "NODE_ENV"];
+
+// The user's environment: this one without anything that would change what
+// bun or node does, a home directory of its own, and the variables under test.
+function userEnvironment(pkg, extra = {}) {
+  const env = {};
+  for (const [name, value] of Object.entries(process.env)) {
+    if (/^(BUN_|NODE_|npm_|XDG_)/i.test(name) || [...DOTENV_NAMES, "SHARED", "EMPTY", "EQ", "OWN", "PKG_ROOT", "RUSTIFY_NO_LINK"].includes(name.toUpperCase())) continue;
+    env[name] = value;
+  }
+  // OWN_aß: bun 1.4.2 leaves such a name out of process.env on Windows.
+  return { ...env, HOME: pkg.home, USERPROFILE: pkg.home, SHARED: "mine", EMPTY: "", EQ: "a=b=c", OWN: "mine", OWN_aß: "mine", ...extra };
+}
+
+// What the stand-in binary saw, as name → value (the first of a name).
+function runLauncher(pkg, { runtime = "bun", env, flags = [] }) {
+  const args = isWindows ? [pkg.printer] : [];
+  const result = spawnSync(runtime, [...flags, pkg.launcher, ...args], { cwd: pkg.cwd, env, encoding: "utf8" });
+  assert.equal(result.status, 0, `the launcher failed: ${result.error || ""}${result.stderr}`);
+  const seen = {};
+  for (const line of result.stdout.split("\n")) {
+    const eq = line.indexOf("=", 1);
+    if (eq > 0 && !(line.slice(0, eq) in seen)) seen[line.slice(0, eq)] = line.slice(eq + 1);
+  }
+  return seen;
+}
+
+function assertUserEnvironment(seen, pkg) {
+  for (const name of DOTENV_NAMES) assert.equal(seen[name], undefined, `${name} from .env reached the binary`);
+  assert.equal(seen.SHARED, "mine", "a variable of the user's that .env also names keeps the user's value");
+  assert.equal(seen.EMPTY, "", "and so does an empty one");
+  assert.equal(seen.EQ, "a=b=c");
+  assert.equal(seen.OWN, "mine");
+  assert.equal(seen.OWN_aß, "mine", "a name with a letter outside ASCII");
+  assert.equal(fullPath(seen.PKG_ROOT), pkg.root, "the root variable names the package");
+}
+
+// A directory as the system writes it in full. Where TEMP is a Windows short
+// name, the launcher's realpath keeps it under node and writes it out under
+// bun; both name the package, and the binary takes either.
+function fullPath(dir) {
+  return dir === undefined ? dir : fs.realpathSync.native(dir);
+}
+
+test("under bun, the binary gets the user's environment, not the .env files bun loaded", { skip: BUN }, () => {
+  const pkg = installed("bun");
+  try {
+    const env = userEnvironment(pkg, { RUSTIFY_NO_LINK: "1" });
+    // bun did load them, so the check below means something.
+    const loaded = spawnSync("bun", ["-e", "console.log(process.env.FROM_DOTENV, process.env.SHARED)"], { cwd: pkg.cwd, env, encoding: "utf8" });
+    assert.equal(loaded.stdout.trim(), "yes mine");
+    assertUserEnvironment(runLauncher(pkg, { env }), pkg);
+    // A bun without process.execve (before 1.4.0) starts the binary as a child, with the same environment.
+    const noExecve = path.join(pkg.dir, "no-execve.cjs");
+    fs.writeFileSync(noExecve, "delete process.execve;\n");
+    assertUserEnvironment(runLauncher(pkg, { env, flags: ["--preload", noExecve] }), pkg);
+  } finally {
+    fs.rmSync(pkg.dir, { recursive: true, force: true });
+  }
+});
+
+test("under bun started by fork, the IPC channel bun took is not passed on, and .env is not either", { skip: BUN }, async () => {
+  const pkg = installed("bun");
+  try {
+    const env = userEnvironment(pkg, { RUSTIFY_NO_LINK: "1" });
+    const child = fork(pkg.launcher, isWindows ? [pkg.printer] : [], { execPath: "bun", cwd: pkg.cwd, env, stdio: ["ignore", "pipe", "pipe", "ipc"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (d) => (stdout += d));
+    child.stderr.on("data", (d) => (stderr += d));
+    const code = await new Promise((resolve) => child.on("exit", resolve));
+    assert.equal(code, 0, stderr);
+    const seen = Object.fromEntries(stdout.split("\n").filter((l) => l.indexOf("=", 1) > 0).map((l) => [l.slice(0, l.indexOf("=", 1)), l.slice(l.indexOf("=", 1) + 1)]));
+    assertUserEnvironment(seen, pkg);
+    assert.equal(seen.NODE_CHANNEL_FD, undefined);
+  } finally {
+    fs.rmSync(pkg.dir, { recursive: true, force: true });
+  }
+});
+
+test("under bun, where the environment cannot be read, the binary gets process.env as before", { skip: BUN }, () => {
+  const pkg = installed("bun");
+  try {
+    // Stands for a system where /proc or bun:ffi is not there.
+    const unreadable = path.join(pkg.dir, "unreadable.cjs");
+    fs.writeFileSync(
+      unreadable,
+      'const ffi = require("bun:ffi"); ffi.dlopen = () => { throw new Error("no bun:ffi"); };\n' +
+        'const fs = require("fs"); const read = fs.readFileSync;\n' +
+        'fs.readFileSync = function (file, ...rest) { if (String(file) === "/proc/self/environ") throw new Error("no /proc"); return read.call(this, file, ...rest); };\n',
+    );
+    const seen = runLauncher(pkg, { env: userEnvironment(pkg, { RUSTIFY_NO_LINK: "1" }), flags: ["--preload", unreadable] });
+    assert.equal(seen.FROM_DOTENV, "yes", "the fallback is bun's process.env, .env included");
+    assert.equal(seen.SHARED, "mine");
+    assert.equal(fullPath(seen.PKG_ROOT), pkg.root);
+  } finally {
+    fs.rmSync(pkg.dir, { recursive: true, force: true });
+  }
+});
+
+test("under bun, the first run, which links the binary, passes the user's environment too, also a large one", { skip: BUN }, () => {
+  const pkg = installed("bun");
+  try {
+    // 200 variables of 1000 characters and one of 30000 (Windows takes at most 32767).
+    const large = Object.fromEntries(Array.from({ length: 200 }, (_, i) => [`LARGE_${i}`, `${i}`.padEnd(1000, "x")]));
+    large.HUGE = "h".repeat(30000);
+    const seen = runLauncher(pkg, { env: userEnvironment(pkg, large) });
+    assertUserEnvironment(seen, pkg);
+    for (const [name, value] of Object.entries(large)) assert.equal(seen[name], value, name);
+    if (!isWindows) assert.ok(fs.readFileSync(pkg.launcher).equals(fs.readFileSync(pkg.standIn)), "the launcher was replaced by the binary");
+    else assert.ok(fs.existsSync(path.join(pkg.root, "rustify", "tool.exe")), "a native copy is beside the launcher");
+  } finally {
+    fs.rmSync(pkg.dir, { recursive: true, force: true });
+  }
+});
+
+test("under node, the binary gets process.env, which holds no .env file", () => {
+  const pkg = installed("node");
+  try {
+    assertUserEnvironment(runLauncher(pkg, { runtime: process.execPath, env: userEnvironment(pkg, { RUSTIFY_NO_LINK: "1" }) }), pkg);
+  } finally {
+    fs.rmSync(pkg.dir, { recursive: true, force: true });
   }
 });

@@ -13,4 +13,9 @@ path = "src/main.rs"
 name = "toy-helper"
 path = "src/helper.rs"
 
+# Stands for a JavaScript runtime in tests/handback.rs: prints its arguments.
+[[bin]]
+name = "toy-argv"
+path = "src/argv.rs"
+
 [workspace]

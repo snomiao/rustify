@@ -51,6 +51,20 @@ fn main() {
             .collect();
         return println!("{}", report.join(" "));
     }
+    // `toy env [file]` writes the environment this process was started with,
+    // as the system holds it: one entry per line, in the system's order, every
+    // byte (on Windows every UTF-16 unit) outside printable ASCII as \xNN
+    // (\uNNNN), and `\` as `\\`. It shows what the launcher handed over.
+    if argv.get(1).map(String::as_str) == Some("env") {
+        let text: String = raw_environment().into_iter().map(|entry| entry + "\n").collect();
+        match argv.get(2) {
+            Some(file) => std::fs::write(file, text).unwrap_or_else(|e| panic!("{file}: {e}")),
+            None => {
+                let _ = std::io::Write::write_all(&mut std::io::stdout(), text.as_bytes());
+            }
+        }
+        return;
+    }
     // `toy sleep <seconds> <file>` stands for a long-running command: it writes
     // "<version> <tick>" to <file> five times a second and ends after
     // <seconds>, or as soon as <file>.stop exists.
@@ -85,4 +99,82 @@ fn main() {
     if args.first().map(String::as_str) == Some("exit") {
         std::process::exit(args.get(1).and_then(|c| c.parse().ok()).unwrap_or(0));
     }
+}
+
+/// The entries of this process's environment block, escaped (see `toy env`).
+#[cfg(unix)]
+fn raw_environment() -> Vec<String> {
+    use std::ffi::{c_char, CStr};
+    #[cfg(target_os = "macos")]
+    unsafe fn environ() -> *const *const c_char {
+        extern "C" {
+            fn _NSGetEnviron() -> *const *const *const c_char;
+        }
+        *_NSGetEnviron()
+    }
+    #[cfg(not(target_os = "macos"))]
+    unsafe fn environ() -> *const *const c_char {
+        extern "C" {
+            static environ: *const *const c_char;
+        }
+        environ
+    }
+    let mut entries = Vec::new();
+    // SAFETY: environ is a NULL-terminated array of C strings, and nothing
+    // in this process changes it while it is read.
+    unsafe {
+        let mut at = environ();
+        while !at.is_null() && !(*at).is_null() {
+            let escaped = CStr::from_ptr(*at).to_bytes().iter().map(|&b| match b {
+                b'\\' => "\\\\".to_string(),
+                0x20..=0x7e => (b as char).to_string(),
+                _ => format!("\\x{b:02x}"),
+            });
+            entries.push(escaped.collect());
+            at = at.add(1);
+        }
+    }
+    entries
+}
+
+/// The entries of this process's environment block, escaped (see `toy env`).
+#[cfg(windows)]
+fn raw_environment() -> Vec<String> {
+    extern "system" {
+        fn GetEnvironmentStringsW() -> *mut u16;
+        fn FreeEnvironmentStringsW(block: *mut u16) -> i32;
+    }
+    let mut entries = Vec::new();
+    // SAFETY: the block is a run of NUL-terminated UTF-16 strings that ends
+    // with an empty one, and it is freed once, after it was read.
+    unsafe {
+        let block = GetEnvironmentStringsW();
+        if block.is_null() {
+            return entries;
+        }
+        let mut at = block;
+        loop {
+            let mut length = 0;
+            while *at.add(length) != 0 {
+                length += 1;
+            }
+            if length == 0 {
+                break;
+            }
+            let escaped = std::slice::from_raw_parts(at, length).iter().map(|&u| match u {
+                0x5c => "\\\\".to_string(),
+                0x20..=0x7e => (u as u8 as char).to_string(),
+                _ => format!("\\u{u:04x}"),
+            });
+            entries.push(escaped.collect());
+            at = at.add(length + 1);
+        }
+        FreeEnvironmentStringsW(block);
+    }
+    entries
+}
+
+#[cfg(not(any(unix, windows)))]
+fn raw_environment() -> Vec<String> {
+    std::env::vars_os().map(|(k, v)| format!("{}={}", k.to_string_lossy(), v.to_string_lossy())).collect()
 }

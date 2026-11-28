@@ -174,6 +174,15 @@
 // pipe, and what a process it left behind writes later is not seen, hence
 // not the default.
 //
+// Through pipes the runner reads at most 64 MiB of stdout and stderr
+// together, of the program and of each `setup` or `after` line (node's own
+// limit, 1 MiB, is too small for some cases; spawnSync's maxBuffer counts
+// both streams as one). A program that writes more is stopped, and its case
+// is BROKEN, with the advice to give it "capture": "files", which has no
+// limit. 64 MiB is far below the longest text node can make of what it read
+// (2^29 - 24 UTF-16 units), and keeps what one case holds at a few hundred
+// MiB at most: both sides, both streams, and the copies the comparison makes.
+//
 // Platforms. The same cases run on Linux, macOS and Windows, and a port may
 // answer a command itself on some of them and hand it back on others. A
 // "handback" given as text holds on every system, as it always has. Given as
@@ -312,6 +321,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const OPTIONS = ["cases", "ts", "rs", "filter", "show", "keep", "handback", "tty", "capture", "shell"];
+
+// The most the runner reads through pipes, of stdout and stderr together
+// (see the header).
+const MAX_BUFFER = 64 * 1024 * 1024;
+// spawnSync's report of a program that wrote more than that.
+const overflowed = (result) => result.error?.code === "ENOBUFS";
 
 // `--name value`, `--name=value`, or `--name` alone (true).
 function parseArgs(argv) {
@@ -652,7 +667,7 @@ function windowsArgument(arg) {
 
 // Runs one "setup" or "after" line in the case's directory and environment.
 function runLine(line, cwd, env) {
-  const options = { cwd, encoding: "utf8", timeout: 120_000 };
+  const options = { cwd, encoding: "utf8", timeout: 120_000, maxBuffer: MAX_BUFFER };
   const shell = posixShell().path;
   // As it always was: node's shell, /bin/sh.
   if (!shell) return spawnSync(line, { ...options, env, shell: true });
@@ -939,9 +954,10 @@ function runIn(root, testCase, impl, plan, extraEnv) {
   const shell = (line) => runLine(here(line), cwd, env);
   for (const line of testCase.setup || []) {
     const result = shell(line);
-    // The shell could not be started (no process: a timeout, or output past
-    // spawnSync's limit, is reported as before, below).
+    // The shell could not be started (no process: a timeout is reported as
+    // before, below).
     if (result.error && !result.pid) return { broken: `setup \`${line}\` could not be run: ${result.error.message}` };
+    if (overflowed(result)) return { broken: `setup \`${line}\` printed more than ${MAX_BUFFER / 1024 / 1024} MiB, the most the runner reads from a line, and was stopped` };
     if (result.status !== 0) {
       return { broken: `setup \`${line}\` exited ${result.status}: ${result.stderr || result.stdout}` };
     }
@@ -957,7 +973,7 @@ function runIn(root, testCase, impl, plan, extraEnv) {
     for (const [name, value] of Object.entries(AS_WRITTEN)) if (!named.has(name) && !Object.hasOwn(impls[impl].vars, name)) programEnv[name] = value;
   }
   const seconds = testCase.timeout || 120;
-  const options = { cwd, env: programEnv, input: here(plan.piped), encoding: "utf8", timeout: seconds * 1000 };
+  const options = { cwd, env: programEnv, input: here(plan.piped), encoding: "utf8", timeout: seconds * 1000, maxBuffer: MAX_BUFFER };
   // The runner's own files of this run: what the program wrote, when that
   // goes to files, and what the terminal was sent.
   const own = path.join(root, "runner");
@@ -992,6 +1008,17 @@ function runIn(root, testCase, impl, plan, extraEnv) {
   // compared as usual; through terminal.py, which passes a piped stdin on, it
   // is the same thing and is treated the same way.
   const stdinLeft = result.error?.code === "EPIPE" && (result.status !== null || result.signal !== null);
+  // More than the runner reads through pipes: spawnSync stopped the program.
+  // The limit is for both streams together. When only one of them had
+  // brought anything, that one alone went past it, and it is named.
+  if (overflowed(result)) {
+    const read = plan.files ? [] : ["stdout", "stderr"].filter((name) => result[name]);
+    return {
+      broken:
+        `${program} wrote more than ${MAX_BUFFER / 1024 / 1024} MiB to ${read.length === 1 ? read[0] : "stdout and stderr together"}, the most the runner reads through pipes, and was stopped; ` +
+        'give the case "capture": "files" (or run with --capture files): then it writes into regular files, which the runner reads whole',
+    };
+  }
   // On a terminal the runner started terminal.py, which had started the
   // program: any other trouble with that is the run's, whatever exit code came back.
   if (result.error && !stdinLeft && (result.status === null || terminals.length)) {
@@ -1034,6 +1061,7 @@ function runIn(root, testCase, impl, plan, extraEnv) {
     const probe = shell(line);
     // As for setup: otherwise both sides would show the same nothing.
     if (probe.error && !probe.pid) return { broken: `after \`${line}\` could not be run: ${probe.error.message}` };
+    if (overflowed(probe)) return { broken: `after \`${line}\` printed more than ${MAX_BUFFER / 1024 / 1024} MiB, the most the runner reads from a line, and was stopped; let it print less (a checksum, \`wc -c\`, \`head\`)` };
     observed[`after: ${line}`] = clean(`${probe.stdout}${probe.stderr}[exit ${probe.status}]`);
   }
   return { observed };

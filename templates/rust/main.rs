@@ -32,7 +32,9 @@ fn main() {
         //
         //   Some("status") => {
         //       if let Some(text) = js_fallback::attempt(|| status::answer(&args[1..])) {
-        //           // A reader that has gone away (`| head`) is not an error.
+        //           // As console.log under bun: a reader that has gone away
+        //           // (`| head`) is not an error. Output the TypeScript writes
+        //           // with process.stdout.write: see "Printing" in js_fallback.rs.
         //           let _ = std::io::Write::write_all(&mut std::io::stdout(), text.as_bytes());
         //           return;
         //       }

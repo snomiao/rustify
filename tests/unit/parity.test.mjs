@@ -259,6 +259,48 @@ test("capture: files compares bytes, so bytes that are not UTF-8 are told apart;
   }
 });
 
+test("more than 64 MiB through pipes makes the case BROKEN and names capture: files, which reads it whole", () => {
+  // The limit is for stdout and stderr together. One byte past it, on stdout,
+  // on stderr, on both, and in an after line; `split <stdout> <stderr>`
+  // writes that many bytes to each.
+  const MiB = 1024 * 1024;
+  const both = `
+    if (cmd === "flood") (rest[0] === "stderr" ? process.stderr : process.stdout).write("x".repeat(64 * 1024 * 1024 + 1));
+    if (cmd === "split") { process.stdout.write("o".repeat(Number(rest[0]))); process.stderr.write("e".repeat(Number(rest[1]))); }
+  `;
+  const dir = setup(both);
+  fs.appendFileSync(path.join(dir, "ts.cjs"), both);
+  const split = (out, err) => ["split", String(out), String(err)];
+  try {
+    const r = run(dir, {
+      cases: [
+        { name: "too much on stdout", args: ["flood"] },
+        { name: "too much on stderr", args: ["flood", "stderr"] },
+        { name: "as much as is read", args: split(64 * MiB, 0) },
+        { name: "as much as is read, from both", args: split(32 * MiB, 32 * MiB) },
+        { name: "40 MiB on each", args: split(40 * MiB, 40 * MiB) },
+        { name: "all that is read on stdout and a byte on stderr", args: split(64 * MiB, 1) },
+        { name: "too much into files", args: ["flood"], capture: "files" },
+        { name: "too much from an after line", args: ["echo", "x"], after: ["head -c 67108865 /dev/zero"] },
+      ],
+    });
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    const broken = (name, streams) =>
+      new RegExp(`BROKEN  ${name}\\n\\s+.+ wrote more than 64 MiB to ${streams}, the most the runner reads through pipes, and was stopped; give the case "capture": "files"`);
+    assert.match(r.stdout, broken("too much on stdout", "stdout"));
+    assert.match(r.stdout, broken("too much on stderr", "stderr"));
+    assert.match(r.stdout, broken("40 MiB on each", "stdout and stderr together"));
+    assert.match(r.stdout, broken("all that is read on stdout and a byte on stderr", "stdout and stderr together"));
+    assert.match(r.stdout, /same {4}as much as is read\n/);
+    assert.match(r.stdout, /same {4}as much as is read, from both\n/);
+    assert.match(r.stdout, /same {4}too much into files\n/);
+    assert.match(r.stdout, /BROKEN  too much from an after line\n\s+after `head -c 67108865 \/dev\/zero` printed more than 64 MiB, the most the runner reads from a line/);
+    assert.match(r.stdout, /5 of 8 case\(s\) differ/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a failing setup command is reported as broken, not as a pass", () => {
   const dir = setup();
   try {

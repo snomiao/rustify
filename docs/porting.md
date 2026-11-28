@@ -39,7 +39,11 @@ found by a port or by the verification of one, and each was visible to a user.
   from the current directory into the environment (other names under another
   `NODE_ENV`), with its own syntax (`$VAR` expansion, `export`, quoting,
   multi-line values). A project's own tests often run with `--no-env-file`
-  and never see this;
+  and never see this. It goes into `process.env` only, not into the
+  environment the system keeps for the process, so the binary started by
+  launcher v3 does not get it either (see "The launcher's environment" in
+  [npm-distribution.md](npm-distribution.md)); the JavaScript it hands back
+  to loads the files itself, as before;
 - reads `bunfig.toml` from the directory and from the user's configuration,
   and takes options from `BUN_OPTIONS` and `NODE_OPTIONS`;
 - reads `package.json`, `tsconfig.json` and `jsconfig.json` from the current
@@ -177,7 +181,52 @@ apart by `argv[1]` needs its own answer, such as one small file per command.
 `templates/rust/js_fallback.rs` carries a version in its first line. When the
 template moves on, copy the new file over the crate's, and put the project's
 own name back into `ROOT_ENV` (the scaffold wrote `<PROJECT>_PACKAGE_ROOT`
-there). Version 5 needs Rust 1.81 or later.
+there). Version 5 needs Rust 1.81 or later. A port keeps the copy it has
+until it adopts a newer one; nothing changes for it until then.
+
+Version 6 keeps every name of version 5 (`run`, `attempt`, `HandBack`,
+`commit`, `package_root`, `ROOT_ENV`, `TRACE_ENV`, `TRACE_LINE`) and adds
+`names_root`, so it replaces a version 5 file as it is.
+What it changes, from three faults wtx's port found in version 5:
+
+- On Linux and macOS an entry with a `#!` line is started as the system
+  starts it, and only so: the interpreter and its argument as that system
+  reads them, Linux passing all that follows the interpreter as one argument,
+  macOS splitting it at blanks and ending the line at a `#` (both keep a
+  carriage return: a CR LF entry asks env for `bun\r`). A relative
+  interpreter is found from the working directory, as the kernel finds it.
+  `#!/usr/bin/env bun` with no bun on PATH is reported by env, in its words,
+  with exit code 127, as when the command was the script. Version 5 started
+  the runtime the line names by its name and then tried bun and node as
+  well, so without bun wtx's entry, which node cannot run, went to node.
+  It also means that an entry whose line says `#!/usr/bin/env node`, on a
+  machine with bun and no node (where the launcher's runtime is bun, say),
+  now gets env's `No such file or directory` and exit 127, where version 5
+  ran it with bun. That is what the command did before it was ported; an
+  owner whose users may have only bun writes `#!/usr/bin/env bun` there. An
+  entry without a `#!` line (or with one the system refuses: empty, longer
+  than macOS reads, or with a NUL where the interpreter's name begins) goes
+  to bun, then to node unless it is TypeScript, as before. A NUL right after
+  a blank leaves an empty argument, which both kernels pass and version 6
+  passes too. `tests/e2e/toy/tests/handback.rs` compares all this with the
+  kernel on every run of the toy's tests.
+- On Windows the runtimes, in version 5's order (what the `#!` line names,
+  then bun, then node), are looked up in the directories of PATH, in order,
+  with the extensions of PATHEXT a program can be started from (`.com`,
+  `.exe`, `.bat`, `.cmd`), in PATHEXT's order; unlike cmd.exe, not in the
+  working directory first. That finds `bun.exe`, and also the `bun.cmd` that
+  `npm i -g bun` writes, which version 5 never tried. Rust starts a `.cmd`
+  through cmd.exe and quotes every argument for it (since Rust 1.77.2, the
+  BatBadBut fix): `%`, `"`, `&`, `^`, `|`, `<`, `>`, `!`, spaces, an empty
+  argument, a trailing backslash and non-ASCII text all reached the program
+  behind npm's `bun.cmd` unchanged (Windows 11, Rust 1.96). An argument
+  with a line break (CR or LF) or a NUL is refused by Rust, and the binary
+  then says so and exits 127, instead of trying node.
+- `ROOT_ENV` is taken out of the JavaScript's environment when it names this
+  package's directory, which is what the launcher sets it to, and only then.
+  wtx hands its whole environment to every terminal session, where the
+  launcher's variable showed up. A value of the user's own that names another
+  directory stays.
 
 ## 2. Write the cases before the code
 
@@ -203,7 +252,10 @@ a busier machine. If TypeScript against TypeScript fails this way, give the
 case `"capture": "files"`, or pass `--capture files`. The program then writes
 into regular files, nothing is lost, and every byte is compared. That settles
 the case, not the question of whether the Rust should lose lines the same way
-when users pipe the command (see "What the TypeScript means").
+when users pipe the command (see "What the TypeScript means"). Through pipes
+the runner reads at most 64 MiB of stdout and stderr together (node's
+spawnSync counts the two as one); a case that prints more is BROKEN and says
+to use `"capture": "files"`, which has no limit.
 
 Cover, for the command:
 
@@ -257,6 +309,14 @@ MSYS tools print it; `<CWD:8.3>` is the short spelling; `:case` marks other
 letter case. A line's `pwd` is therefore `<CWD:msys>` there. When both sides
 print the same spelling, they compare the same. A port that prints `{:?}`
 where its TypeScript prints the plain path differs, as its users would see.
+
+The short spelling is not rare. On GitHub's Windows runners `TEMP` is
+`C:\Users\RUNNER~1\AppData\Local\Temp`, while a machine whose user name has
+eight letters or fewer never shows one. bun's `fs.realpathSync` writes such a
+name out in full, node's keeps it, and node's `fs.realpathSync.native` writes
+it out. A port's own test that compares directories runs both sides through
+`fs.realpathSync.native` first. rustify's launcher tests passed on jr and
+failed on the runners until they did.
 
 The runner compares the exit code (for a program that a signal ended, which
 signal: `signal SIGTERM`), stdout, stderr, and what each `after` line prints.
@@ -581,10 +641,19 @@ while it works calls `js_fallback::commit()` first. After that, a panic ends
 it as any panic does (exit code 101), and handing back is a bug. All this
 needs unwinding, Rust's default, which the scaffold's Cargo.toml keeps: with
 `panic = "abort"`, a panic ends the process with its message and the
-JavaScript never runs. Print the answer with `write_all` and ignore its
-error, as bun ignores a reader that has gone away (`| head`); `print!`
-panics there. qqdocs, onenote-cli and dotenvdotenc each wrote this guard by
-hand before it existed.
+JavaScript never runs. qqdocs, onenote-cli and dotenvdotenc each wrote this
+guard by hand before it existed.
+
+Print the answer as the TypeScript prints it, also to a reader that has gone
+away (`| head`). Measured with bun 1.4.0: what `console.log` and
+`console.error` cannot write is dropped and the program goes on and exits
+0, so print with `write_all` and ignore its error. `process.stdout.write`
+goes on too, to the end of the code that runs at once, and then bun reports
+an uncaught `EPIPE: broken pipe, write` with a stack trace and exits 1
+(rustdesk.skill's port found this): there, exit 1 when the write fails with
+`ErrorKind::BrokenPipe`. The report names bun's internals and the installed
+file and is not copied; that difference goes to the owner. `print!` panics
+in both cases.
 
 While an attempt runs, the binary keeps panics on every thread quiet, so a
 worker thread the command started says nothing either. In the crate's own
