@@ -28,9 +28,84 @@
 # its first start, and everything the program prints is passed through a
 # redaction of that token.
 #
-# Status. The crate on build/rustify-pipeline hands every invocation to
-# src/index.ts, so every feature below is `missing`. Nothing is `dropped`:
-# that is the owner's decision.
+# Status. First port, 2026-11-28, on build/rustify-pipeline (the branch of
+# pull request snomiao/winrpc#4), the TypeScript unchanged at 91cda75. The
+# binary answers itself, on Linux, macOS and Windows: `lock` / `lock show`
+# against an http URL of an IPv4 address, or of localhost on macOS and
+# Windows (its GET, and what it prints of every answer a winrpc server
+# gives; localhost on Linux goes back, entry `client URLs of localhost on
+# Linux`), what every client command says before it sends anything (no
+# URL, a URL that is not one,
+# `lock acquire` without --owner, `lock renew|release` without a lease),
+# the --help pages, the redaction of what it prints, and the plain part of
+# bun's .env syntax. Everything else goes to src/index.ts before anything
+# was printed or sent: `serve`, `tray`, every request that changes
+# something (`lock acquire|renew|release`, `ahk-repl`), a connection that
+# fails, usage errors, --version, and an answer bun would not get out
+# whole through a pipe (entry `an answer bun would not get out whole`).
+# WINRPC_NO_NATIVE=1 hands everything back (checked: all 381 cases that
+# run without a terminal reach the JavaScript with it). Nothing is
+# `dropped`: that is the owner's decision.
+#
+# Repaired after an independent verification (2026-11-28), which found two
+# differences: for `localhost` bun asks ::1 first on macOS (and, as it
+# turned out, on Windows), where the binary asked 127.0.0.1; and bun on
+# Linux loses what a pipe has no room for, where the binary printed all of
+# it. Both now go the TypeScript's way (entries `client URLs …` and `an
+# answer bun would not get out whole`). The verifier's 70 cases are in the
+# cases file (`verify: …`).
+#
+# Repaired again after CI (run 46115378859, bun 1.4.5 on ubuntu-24.04),
+# where the Linux parity job found four localhost cases with servers on
+# both ::1 and 127.0.0.1 in which the TypeScript reached ::1 and the binary
+# 127.0.0.1. The repair had taken bun on Linux to ask 127.0.0.1 alone, as
+# measured on one machine with bun 1.4.0: that was a property of that
+# machine and of that bun. bun 1.4.0 asks getaddrinfo with AI_ADDRCONFIG,
+# and glibc counts no loopback address for it, so where ::1 is the only
+# IPv6 address (a container on an IPv4-only network, as that machine is)
+# the answer is 127.0.0.1 alone, even from a hosts file that names ::1;
+# where any other IPv6 address is configured, a link-local one too, both,
+# ::1 first unless gai.conf says otherwise. bun 1.4.1 and later
+# (oven-sh/bun#38818) answer localhost themselves, ::1 then 127.0.0.1,
+# whatever the hosts file, gai.conf and the addresses are: measured on the
+# same machine, bun 1.4.5 goes to ::1 and bun 1.4.0 to 127.0.0.1, and the
+# binary of ed3c18e against the TypeScript gives CI's four differences
+# there with bun 1.4.5 and none with bun 1.4.0. The binary cannot know
+# which bun will run the JavaScript, so on Linux it now hands localhost
+# back before it connects (entry `client URLs of localhost on Linux`);
+# macOS and Windows are unchanged.
+#
+# The proof is rs/parity/proof.sh in the project: rs/parity.json (389
+# cases, written by rs/parity.gen.mjs), every case run behind a stand-in
+# winrpc server on 127.0.0.1 (rs/parity/with-mock.mjs, which also compares
+# what each side asked the server), TypeScript against the binary, the
+# --handback check, and on Linux and macOS the comparison again with stdout
+# and stderr on a terminal; plus cargo test, which holds the URL reader and
+# the redaction to what bun itself records for some 3,600 URLs and 4,100
+# texts (rs/vectors.gen.mjs, checked again with each system's bun by
+# proof.sh). Run at bdd5d63, all passing, each system with its own bun and
+# with bun 1.4.5 (downloaded from its release into a directory of the
+# proof's own; the same in both runs):
+#   Linux x64      bun 1.4.0, 1.4.5: 256 answered by the binary, 133 handed back
+#   macOS 27 arm64 bun 1.4.4, 1.4.5: 267 answered, 122 handed back
+#   Windows 11 x64 bun 1.4.2, 1.4.5: 260 answered, 119 handed back, 10 skipped
+#                  (8 need a terminal, 2 a symlink)
+# CI at bdd5d63 (run 46121019987): all 17 checks pass, the parity job on
+# linux-x64, darwin-arm64 and win32-x64 included, with bun 1.4.5.
+# TypeScript against TypeScript, at 408659b: all 389 the same on Linux and
+# macOS, 379 on Windows. (The first port's proofs, at da6aba6, also ran
+# with bun 1.4.5 on all three.)
+# The workflow runs it on linux-x64, darwin-arm64 and win32-x64. The binary
+# also answers natively on linux-arm64, darwin-x64 and win32-arm64, which
+# the pipeline builds and smoke-tests but no proof has run on.
+#
+# Seen on Windows when the package was unpacked without node_modules: the
+# TypeScript then fails (`Cannot find package 'yargs'`) while the binary
+# still answers its native commands. The binary does not look for its
+# dependencies; an installed package always has them.
+#
+# Rust-only behaviour, for the owner to bless or have removed: the
+# request headers of the binary's GET (see the note of `lock / lock show`).
 #
 # Grain. One entry per command and subcommand, per HTTP route, and per
 # behaviour with its own module or test file (token, redaction, templates,
@@ -81,33 +156,43 @@ note = "On listening: `winrpc listening on http://<host>:<port>`, `  AHK_TEMPLAT
 
 [[feature]]
 name = "ahk-repl [url] [--lease]"
-status = "missing"
+status = "partial"
 ts = "src/index.ts:137; src/index.ts:89 ahkRepl"
-note = "Each line of stdin, trimmed, if not empty, is POSTed as text/plain to <url>/ahk-eval. The answer's stdout and stderr go to stdout and stderr with a newline added when missing; `ok: false` without stderr prints `[exit <exitCode or ?>]`; a failed request prints `[request failed] <message>`; 423 prints the lease-held line and exits 75. On a terminal: `winrpc ahk-repl → <base>  (Ctrl-D to exit)` on stderr and an `ahk> ` prompt; through a pipe nothing else. As read: lines are not awaited one by one, so piped lines are all sent at once and their answers print in the order they arrive; and a body that is not JSON (a 401's text) is read twice, so the second read fails and what shows is `[request failed]` with the runtime's message, not the body. These writes do not go through console, so redaction does not apply to them."
+rs = "rs/src/client.rs ahk_repl; rs/src/args.rs"
+proof = "rs/parity.json ahk-repl: …"
+note = "Native: its refusals before it reads stdin (no URL: `error: provide <url> / --url or set WINRPC_URL`, exit 2; a URL `new URL` throws on: `error: invalid URL: <text>`, exit 2), for `ahk-repl [url] [--lease <id>]` in the plain spellings of rs/src/args.rs. With a URL it goes to the JavaScript before anything was read or sent: it then POSTs each line of stdin to /ahk-eval, which runs AutoHotkey on the server, and a hand-back after a request would run a script twice. Each line of stdin, trimmed, if not empty, is POSTed as text/plain to <url>/ahk-eval. The answer's stdout and stderr go to stdout and stderr with a newline added when missing; `ok: false` without stderr prints `[exit <exitCode or ?>]`; a failed request prints `[request failed] <message>`; 423 prints the lease-held line and exits 75. On a terminal: `winrpc ahk-repl → <base>  (Ctrl-D to exit)` on stderr and an `ahk> ` prompt; through a pipe nothing else. As read: lines are not awaited one by one, so piped lines are all sent at once and their answers print in the order they arrive; and a body that is not JSON (a 401's text) is read twice, so the second read fails and what shows is `[request failed]` with the runtime's message, not the body. These writes do not go through console, so redaction does not apply to them."
 
 [[feature]]
 name = "lock / lock show"
-status = "missing"
+status = "verified"
 ts = "src/index.ts:149; src/index.ts:163"
-note = "GET <url>/lock, printed as the client prints every answer (see that entry). `show` is the default action; any other word than show, acquire, renew or release is a yargs usage error."
+rs = "rs/src/client.rs show; rs/src/http.rs; rs/src/json.rs; rs/src/args.rs"
+proof = "rs/parity.json lock: …, lock show: …, bun env: …, room: …, verify: lock: …; rs/parity/proof.sh"
+note = "GET <url>/lock, printed as the client prints every answer: the JSON again, with two-space indentation and JavaScript's key order (array indices first, a key given twice in the place of its first appearance with its last value), `{}` for a body that is not JSON; a 423's lease-held line (exit 75); `HTTP <status> <reason> on /lock` and the body for another status that is not ok (exit 1). Proven on Linux, macOS and Windows, through pipes and regular files, and on Linux and macOS also with stdout and stderr on a terminal; on macOS and Windows `localhost` too, with one server on ::1 and another on 127.0.0.1 of the same port (the binary asks the one bun asks, entry `client URLs other than …`); on Linux localhost goes back (entry `client URLs of localhost on Linux`). A connection that fails goes back (entry `a client that cannot connect`). `show` is the default action; the options of acquire are taken and not used; the lease argument is not sent. The binary goes back for the situations of the entries `lock show: answers …`, `a client that cannot connect`, `client URLs …`, `client output on a terminal …` and `an answer bun would not get out whole`; any other word than show, acquire, renew or release, and every other spelling of the command line, is yargs's (usage errors). Rust-only, for the owner to bless or have removed: the binary's GET sends `Accept: */*` and `Connection: close`, and no User-Agent and no Accept-Encoding, where bun's fetch sends `User-Agent: Bun/<version>`, `Accept-Encoding: gzip, deflate, br, zstd` and `Connection: keep-alive`; the method, path, Host, Authorization and X-Winrpc-Lease are the same (the cases compare them)."
 
 [[feature]]
 name = "lock acquire --owner [--label] [--ttl] [--wait]"
-status = "missing"
+status = "partial"
 ts = "src/index.ts:165"
-note = "POST <url>/lock/acquire {owner, label, ttl_ms, wait_ms}: --ttl and --wait are seconds, sent times 1000, and left out when not given. Without --owner: `error: lock acquire needs --owner`, exit 2, checked after the URL (a missing URL is reported first). 423 exits 75."
+rs = "rs/src/client.rs lock"
+proof = "rs/parity.json lock acquire: …"
+note = "Native: the refusals before it sends anything: no URL or a URL that is not one (as for every client), and without --owner `error: lock acquire needs --owner`, exit 2, checked after the URL. With --owner it goes to the JavaScript before anything was sent: a hand-back after the POST would take a lease twice, and what the TypeScript does with every answer a server may give (redirects, compression, yargs's own report of an error thrown while printing, as for a 423 whose holder is an object with a toString key) is not ported. To port the request, the binary would have to report every such answer natively; the owner could decide that answers no winrpc server gives may differ. POST <url>/lock/acquire {owner, label, ttl_ms, wait_ms}: --ttl and --wait are seconds, sent times 1000, and left out when not given. 423 exits 75."
 
 [[feature]]
 name = "lock renew [lease] [--ttl]"
-status = "missing"
+status = "partial"
 ts = "src/index.ts:177"
-note = "POST <url>/lock/renew {lease, ttl_ms}. The lease is the argument, else $WINRPC_LEASE; without one: `error: lock renew needs the lease id (argument or $WINRPC_LEASE)`, exit 2. A 410 from the server is an HTTP error (exit 1)."
+rs = "rs/src/client.rs lock"
+proof = "rs/parity.json lock renew: …"
+note = "Native: the refusals before it sends anything: the URL's, and without a lease (the argument, else $WINRPC_LEASE, empty counts as none) `error: lock renew needs the lease id (argument or $WINRPC_LEASE)`, exit 2. With a lease it goes to the JavaScript before anything was sent (as acquire). POST <url>/lock/renew {lease, ttl_ms}. A 410 from the server is an HTTP error (exit 1)."
 
 [[feature]]
 name = "lock release [lease]"
-status = "missing"
+status = "partial"
 ts = "src/index.ts:177"
-note = "POST <url>/lock/release {lease}; the lease as for renew, with `lock release` in the error. A 410 is an HTTP error (exit 1)."
+rs = "rs/src/client.rs lock"
+proof = "rs/parity.json lock release: …"
+note = "Native: the refusals before it sends anything, as for renew, with `lock release` in the error. With a lease it goes to the JavaScript before anything was sent (as acquire). POST <url>/lock/release {lease}. A 410 is an HTTP error (exit 1)."
 
 [[feature]]
 name = "tray [--port]"
@@ -119,27 +204,42 @@ note = "Sets PORT from --port (default $PORT, else 12371), then loads tray.ts, w
 
 [[feature]]
 name = "client target: URL, token and lease"
-status = "missing"
+status = "verified"
 ts = "src/index.ts:31 resolveClient"
-note = "The URL is the argument or --url, else $WINRPC_URL. None: `error: provide <url> / --url or set WINRPC_URL`, exit 2; one that does not parse: `error: invalid URL: <the text, user part masked>`, exit 2. The token is the URL's user part (percent-decoded; a bad escape throws, as read), else $WINRPC_TOKEN, sent as `authorization: Bearer <token>`; the user and password parts are removed from the URL and a trailing / is dropped. The lease is --lease (ahk-repl only), else $WINRPC_LEASE, sent as `x-winrpc-lease`, so every lock request also carries $WINRPC_LEASE when it is set."
+rs = "rs/src/client.rs resolve; rs/src/url.rs"
+proof = "rs/parity.json lock: …, ahk-repl: …, bun env: …; rs/src/vectors.rs (cargo test)"
+note = "Proven through `lock` (show and the refusals) and ahk-repl's refusals. The URL is the argument or --url, else $WINRPC_URL. None: `error: provide <url> / --url or set WINRPC_URL`, exit 2; one that does not parse: `error: invalid URL: <the text, user part masked>`, exit 2 (native for text without a scheme, without a host, with a port that is not one, or an unclosed `[`; the URL reader agrees with bun's `new URL` on every one of ~3,600 recorded texts it is sure of). The token is the URL's user part, else $WINRPC_TOKEN, sent as `authorization: Bearer <token>`; the user and password parts are removed from the URL and a trailing / is dropped. The lease is --lease (ahk-repl only), else $WINRPC_LEASE, sent as `x-winrpc-lease`. URLs of other shapes go back (entry `client URLs …`). As read, not ported: a bad %-escape in the user part throws (yargs's report)."
 
 [[feature]]
 name = "client answers and exit codes"
-status = "missing"
+status = "partial"
 ts = "src/index.ts:62 postJson; src/index.ts:55 EXIT_LEASE_HELD; src/index.ts:56 printLeaseHeld"
-note = "GET without a body, POST with a JSON body. No connection: `error: cannot reach winrpc at <base> (<path>): <code or message>`, exit 1. 423: `ui lease held by <holder> (<label>) until <expires_at>; retry after it, or pass --lease` on stderr, exit 75. Another status that is not ok: `HTTP <status> <statusText> on <path>` and the body, exit 1. Otherwise the body as JSON with two-space indentation, `{}` when it is not JSON. The error texts carry the runtime's own codes and messages."
+rs = "rs/src/client.rs show, lease_held"
+proof = "rs/parity.json lock: …"
+note = "Native for the GET of `lock show` whenever an answer came, proven (see that entry), unless bun would not get it out whole (entry `an answer bun would not get out whole`); a failed connection goes back (entry `a client that cannot connect`); the POSTs of acquire, renew and release go to the JavaScript (see those entries). GET without a body, POST with a JSON body. No connection: `error: cannot reach winrpc at <base> (<path>): <code or message>`, exit 1. 423: `ui lease held by <holder> (<label>) until <expires_at>; retry after it, or pass --lease` on stderr, exit 75, with String() of whatever the server gave (numbers, arrays, objects as JavaScript writes them; a holder JavaScript cannot convert goes back). Another status that is not ok: `HTTP <status> <statusText> on <path>` and the body, exit 1. Otherwise the body as JSON with two-space indentation, `{}` when it is not JSON."
 
 [[feature]]
 name = "the token is masked in everything printed"
-status = "missing"
+status = "verified"
 ts = "src/redact.ts:66 installConsoleRedaction; src/redact.ts:36 redactSecrets; src/redact.ts:21 knownSecrets; src/index.ts:8"
-note = "console.log, info, warn, error and debug are wrapped: in every string, the user part of a URL becomes *** and each known secret of 8 characters or more (WINRPC_TOKEN trimmed; the decoded user and password of WINRPC_URL) its first four characters and …, longest first. Errors are rebuilt with masked message and stack; other objects go through JSON and back when something was masked. yargs's help and errors pass through it. process.stdout/stderr.write does not (ahk-repl's output, the lease-held line). The server masks its error texts the same way (redactSecrets). Has its own test file, test/redact.test.ts."
+rs = "rs/src/redact.rs; rs/src/client.rs Out"
+proof = "rs/parity.json lock: the token …, help: a token …, bun env: WINRPC_TOKEN from .env …; rs/src/vectors.rs (cargo test)"
+note = "For everything the binary prints: console.log and console.error output goes through redactUrl and then every known secret of 8 characters or more, longest first, masked to its first four characters and …; process.stderr.write output (the lease-held line) does not. redactUrl agrees with src/redact.ts on ~4,100 recorded texts, knownSecrets on 108 environments. Goes back: a WINRPC_TOKEN that is not ASCII (the mask cuts it by UTF-16 units), a WINRPC_URL the URL reader is not sure of. As read: console.log, info, warn, error and debug are wrapped: in every string, the user part of a URL becomes *** and each known secret (WINRPC_TOKEN trimmed; the decoded user and password of WINRPC_URL) its first four characters and …. Errors are rebuilt with masked message and stack; other objects go through JSON and back when something was masked. The server masks its error texts the same way (redactSecrets). Has its own test file, test/redact.test.ts."
 
 [[feature]]
-name = "--help, and `help` as the last word"
+name = "--help"
+status = "verified"
+ts = "src/index.ts:198"
+rs = "rs/src/help.rs; rs/src/args.rs"
+proof = "rs/parity.json help: …, bun: …, room: --help …, verify: help: …"
+note = "Native: `winrpc --help` and `winrpc <serve|lock|ahk-repl|tray> --help`, yargs 18's pages through console.log (so masked as everything printed), with ahk-repl's `(default $WINRPC_URL, set)` or `, unset)`; proven on all three systems. Into a pipe without room for the page on Linux it goes back (entry `an answer bun would not get out whole`). Goes back (entry `--help on a terminal …`): stdout on a terminal, another language, HOST or PORT other than their defaults on the pages that show them, YARGS_DISABLE_WRAP; and (entry `help as the last word`) `help` as a word anywhere, -h, --help with anything else on the line. The binary does not look at which yargs is installed: it takes the 18.x the package asks for. Never creates the token."
+
+[[feature]]
+name = "`help` as the last word, and --help among other words"
 status = "missing"
 ts = "src/index.ts:198"
-note = "yargs's help for the program and each command. Its text depends on the environment: the defaults of --host and --port come from HOST and PORT, and ahk-repl's url says `(default $WINRPC_URL, set)` or `, unset)`. Never creates the token (server.ts and auth.ts are loaded only by serve's handler)."
+proof = "rs/parity.json help: help, help: lock help, help: lock show --help, …"
+note = "yargs prints the command's help when the last word is `help` (`winrpc lock help`), and reads --help wherever it stands: handed back, as is `help` anywhere on the line and -h (an unknown option for yargs)."
 
 [[feature]]
 name = "--version"
@@ -155,10 +255,70 @@ note = "`.strict()`: unknown commands and options, a lock action outside its cho
 
 [[feature]]
 name = "configuration from the environment and bun's .env files"
-status = "missing"
+status = "partial"
 ts = "src/auth.ts:4; src/index.ts:24"
-note = "bun loads .env, .env.local and the NODE_ENV variants from the current directory before the program starts, and the program relies on it: the server finds the token it wrote in .env.local, and its banner tells users to copy the token into the client's .env.local. Read from the environment: WINRPC_URL, WINRPC_TOKEN, WINRPC_LEASE (clients); HOST, PORT, WINRPC_TOKEN, WINRPC_URL (see the AutoHotkey runner), AHK_EXE, AHK_TEMPLATES_DIR, IM_UI_LOCK_PATH, TMPDIR, WINRPC_LEASE_GUARDS (server); PORT, WINRPC_TOKEN (tray); OCR_DEVICE (ocr.py). A binary has to read those files as bun does, or hand back when one exists."
+rs = "rs/src/machine.rs; rs/src/dotenv.rs"
+proof = "rs/parity.json bun env: …, bun: …"
+note = "Native for the clients: WINRPC_URL, WINRPC_TOKEN, WINRPC_LEASE from the environment and from .env.development.local, .env.local, .env.development and .env (in that order; a variable already set wins, even empty), in the part of bun's syntax where a value is what stands in the file (from dotenvdotenc's port, proven again here with the value of WINRPC_URL a client prints back); HOST, PORT and WINRPC_URL for the help pages. Goes back: any other .env syntax ($ expansion, escapes, multi-line values, export, …), a .env that sets a variable bun, fetch or yargs read (BUN_*, NODE_*, *_PROXY, LANG, LC_*, FORCE_COLOR, …), a .env that is not a file or not UTF-8, BUN_*/NODE_*/MIMALLOC_*/ICU_*/LD_*/DYLD_*/YARGS_* in the environment (BUN_INSTALL excepted), a bunfig.toml here or in the home directory, a package.json/tsconfig.json/jsconfig.json here or above in a shape not compared with bun. The server's variables (AHK_EXE, AHK_TEMPLATES_DIR, IM_UI_LOCK_PATH, TMPDIR, WINRPC_LEASE_GUARDS) and the tray's are not read: serve and tray go back. bun loads .env, .env.local and the NODE_ENV variants from the current directory before the program starts, and the program relies on it: the server finds the token it wrote in .env.local, and its banner tells users to copy the token into the client's .env.local."
 
+
+# ──────────────── Situations the binary hands back (native elsewhere) ────────────────
+
+[[feature]]
+name = "lock show: answers the binary does not read as bun does"
+status = "missing"
+ts = "src/index.ts:62 postJson"
+rs = "rs/src/http.rs; rs/src/client.rs show"
+proof = "rs/parity.json lock: a redirect … lock: a 1xx before the answer"
+note = "Handed back after the GET, so the server is asked twice (it only reads) and the user waits for both: a redirect, a Content-Encoding, a status line or header bun may read otherwise (an empty reason phrase, a status outside 200-599, a line that is no header, a 1xx), a body shorter than its length or a connection closed before the answer, an answer that has not come whole within 30 s (the binary's read timeout; bun waits longer: measured with an answer after 32 s, the TypeScript asks once and takes 32 s, the binary asks twice and takes 64 s, and prints the same), a body that is not UTF-8 or starts with a byte order mark, JSON with a number that is not an integer up to 2^53 (JavaScript's formatting is not ported beyond those) or half a surrogate pair, a 423 whose holder, label or expiry JavaScript cannot convert. A winrpc server's /lock answer is plain JSON, and its numbers are integers as long as the UI lock file holds integers: but `expiresIn` is worked out from that file's expiresAt, and the file is shared with other programs on the machine (entry `cross-process UI lock file`), whose pid and host the answer repeats as well. If one of them writes a fraction there (expiresAt as a float, a pid of 1.5), every `winrpc lock` against that server goes back after its GET, and asks twice, for as long as the file stays so. Another server at the URL may give any of these."
+
+[[feature]]
+name = "a client that cannot connect"
+status = "missing"
+ts = "src/index.ts:70 postJson"
+rs = "rs/src/http.rs get"
+proof = "rs/parity.json lock: no server, lock: no server, …, lock: localhost, the server on ::1 only"
+note = "`error: cannot reach winrpc at <base> (<path>): <code>` names the error in bun's own words, which differ by system and by bun's version: on Linux ConnectionRefused with bun 1.4.0 and ECONNREFUSED with 1.4.5 (both measured on one machine, for 127.0.0.1:9 and localhost:9), ConnectionRefused on Windows (1.4.2), ECONNREFUSED on macOS (1.4.4, 1.4.5). The binary hands back whenever its connection fails, before anything was sent, and the JavaScript reports it; so does a URL of the host 0.0.0.0 on Windows, which refuses to connect there (Linux and macOS connect, natively, case `lock: the host 0.0.0.0`). Where only ::1 listens, macOS and Windows reach it, natively (case `lock: localhost, the server on ::1 only`); on Linux every localhost goes back before it connects (entry `client URLs of localhost on Linux`). A connection that takes more than 30 s goes back as well. A server that is down costs one start of bun, as before."
+
+[[feature]]
+name = "client URLs other than http to an IPv4 address or localhost"
+status = "missing"
+ts = "src/index.ts:31 resolveClient; src/index.ts:62 postJson"
+rs = "rs/src/url.rs; rs/src/http.rs addresses, localhost"
+proof = "rs/parity.json lock: localhost, …, verify: lock: localhost, servers on both ::1 and 127.0.0.1; rs/src/http.rs where_localhost_goes (cargo test)"
+note = "Handed back before anything is sent: https (no TLS in the binary), a host name other than localhost (the binary resolves no names: a remote client's usual http://<token>@<host name>:12371 goes back; an IPv4 address does not), IPv6, IPv4 in other spellings (127.1), percent escapes, a query or fragment, dot segments or an empty path segment, a scheme other than http(s), and anything not printable ASCII; a proxy variable in the environment; localhost on Linux (entry `client URLs of localhost on Linux`). On macOS and Windows localhost goes where bun goes, measured with one server on ::1 and another on 127.0.0.1 of the same port, and with each alone: on macOS (bun 1.4.4) and Windows (bun 1.4.2) ::1 first, which bun prefers, not only falls back to, and 127.0.0.1 when ::1 refuses. Those bun versions answer localhost themselves, ::1 then 127.0.0.1, without asking the system (oven-sh/bun#38818, bun 1.4.1 and later); what bun 1.4.0 and earlier did there, through the system's resolver, was not measured. The binary does the same, for the hosts file each system comes with: on macOS one that names 127.0.0.1 and ::1 for localhost and nothing else, on Windows none (its resolver answers for localhost itself); any other hosts file, one that cannot be read, and a ::1 that takes more than 30 s, go back. bun tries the two at once (up to four attempts) and the binary one after the other; on loopback a connection is taken or refused at once, so both end at the same server (a ::1 whose listen queue is full is where they could part). Until the first repair the binary asked 127.0.0.1 everywhere and so, with two servers, the other server than bun on macOS (found by the verifier) and on Windows. The banner's WINRPC_URL names localhost, so on Windows the common local client stays native."
+
+[[feature]]
+name = "client URLs of localhost on Linux"
+status = "missing"
+ts = "src/index.ts:62 postJson"
+rs = "rs/src/http.rs localhost"
+proof = "rs/parity.json lock: upper-case scheme and host, lock: localhost, …, verify: lock: localhost, servers on both ::1 and 127.0.0.1; rs/src/http.rs where_localhost_goes (cargo test)"
+note = "On Linux `lock` against an http URL of localhost goes to the JavaScript before anything was sent (the seven cases marked handback on linux), because where bun goes for localhost there depends on bun's version and on the machine, and the binary cannot know which bun will run the JavaScript. bun 1.4.0 asks getaddrinfo with AF_UNSPEC, SOCK_STREAM and AI_ADDRCONFIG, again without AI_ADDRCONFIG only when nothing comes back. glibc's AI_ADDRCONFIG counts no loopback address (sysdeps/unix/sysv/linux/check_pf.c): on a machine whose only IPv6 address is ::1 it asks for IPv4 alone, and its files backend gives the hosts file's ::1 line as 127.0.0.1. Measured on such a machine (a Debian container, glibc 2.41, /etc/hosts naming 127.0.0.1 and ::1 for localhost, gai.conf all comments): getaddrinfo with AI_ADDRCONFIG answers 127.0.0.1 twice, without it ::1 then 127.0.0.1; `getent ahosts localhost`, which sets AI_ADDRCONFIG, shows 127.0.0.1 alone; bun 1.4.0 reaches the 127.0.0.1 server of two and is refused where only ::1 listens, and with BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG=1 reaches ::1. Where any other IPv6 address is configured (a link-local one counts) glibc answers both, in the order of RFC 6724 and gai.conf, ::1 first by default. bun 1.4.1 and later (oven-sh/bun#38818: is_localhost_name and localhost_results in src/runtime/dns_jsc/dns.rs) never ask the system for localhost, *.localhost or localhost.: they answer ::1 then 127.0.0.1 on every system, whatever the hosts file, gai.conf and the addresses say. Measured on the same machine with bun 1.4.5: ::1 of two servers, ::1 alone, 127.0.0.1 when ::1 refuses. That is what CI found (run 46115378859, bun 1.4.5 on ubuntu-24.04): the TypeScript reached ::1 and the binary, which asked 127.0.0.1 alone on Linux until this repair, 127.0.0.1. Answering natively would need the binary to know bun's version, or to answer only where every bun agrees (getaddrinfo with bun 1.4.0's hints giving ::1 then 127.0.0.1 and nothing else, through the same libc as bun); not done. What it costs: a client on Linux of a server on the same machine starts bun; a Linux client of a Windows desktop by its name (which goes back anyway) or its IPv4 address (native) is unaffected."
+
+[[feature]]
+name = "an answer bun would not get out whole (a pipe without room for it)"
+status = "missing"
+ts = "src/index.ts:56 printLeaseHeld; src/index.ts:62 postJson; src/index.ts:33 resolveClient; src/index.ts:198"
+rs = "rs/src/room.rs; rs/src/main.rs answer"
+proof = "rs/parity.json room: …"
+note = "A TypeScript defect, for the owner: bun does not always wait for a pipe, and what there is no room for when the program ends is lost. Measured with a reader that starts after the program has ended: on Linux (bun 1.4.0) every write, once yargs has looked at process.stdout: `winrpc lock | wc -c` gets exactly 65,536 bytes of a larger answer (the verifier: 136,893 printed, 65,536 arrived, 6 of 6 runs; into a file all of it), and into a pipe that already holds 64 KiB nothing at all, not even a refusal or a help page. On macOS (bun 1.4.4) and Windows (bun 1.4.2) only the lease-held line of a 423, which is process.stderr.write followed by process.exit: 65,536 bytes of 100,000 on macOS, none on Windows; console.log and console.error wait for the reader there. Into a regular file, a terminal (Linux and macOS, also with a late reader) or /dev/null nothing is lost. Until the repair the binary printed all of it. Now it answers only where every write that bun would not wait for certainly fits, and hands the rest back, so that the JavaScript loses the same: a regular file (on Windows a file on a disk) always; on Linux and macOS a terminal or /dev/null; on Linux a pipe with room for it (F_GETPIPE_SZ and FIONREAD, counted in whole pages, one more for a page partly read and one per earlier write of the answer) or a Unix stream socket with nothing waiting and at most 32 KiB to take, 4 KiB counted for each write (node and bun give a child such sockets as its pipes); everything else goes back, on macOS and Windows every 423 into a pipe or a socket, or onto a Windows console. For lock show that is after its GET, which the JavaScript then makes again. What stays native in practice: on Linux answers up to 64 KiB into `| cmd` and up to 32 KiB into a pipe node or bun gives a child; the JSON of a 200 and every error answer on macOS and Windows whatever their size. A winrpc server's /lock answer is a few hundred bytes and never a 423, so this goes back only for huge answers of other servers, for a pipe that is already nearly full, and (macOS, Windows) for the 423 of another server. Not copied: the loss itself; whether the binary should lose the same way, or the TypeScript be fixed (await the writes, or no process.exit right after process.stderr.write), is the owner's decision. Cases `room: …` give the command a real pipe, empty or full, that is read only once it has ended (rs/parity/with-mock.mjs `pipe`); the 423 cases of `lock: …` print into regular files. Also seen: the TypeScript's redaction regular expression takes time that grows with the square of a run of letters (about 4 s for 70,000 on a busy machine), and the binary's, which follows it, the same."
+
+[[feature]]
+name = "client output on a terminal or under FORCE_COLOR"
+status = "missing"
+ts = "src/index.ts:33 resolveClient; src/index.ts:79 postJson"
+rs = "rs/src/machine.rs plain_stderr"
+proof = "rs/parity.json lock: a 410 to a terminal, lock: FORCE_COLOR and a 410"
+note = "bun colours console.error when stdout or stderr is a terminal, or FORCE_COLOR is set: whatever would go there goes back (lock show's errors after the GET, so the server is asked twice; the refusals before anything). The JSON of a 200 and the lease-held line of a 423 are native there too, proven with --tty stdout,stderr on Linux and macOS. Common for a person at a terminal who gets an error; scripts get pipes."
+
+[[feature]]
+name = "--help on a terminal, in another language, or with HOST or PORT set"
+status = "missing"
+ts = "src/index.ts:198"
+rs = "rs/src/help.rs"
+proof = "rs/parity.json help: stdout is a terminal, help: --help with LANG=de_DE.UTF-8, …"
+note = "yargs wraps at the terminal's width and speaks the language of LC_ALL, LC_MESSAGES, LANG or LANGUAGE (de, ja, fr, pirate, …): handed back, before anything is printed, as are pages whose defaults HOST or PORT change. A person typing `winrpc --help` at a terminal gets the JavaScript."
 # ───────────────────────────── The server ─────────────────────────────
 
 [[feature]]

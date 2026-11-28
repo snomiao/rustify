@@ -298,6 +298,20 @@ when the reader is late, as on a busy CI runner. Measured on macOS 27:
   8.
 - With the reader holding the terminal, it was kept every time.
 
+On a macOS pseudo-terminal, XNU also writes CR CR LF instead of CR LF
+wherever the output queue was full, about every 1,023 bytes. Identical
+output glitches identically on both sides. But a normalize rule that counts
+or collapses a terminal's lines has to accept `\r+\n` (rustdesk.skill's
+endless-output case, 2026-11-28).
+
+A project's script that gives a command "a stdout whose reader has gone"
+must not wait for a reader. The construction `(: < fifo) & exec 3> fifo`
+races on macOS. When the background reader opens and leaves before the
+writer's open sees it, the open waits, and SIGCHLD then fails it with
+`Interrupted system call`. Instead, open the FIFO read-write and then
+write-only, and close the read-write end: `exec 3<> fifo; exec 4> fifo;
+exec 3<&-`. Nothing waits, and it works in dash and in macOS's `sh`.
+
 This loss explains two flakes on GitHub's macOS runner: six scenes of
 dotenvdotenc's `rs/tty-compat.py` lost their output, and so did one
 onenote-cli case run through `rs/parity/terminal.py` (`pty.fork` in front of
@@ -434,6 +448,68 @@ both for every platform it targets. A development machine usually cannot:
 what needs them behind a cargo feature, or compile it only for the platforms
 it is ported for, so that the rest of the crate can still be type-checked
 for every target, and take the first run of the pipeline as the test.
+
+### Unicode follows the toolchain, not bun
+
+Everything in Rust's std that answers from Unicode data is compiled from the
+Unicode version of the rustc that builds the binary (`char::UNICODE_VERSION`).
+That covers:
+
+- `to_lowercase` and `to_uppercase`;
+- `is_alphabetic`, `is_numeric`, `is_alphanumeric`, `is_lowercase`,
+  `is_uppercase` and `is_control`;
+- `is_whitespace`, and with it `str::trim` and `split_whitespace`;
+- `escape_debug`, behind `{:?}`.
+
+The pipeline builds with the runner's current stable Rust, so a released
+binary's answers move whenever stable moves to a new Unicode version. bun
+moves on its own schedule, with its own ICU. In November 2026 the versions
+were:
+
+- Rust 1.100: Unicode 18;
+- Rust 1.97 and 1.99: Unicode 17;
+- bun 1.4.x: ICU 78 with Unicode 17 (`process.versions.unicode`).
+
+rustdesk.skill's tests passed locally with 1.97 and failed in CI. Built with
+1.100, the binary lowercased 18 code points that bun keeps.
+
+A port that copies JavaScript's text functions (`toLowerCase`,
+`toUpperCase`, `trim`, `\s`, `\p{…}`, case-insensitive matching) therefore
+does not answer from std's tables:
+
+- A generator run under bun records bun's answers into a table in the crate,
+  with `--check` in the proof.
+- The binary answers from that table.
+- It hands back every code point the table's Unicode leaves unassigned, and
+  every one where std's tables disagree with the table.
+- A unit test against the bun CI runs stays as the alarm.
+
+rustdesk.skill's `rs/unicode.gen.mjs` and `lowercase_unsure` in
+`rs/src/js.rs` are a worked example. Before pushing, also test with the
+newest stable:
+`rustup toolchain install <version> --no-self-update && cargo +<version> test`.
+Changing the default toolchain in place would affect everyone else on the
+machine.
+
+ASCII-only work (`to_ascii_lowercase`, `is_ascii_digit`, splitting at `' '`
+and `'\t'`) does not depend on any of this.
+
+### bun's own behaviour changes between releases
+
+Measure the bun that CI runs, not only the one at hand. setup-bun takes the
+latest bun when a project pins none. Download that release into a temporary
+directory on each machine, which works on all three.
+
+winrpc's port measured on one machine with bun 1.4.0 that bun on Linux asks
+only `127.0.0.1` for `localhost`. That came from the container: glibc's
+`AI_ADDRCONFIG` there ignores `::1`. bun 1.4.1 and later answer
+`[::1, 127.0.0.1]` for `localhost` themselves, so CI's bun 1.4.5 reached the
+other server. The refusal's wording also changed: `ConnectionRefused` in
+1.4.0, `ECONNREFUSED` in 1.4.5 on Linux. When a choice like that differs
+between supported bun releases, hand it back. The binary cannot know which
+bun the JavaScript would run on.
+
+### Home and app folders on Windows
 
 On Windows, read the home directory and `APPDATA` from the environment, as
 node's `os.homedir()` reads `USERPROFILE`. The `dirs` crate asks the system
